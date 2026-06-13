@@ -48,7 +48,21 @@ Per SPEC-v0.2:
    knight-escalate the fill/diagnostic last-mile, or tune READY_THRESHOLD.
    Open decision for the human.
 
+## v0.2.x — credential-free runtime DONE (2026-06-13)
+TODOS #1 closed via a Trusty Squire EGRESS GRANT (A35), not the originally-
+sketched local proxy. `grant_app_access` mints a leashed {base_url, token};
+the vault injects the real OpenRouter key host-side. `~/.config/castellan/.env`
+now holds `OPENROUTER_BASE_URL=<grant>/api/v1` + the leashed token — the real
+key is removed. ser took NO code change. Verified end-to-end: `ser idea
+"a habit tracker app"` → real stories/components, exit 0, key never crossed to
+ser. Grant minted unlimited (no rate/spend caps) per owner instruction; spend
+metered server-side per grant_id. Tooling: `@trusty-squire/mcp@0.9.15` (pin
+bumped in ~/.claude.json; 0.9.14 was a broken publish — boot crash from a
+skill-schema dep skew). Open sub-item: surface proxy spend headers in the
+budget meter (ser still uses A5 price-table cost).
+
 ## Next
-TODOS.md #1: credential-free runtime (Trusty Squire injecting proxy —
-ser never holds a key). Then live gates 2-3 above; then v0.3 centerpiece
-per thesis: the standing-loop runtime (triggers, queue, recurring missions).
+Live gates 2-3 (derive-bench, poker-bench, human/key). Then v0.3 centerpiece
+per thesis: the standing-loop runtime (triggers, queue, recurring missions) —
+now genuinely unattended, since the credential boundary no longer needs a
+human-held key.

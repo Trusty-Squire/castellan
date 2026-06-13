@@ -188,6 +188,28 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   NEVER walks up the directory tree (the old walk-up made the effective key
   depend on cwd and on stray ancestor `.env` files; that footgun is gone). The
   real process environment always wins over every file.
+- A35. Credential-free runtime uses a Trusty Squire EGRESS GRANT, not the
+  local proxy TODOS #1 originally sketched. `grant_app_access` (service
+  "Openrouter.ai") mints `{base_url, token}`; the vault injects the real
+  OpenRouter key host-side and enforces allowed-hosts, so ser holds only a
+  leashed/revocable/metered token. Wiring (in `~/.config/castellan/.env`,
+  the A29 single home): `OPENROUTER_API_KEY=<grant token>` (real key removed)
+  and `OPENROUTER_BASE_URL=<grant base_url>/api/v1`. The `/api/v1` suffix is
+  REQUIRED and non-obvious: the egress proxy forwards the path after the grant
+  id verbatim to `openrouter.ai`, so the base must mirror the
+  `openrouter.ai/api/v1` shape for ser's `${baseUrl}/chat/completions` to land
+  on the real API (omitting it hits the marketing host → a large HTML page the
+  proxy rejects with `response_too_large`/502). Use `https://` even though the
+  grant returns `http://` — the token is a bearer secret. ser needs NO code
+  change. Grants default to UNLIMITED (no rate/spend caps) unless args are
+  passed; minted via the MCP server in `@trusty-squire/mcp@0.9.15` (0.9.14 was
+  a broken publish). Verified end-to-end 2026-06-13: `ser idea` returns real
+  output, key never crossed to ser. Spend is metered server-side per grant_id
+  (vault UI); ser still reports cost via the A5 price table (proxy-spend-header
+  surfacing is the one open TODOS #1 item). Known dependency: the proxy must
+  pass `Content-Encoding` through transparently — an earlier proxy build
+  UTF-8-decoded gzip bodies and re-gzipped them, corrupting responses
+  (fixed upstream before this was declared done).
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level
