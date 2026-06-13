@@ -210,6 +210,20 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   pass `Content-Encoding` through transparently — an earlier proxy build
   UTF-8-decoded gzip bodies and re-gzipped them, corrupting responses
   (fixed upstream before this was declared done).
+- A36. Real reported spend, not just price-table estimation. The egress proxy
+  exposes NO per-call spend header (verified), but OpenRouter returns ACTUAL
+  billed USD in the response body's `usage.cost` when the request opts in.
+  `OpenRouterClient` now sends `usage:{include:true}` and surfaces a finite,
+  non-negative `usage.cost` as `complete().costUsd` (undefined otherwise, so
+  callers fall back to A5 price-table). The deriveV2 planner sums per-call
+  reported cost into `DeriveSuccess.costUsd` (present iff ≥1 stage reported);
+  `ser talk` compile prints "planner spend: $X (actual, provider-reported)".
+  Scope: PLANNER path only. The ENGINE budget meter (`BudgetMeter`/`runner`)
+  stays on the price table — it is fed by pi-ai, whose `Usage.cost` is computed
+  from the model's price config (ser zeroes it), NOT OpenRouter's billed cost,
+  and the harness never imports pi (invariant). Surfacing real engine spend
+  needs an out-of-repo lever: a proxy spend header, or pi-ai `usage.include`
+  passthrough. Owner chose planner-first (2026-06-13). Extends A5 and A35.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

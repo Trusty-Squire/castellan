@@ -32,7 +32,7 @@ export class OpenRouterClient implements LlmClient {
     user: string;
     json?: boolean;
     maxTokens: number;
-  }): Promise<{ text: string; inTokens: number; outTokens: number }> {
+  }): Promise<{ text: string; inTokens: number; outTokens: number; costUsd?: number }> {
     const body = {
       model: req.model,
       messages: [
@@ -41,6 +41,11 @@ export class OpenRouterClient implements LlmClient {
       ],
       max_tokens: req.maxTokens,
       temperature: 0,
+      // Ask OpenRouter to report ACTUAL billed cost in `usage.cost` (A36). Works
+      // through the Trusty Squire egress grant (A35) — the proxy forwards the
+      // usage block untouched — so the planner can surface real spend instead of
+      // price-table arithmetic. Harmless on providers that ignore it.
+      usage: { include: true },
       ...(req.json ? { response_format: { type: "json_object" } } : {}),
     };
 
@@ -71,13 +76,19 @@ export class OpenRouterClient implements LlmClient {
       }
       const json = (await res.json()) as {
         choices?: { message?: { content?: string } }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
       };
       const text = json.choices?.[0]?.message?.content ?? "";
+      const reportedCost = json.usage?.cost;
       return {
         text,
         inTokens: json.usage?.prompt_tokens ?? 0,
         outTokens: json.usage?.completion_tokens ?? 0,
+        // Only surface a finite, non-negative reported cost; otherwise leave
+        // undefined so callers fall back to price-table estimation.
+        ...(typeof reportedCost === "number" && Number.isFinite(reportedCost) && reportedCost >= 0
+          ? { costUsd: reportedCost }
+          : {}),
       };
     }
     throw new SquireError("LLM_RETRY", `OpenRouter failed after retries: ${lastErr}`);

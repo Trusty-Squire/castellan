@@ -58,8 +58,12 @@ key is removed. ser took NO code change. Verified end-to-end: `ser idea
 ser. Grant minted unlimited (no rate/spend caps) per owner instruction; spend
 metered server-side per grant_id. Tooling: `@trusty-squire/mcp@0.9.15` (pin
 bumped in ~/.claude.json; 0.9.14 was a broken publish — boot crash from a
-skill-schema dep skew). Open sub-item: surface proxy spend headers in the
-budget meter (ser still uses A5 price-table cost).
+skill-schema dep skew). Real-spend follow-up (A36): the proxy emits no spend
+header, but OpenRouterClient now opts into OpenRouter's `usage.cost`; the
+deriveV2 planner sums it and `ser talk` prints actual provider-reported spend
+(price-table fallback when unreported). Engine budget meter stays on A5
+price-table (pi-ai computes from a zeroed price config, not billed cost; harness
+walled from pi) — needs a proxy spend header or pi `usage.include` passthrough.
 
 ## Next
 Live gates 2-3 (derive-bench, poker-bench, human/key). Then v0.3 centerpiece

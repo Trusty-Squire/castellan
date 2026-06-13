@@ -88,6 +88,13 @@ export interface DeriveSuccess {
   readback: string;
   inTokens: number;
   outTokens: number;
+  /**
+   * Actual USD billed for the whole derivation, summed from the provider's
+   * reported per-call cost (A36). Present only when at least one stage reported
+   * a cost (OpenRouter via the egress grant); undefined when no call reported,
+   * leaving cost to price-table estimation. The tokens above are always exact.
+   */
+  costUsd?: number;
 }
 
 export type DeriveV2Result = DeriveSuccess | DeriveRefusal;
@@ -107,6 +114,16 @@ export interface DeriveV2Input {
 
 // --- LLM stage helper: one schema-retry, refusal on second failure ---
 
+/** Token + reported-cost accumulator threaded through every pipeline stage. */
+interface PlannerUsage {
+  in: number;
+  out: number;
+  /** Sum of provider-reported per-call cost (A36). */
+  costUsd: number;
+  /** How many calls reported a cost — 0 means fall back to estimation. */
+  reportedCalls: number;
+}
+
 async function jsonStage<S extends z.ZodTypeAny>(
   llm: LlmClient,
   model: string,
@@ -114,13 +131,17 @@ async function jsonStage<S extends z.ZodTypeAny>(
   system: string,
   user: string,
   schema: S,
-  usage: { in: number; out: number },
+  usage: PlannerUsage,
 ): Promise<z.output<S>> {
   let note = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await llm.complete({ model, system, user: user + note, json: true, maxTokens: 4000 });
     usage.in += res.inTokens;
     usage.out += res.outTokens;
+    if (typeof res.costUsd === "number" && Number.isFinite(res.costUsd)) {
+      usage.costUsd += res.costUsd;
+      usage.reportedCalls += 1;
+    }
     const parsed = tryParseJson(res.text);
     if (parsed.ok) {
       const checked = schema.safeParse(parsed.value);
@@ -152,7 +173,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   if (Boolean(input.goal) === Boolean(input.spec)) {
     throw new SquireError("DERIVE_INPUT", "deriveV2 takes exactly one of goal | spec");
   }
-  const usage = { in: 0, out: 0 };
+  const usage: PlannerUsage = { in: 0, out: 0, costUsd: 0, reportedCalls: 0 };
   const { llm, model } = input;
 
   // Spec pre-gates: unanchored requirements and refuted decisions block before any tokens.
@@ -308,7 +329,16 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
 
   // 7. readback
   const readback = renderReadback(mission.data, verdicts, freeformGates);
-  return { ok: true, mission: mission.data, claims: verdicts, freeformGates, readback, inTokens: usage.in, outTokens: usage.out };
+  return {
+    ok: true,
+    mission: mission.data,
+    claims: verdicts,
+    freeformGates,
+    readback,
+    inTokens: usage.in,
+    outTokens: usage.out,
+    ...(usage.reportedCalls > 0 ? { costUsd: usage.costUsd } : {}),
+  };
 }
 
 /** Judge mode: can this spec compile? Diagnostics, no mission emitted (SPEC-v0.2 §6.2). */

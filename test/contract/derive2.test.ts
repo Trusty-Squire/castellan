@@ -57,6 +57,36 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(r.readback).toContain("survived 2/2 lenses");
     // only the load-bearing claim got lenses: 5 calls total
     expect(llm.calls).toHaveLength(5);
+    // no provider-reported cost in this script → estimation territory
+    expect(r.costUsd).toBeUndefined();
+  });
+
+  it("sums provider-reported cost across stages into result.costUsd (A36)", async () => {
+    const llm = new MockLlm([
+      { text: decomposeOut, costUsd: 0.001 },
+      { text: gatesOut, costUsd: 0.002 },
+      { text: claimsOut, costUsd: 0.003 },
+      { text: lensOk, costUsd: 0.004 }, // C1 feasibility
+      { text: lensOk, costUsd: 0.005 }, // C1 prior-art
+    ]);
+    const r = await deriveV2(base(llm));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.costUsd).toBeCloseTo(0.015, 10);
+  });
+
+  it("reports cost even when only some stages report it (partial)", async () => {
+    const llm = new MockLlm([
+      { text: decomposeOut, costUsd: 0.001 },
+      { text: gatesOut }, // no cost reported
+      { text: claimsOut, costUsd: 0.003 },
+      { text: lensOk },
+      { text: lensOk },
+    ]);
+    const r = await deriveV2(base(llm));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.costUsd).toBeCloseTo(0.004, 10);
   });
 
   it("a refuted load-bearing claim (with evidence) blocks the plan — the poker path", async () => {

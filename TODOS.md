@@ -19,9 +19,15 @@ NO code change — it already honors `OPENROUTER_BASE_URL`/`OPENROUTER_API_KEY`.
       from a skill-schema dep skew; see session notes). Proxy now passes
       `Content-Encoding` through transparently (gzip/br/deflate decompressed,
       stale header stripped) — the fix that unblocked undici/`ser`.
-- [ ] ser: surface proxy spend headers (if present) in the trace/budget meter
-      instead of price-table arithmetic — STILL OPEN (optional; spend is
-      metered server-side per grant_id, ser still uses A5 price-table cost).
+- [~] ser: surface REAL spend instead of price-table arithmetic — PLANNER DONE
+      (A36): the proxy emits no spend headers, but OpenRouter reports actual
+      `usage.cost` in the body when asked; OpenRouterClient now opts in
+      (`usage:{include:true}`) and `ser talk` compile prints "planner spend:
+      $X (actual, provider-reported)", price-table the fallback when unreported.
+      ENGINE meter still on A5 price-table — pi-ai computes cost from a (zeroed)
+      price config, not OpenRouter's billed cost, and the harness is walled from
+      pi. Unblock levers: a proxy spend-header ser reads per call, OR pi-ai
+      `usage.include` passthrough. (owner chose planner-first, 2026-06-13)
 - [ ] docs: "ser without secrets" setup path — STILL OPEN (the grant recipe in
       A35 is the source; a user-facing doc page is not yet written).
 Why it fits the thesis: loops spend money unattended; the credential

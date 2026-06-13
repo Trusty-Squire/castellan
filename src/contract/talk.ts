@@ -94,6 +94,9 @@ async function deriveSpec(ctx: TalkActionContext, lines: string[]): Promise<stri
   const mp = missionPathFor(ctx.specPath);
   writeFileSync(mp, yamlStringify(result.mission));
   lines.push(result.readback, `mission written: ${mp}`);
+  if (result.costUsd !== undefined) {
+    lines.push(`planner spend: $${result.costUsd.toFixed(4)} (actual, provider-reported)`);
+  }
   return mp;
 }
 

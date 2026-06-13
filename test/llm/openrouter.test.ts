@@ -31,6 +31,43 @@ describe("OpenRouterClient", () => {
     const body = JSON.parse(String(captured!.body));
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(body.model).toBe("m");
+    // opts into provider-reported cost (A36)
+    expect(body.usage).toEqual({ include: true });
+  });
+
+  it("surfaces provider-reported cost (usage.cost) as costUsd", async () => {
+    const client = new OpenRouterClient({
+      apiKey: "k",
+      fetchImpl: (async () =>
+        jsonResponse({
+          choices: [{ message: { content: "{}" } }],
+          usage: { prompt_tokens: 8, completion_tokens: 5, cost: 0.0000042 },
+        })) as unknown as typeof fetch,
+    });
+    const r = await client.complete({ model: "m", system: "s", user: "u", maxTokens: 100 });
+    expect(r.costUsd).toBe(0.0000042);
+  });
+
+  it("leaves costUsd undefined when the provider reports no cost", async () => {
+    const client = new OpenRouterClient({
+      apiKey: "k",
+      fetchImpl: (async () => jsonResponse(okBody)) as unknown as typeof fetch,
+    });
+    const r = await client.complete({ model: "m", system: "s", user: "u", maxTokens: 100 });
+    expect(r.costUsd).toBeUndefined();
+  });
+
+  it("ignores a non-finite or negative reported cost", async () => {
+    const client = new OpenRouterClient({
+      apiKey: "k",
+      fetchImpl: (async () =>
+        jsonResponse({
+          choices: [{ message: { content: "{}" } }],
+          usage: { prompt_tokens: 8, completion_tokens: 5, cost: -1 },
+        })) as unknown as typeof fetch,
+    });
+    const r = await client.complete({ model: "m", system: "s", user: "u", maxTokens: 100 });
+    expect(r.costUsd).toBeUndefined();
   });
 
   it("retries on 5xx then succeeds", async () => {
