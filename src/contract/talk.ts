@@ -4,7 +4,7 @@ import { stringify as yamlStringify } from "yaml";
 import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { parseMission } from "./schema.js";
-import { parseSpec, unverifiedLoadBearing } from "./spec.js";
+import { parseSpec, unverifiedLoadBearing, type Spec } from "./spec.js";
 import { checkSpec, verifyClaim, type DeltaBatch } from "./spec-session.js";
 import { deriveV2 } from "./derive2.js";
 import { scoreSpec, renderScoreLine } from "./spec-score.js";
@@ -100,6 +100,38 @@ async function deriveSpec(ctx: TalkActionContext, lines: string[]): Promise<stri
   return mp;
 }
 
+/**
+ * The plan in plain words — what `ser talk` presents when asked to show the
+ * architecture / requirements / stories (and on the flip to buildable). Terse
+ * but COMPLETE: every requirement with its gate, the decisions made, the
+ * stories served, what's still open.
+ */
+export function renderPlan(spec: Spec): string[] {
+  const lines: string[] = [];
+  lines.push(`thesis: ${spec.thesis}`);
+  if (spec.stories.length > 0) {
+    lines.push(`stories (${spec.stories.length}):`);
+    for (const s of spec.stories) lines.push(`  • ${s}`);
+  }
+  lines.push(`requirements (${spec.requirements.length}):`);
+  for (const r of spec.requirements) {
+    const a = r.acceptance;
+    const gate =
+      a.tier === 0 ? "no gate yet" : a.tier === 4 ? `tier4 artifact: ${a.artifact}` : `tier${a.tier}: ${a.gate}`;
+    lines.push(`  ${r.id} ${r.statement} [${gate}]`);
+  }
+  if (spec.decisions.length > 0) {
+    lines.push(`decisions (${spec.decisions.length}):`);
+    for (const d of spec.decisions) lines.push(`  ${d.id} ${d.statement}`);
+  }
+  const blocking = spec.open_questions.filter((q) => q.blocking);
+  if (spec.open_questions.length > 0) {
+    lines.push(`open questions (${blocking.length} blocking):`);
+    for (const q of spec.open_questions) lines.push(`  ${q.id} ${q.text}${q.blocking ? " *" : ""}`);
+  }
+  return lines;
+}
+
 export async function dispatchAction(
   action: TalkAction,
   arg: string,
@@ -113,12 +145,7 @@ export async function dispatchAction(
     case "status":
     case "check": {
       const spec = parseSpec(readFileSync(ctx.specPath, "utf8"), ctx.specPath);
-      if (action === "status") {
-        lines.push(
-          `spec: ${spec.requirements.length} requirement(s), ${spec.decisions.length} decision(s), ` +
-            `${spec.claims.length} claim(s), ${spec.open_questions.length} open question(s)`,
-        );
-      }
+      if (action === "status") lines.push(...renderPlan(spec));
       lines.push(...checkSpec(spec).lines);
       return lines;
     }

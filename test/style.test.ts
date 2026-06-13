@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeStyler, colorsEnabled, styleDeltaSummary } from "../src/style.js";
+import { makeStyler, colorsEnabled, styleDeltaSummary, styleLockedIn } from "../src/style.js";
 
 describe("makeStyler", () => {
   it("wraps in ANSI when enabled", () => {
@@ -57,5 +57,22 @@ describe("styleDeltaSummary", () => {
     const s = makeStyler(true);
     const out = styleDeltaSummary([{ op: "add", section: "claims", id: "C1" }], s);
     expect(out).toContain("\x1b[32m+claims:C1\x1b[0m"); // green add
+  });
+});
+
+describe("styleLockedIn", () => {
+  it("says what was decided/recorded in plain words, not structural tokens", () => {
+    const s = makeStyler(false);
+    const out = styleLockedIn(
+      [
+        { op: "add", section: "decisions", value: { statement: "storage = SQLite" } },
+        { op: "resolve", section: "open_questions", id: "Q1" },
+        { op: "add", section: "requirements", value: { statement: "voice loop" } },
+      ],
+      s,
+    );
+    expect(out).toContain("decided: storage = SQLite");
+    expect(out).toContain("resolved ✓");
+    expect(out).toContain("+req: voice loop");
   });
 });

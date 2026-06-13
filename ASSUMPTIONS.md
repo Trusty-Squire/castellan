@@ -224,6 +224,27 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   and the harness never imports pi (invariant). Surfacing real engine spend
   needs an out-of-repo lever: a proxy spend header, or pi-ai `usage.include`
   passthrough. Owner chose planner-first (2026-06-13). Extends A5 and A35.
+- A37. `ser talk` was uncommunicative and re-asked answered questions. Three
+  fixes (2026-06-13): (1) PRESENT THE PLAN — `renderPlan` lists every
+  requirement with its gate + stories + decisions + open forks; "show/present
+  the architecture/plan/stories" routes to action:status mechanically
+  (SHOW_PLAN_RE), and the plan prints on the flip to buildable, before inviting
+  "build it". (2) TERSE ≠ UNCOMMUNICATIVE — `styleLockedIn` reports what was
+  recorded in words ("decided: storage=SQLite", "resolved ✓", "+req: …")
+  instead of the cryptic token form. (3) GUARANTEE CAPTURE — the conversation
+  is disposable; the spec is the only memory (spec-session.ts:528 feeds the
+  model only SPEC + MESSAGE, no history), so an answer survives only if written
+  to the spec. The mapper now emits `asking` (the surfaced open_question id);
+  when the user answers it next turn and the model forgets the resolve, the
+  harness force-resolves it + records the answer as a decision — but ONLY when
+  the asked question is unambiguous (model-flagged `asking`, or exactly one open
+  fork) and the message is answer-shaped (not a meta/command, META_RE), because
+  force-resolving the wrong question would corrupt the spec. KNOWN LIMITATION:
+  the dominant live failure is the model SPONTANEOUSLY RE-ADDING a question
+  already answered by a decision (e.g. "what's her age?" while a decision records
+  "4-year-old") — a SEMANTIC duplicate lexical rules miss. A reliable fix needs
+  an LLM-assisted reconcile pass (harness-driven, deterministic application);
+  not yet built — owner decision pending.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

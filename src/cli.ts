@@ -326,13 +326,13 @@ async function cmdSpec(args: string[]): Promise<number> {
 async function cmdTalk(args: string[]): Promise<number> {
   const flags = parseFlags(args, ["chain", "chains", "budget"]);
   const { SpecSession } = await import("./contract/spec-session.js");
-  const { dispatchAction, ensureSpecFile } = await import("./contract/talk.js");
+  const { dispatchAction, ensureSpecFile, renderPlan } = await import("./contract/talk.js");
 
   // Color: --no-color forces off, --color forces on, else auto (TTY or
   // FORCE_COLOR/CLICOLOR_FORCE). Auto-detection is unreliable under some
   // tmux/SSH/phone setups, hence the explicit flag.
   const colorOverride = flags.bool.has("no-color") ? false : flags.bool.has("color") ? true : undefined;
-  const { makeStyler, colorsEnabled, styleDeltaSummary } = await import("./style.js");
+  const { makeStyler, colorsEnabled, styleLockedIn } = await import("./style.js");
   const st = makeStyler(colorsEnabled(process.env, Boolean(process.stdout.isTTY), colorOverride));
 
   const { path: specFile, created } = ensureSpecFile(process.cwd(), flags.positional[0]);
@@ -427,7 +427,7 @@ async function cmdTalk(args: string[]): Promise<number> {
         if (applied.length > 0) {
           undoStack.push(before);
           if (undoStack.length > 20) undoStack = undoStack.slice(-20);
-          note(styleDeltaSummary(applied, st));
+          note(styleLockedIn(applied, st));
         }
         if (dropped.length > 0) note(st.red(`${dropped.length} edit(s) didn't apply`));
       }
@@ -443,8 +443,12 @@ async function cmdTalk(args: string[]): Promise<number> {
         }
       }
       // Readiness: announce ONLY on the flip to buildable (mechanical = instant, free).
+      // Present the plan BEFORE inviting "build it" — so the user sees what they'd ship.
       const ready = (await scoreSpec(session.load())).ready;
-      if (ready && !lastReady) process.stdout.write(st.green('\n✓ that\'s buildable — say "build it" when you want to go.') + "\n");
+      if (ready && !lastReady) {
+        for (const line of renderPlan(session.load())) process.stdout.write(st.dim(line) + "\n");
+        process.stdout.write(st.green('\n✓ that\'s buildable — say "build it" when you want to go.') + "\n");
+      }
       lastReady = ready;
     } catch (err) {
       note(st.red(`hiccup: ${(err as Error).message.split("\n")[0]} — keep talking`));

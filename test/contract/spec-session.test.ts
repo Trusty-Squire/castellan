@@ -53,6 +53,7 @@ const batchAddDecision: DeltaBatch = {
   action: "none",
   action_arg: "",
   pivot: false,
+  asking: "",
 };
 
 describe("applyDeltas (pure, validated)", () => {
@@ -74,6 +75,36 @@ describe("applyDeltas (pure, validated)", () => {
     expect(() =>
       applyDeltas(parseSpec(baseSpec), [{ section: "requirements", op: "modify", id: "R9", value: {}, drift: false }]),
     ).toThrow(/not found/);
+  });
+});
+
+describe("SpecSession — guarantees the answer is recorded (A37)", () => {
+  const ask = JSON.stringify({ reply: "what's the pricing?", deltas: [], question: "pricing?", asking: "Q1", action: "none" });
+
+  it("records an answered question even when the model forgets to resolve it", async () => {
+    // Turn 1 surfaces Q1; turn 2 the user answers but the model drops the record.
+    const llm = new MockLlm([{ text: ask }, { text: JSON.stringify({ reply: "got it", deltas: [], action: "none" }) }]);
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y" });
+    await s.turn("let's settle pricing"); // sets lastAsked = Q1
+    const batch = await s.turn("freemium tier, no discounts");
+    // the harness injected the resolve + a decision capturing the answer
+    expect(batch.deltas.some((d) => d.section === "open_questions" && d.op === "resolve" && d.id === "Q1")).toBe(true);
+    const decision = batch.deltas.find((d) => d.section === "decisions" && d.op === "add");
+    expect(decision).toBeDefined();
+    expect((decision!.value as { statement: string }).statement).toContain("freemium tier, no discounts");
+    // applying it actually clears the blocking question — so it is never re-asked
+    const next = applyDeltas(s.load(), batch.deltas);
+    expect(next.open_questions).toHaveLength(0);
+  });
+
+  it("does NOT record a meta-request as the answer — it routes to status instead", async () => {
+    const llm = new MockLlm([{ text: ask }, { text: JSON.stringify({ reply: "", deltas: [], action: "none" }) }]);
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y" });
+    await s.turn("let's settle pricing"); // lastAsked = Q1
+    const batch = await s.turn("present the architecture and user stories");
+    expect(batch.action).toBe("status"); // show the plan, don't lock-in+ask
+    expect(batch.deltas.some((d) => d.section === "open_questions" && d.op === "resolve")).toBe(false);
+    expect(batch.deltas.some((d) => d.section === "decisions")).toBe(false);
   });
 });
 

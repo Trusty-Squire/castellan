@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, utimesSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dispatchAction, missionPathFor, ensureSpecFile, blankSpec, type TalkActionContext } from "../../src/contract/talk.js";
+import { dispatchAction, missionPathFor, ensureSpecFile, blankSpec, renderPlan, type TalkActionContext } from "../../src/contract/talk.js";
 import { DeltaBatchSchema, salvageBatch, DELTA_MAPPER_PROMPT } from "../../src/contract/spec-session.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { SquireError } from "../../src/errors.js";
@@ -119,12 +119,22 @@ describe("dispatchAction (mechanical, no LLM unless the action needs one)", () =
     expect(lines.join("\n")).toContain("NOT ready");
   });
 
-  it("status prepends the spec inventory", async () => {
+  it("renderPlan lists each requirement with its gate, plus decisions", () => {
+    const spec = parseSpec(buildReadySpec);
+    const out = renderPlan(spec).join("\n");
+    expect(out).toContain("R1 voice interaction loop [tier1: node --test loop]");
+    expect(out).toContain("R2 child-safe content [tier4 artifact: review.md]");
+    expect(out).toContain("thesis: a fox companion for kids");
+  });
+
+  it("status presents the full plan (thesis, requirements + gates) then the gates", async () => {
     const p = join(dir, "x.spec.yaml");
     writeFileSync(p, readySpec);
     const lines = await dispatchAction("status", "", ctx(p));
-    expect(lines[0]).toContain("1 requirement(s)");
-    expect(lines.join("\n")).toContain("READY to compile");
+    const out = lines.join("\n");
+    expect(lines[0]).toContain("thesis:");
+    expect(out).toContain("requirements (1)");
+    expect(out).toContain("READY to compile");
   });
 
   it("verify with nothing to verify says so without an LLM call", async () => {

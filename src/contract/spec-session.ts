@@ -51,6 +51,12 @@ export const DeltaBatchSchema = z.object({
   /** Set by the harness when this batch pivots to a NEW product (drift thesis) —
    * the stale requirements/decisions are reset rather than appended to. */
   pivot: z.boolean().default(false),
+  /** The open_question id the model is surfacing this turn (e.g. "Q3"). The
+   * harness remembers it so that when the user answers next turn it GUARANTEES
+   * the answer is recorded — resolve + decision — even if the model forgets
+   * (A37: a dropped record, not a re-ask, was the real bug). Empty if nothing
+   * is asked; pure bookkeeping, never shown. */
+  asking: z.string().default(""),
 });
 
 export type DeltaBatch = z.infer<typeof DeltaBatchSchema>;
@@ -58,6 +64,36 @@ export type DeltaBatch = z.infer<typeof DeltaBatchSchema>;
 /** Detect a pivot to a different product: a thesis modify flagged as drift. */
 export function isPivot(deltas: Delta[]): boolean {
   return deltas.some((d) => d.section === "thesis" && d.op === "modify" && d.drift === true);
+}
+
+// A message that opens with one of these reads as a COMMAND / meta-request, not
+// an answer to the question on the table — so the harness must NOT record it as
+// the answer (would corrupt the spec with "present your architecture" as a value).
+const META_RE =
+  /^\s*(present|show|display|explain|describe|list|give|what|which|when|where|who|how|why|build|run|ship|go\b|derive|compile|deploy|check|verify|score|status|ready|undo|redo|done|stop|is (it|this|that)|are (we|you)|can you|could you|tell me|walk me|let'?s)/i;
+
+// A message asking to SEE the plan — route to the status action, don't lock-in+ask.
+const SHOW_PLAN_RE =
+  /\b(architecture|user stories|the plan|the spec|the design|requirements|blueprint|show me|present|walk me through)\b/i;
+
+/** True when a message reads like an ANSWER to a question, not a command/meta-request. */
+export function isAnswerShaped(msg: string): boolean {
+  return msg.trim().length > 0 && !META_RE.test(msg);
+}
+
+/** The blocking open_questions that remain after applying `deltas` to `spec`. */
+export function remainingBlockingQuestions(spec: Spec, deltas: Delta[]): { id: string; text: string }[] {
+  const live = new Map<string, string>();
+  for (const q of spec.open_questions) if (q.blocking) live.set(q.id, q.text);
+  for (const d of deltas) {
+    if (d.section !== "open_questions") continue;
+    if ((d.op === "resolve" || d.op === "remove") && d.id) live.delete(d.id);
+    if (d.op === "add" && d.value && typeof d.value === "object") {
+      const v = d.value as { id?: string; text?: string; blocking?: boolean };
+      if (v.id && v.blocking !== false) live.set(v.id, v.text ?? "");
+    }
+  }
+  return [...live].map(([id, text]) => ({ id, text }));
 }
 
 /** A clean slate for a pivot — keeps nothing; the batch's thesis + adds repopulate it. */
@@ -105,7 +141,16 @@ work was performed and never report results yourself; keep the reply to intent
 because it is "built" — only its gate, at run time, can prove that.
 
 For each user message output JSON:
-{"reply": "...", "deltas": [...], "question": ""}
+{"reply": "...", "deltas": [...], "question": "", "asking": "", "action": "none"}
+
+asking — the open_question id you are surfacing this turn (e.g. "Q3"), or "" if
+you ask nothing. The harness remembers it: when the user answers next turn it
+GUARANTEES the answer is recorded even if you forget the resolve. Pure
+bookkeeping — never appears in the reply. Always set it to the id you ask.
+
+SHOW THE PLAN: when the user asks to SEE it — "present/show the architecture",
+"what are the requirements / user stories", "show me the plan/spec/design" —
+do NOT lock-in+ask. Set action:"status"; the harness prints the whole plan.
 
 reply — a CONVERSATION, not a status report. Never dump a list of
 capabilities and stop. Each turn, in <=80 words, do TWO things:
@@ -297,6 +342,7 @@ export function salvageBatch(raw: unknown): DeltaBatch {
     action,
     action_arg: typeof o.action_arg === "string" ? o.action_arg : "",
     pivot: false, // set by finishTurn from the deltas
+    asking: typeof o.asking === "string" ? o.asking : "",
   };
 }
 
@@ -495,6 +541,9 @@ export class SpecSession {
   private readonly opts: SpecSessionOptions;
   private consecutiveRejections = 0;
   private usage = { in: 0, out: 0 };
+  /** The open_question the model surfaced last turn, so the next answer is
+   *  guaranteed-recorded even if the model forgets to resolve it (A37). */
+  private lastAskedId = "";
 
   constructor(opts: SpecSessionOptions) {
     this.opts = opts;
@@ -540,13 +589,13 @@ export class SpecSession {
             ? { ...(parsed.value as object), deltas: coerceRawDeltas((parsed.value as { deltas?: unknown }).deltas) }
             : parsed.value;
         const checked = DeltaBatchSchema.safeParse(coerced);
-        if (checked.success) return this.finishTurn(markDrift(checked.data), spec);
-        if (attempt === 1) return this.finishTurn(salvageBatch(parsed.value), spec); // degrade, never crash
+        if (checked.success) return this.postProcess(markDrift(checked.data), spec, userMessage);
+        if (attempt === 1) return this.postProcess(salvageBatch(parsed.value), spec, userMessage); // degrade, never crash
         note = `\n\nYour previous output failed validation:\n${formatZodIssues(checked.error.issues)}`;
       } else {
         if (attempt === 1) {
           // Bookkeeping failed twice; keep the conversation alive with raw text.
-          return { deltas: [], question: "", note: "", reply: res.text.slice(0, 400), action: "none" as const, action_arg: "", pivot: false };
+          return { deltas: [], question: "", note: "", reply: res.text.slice(0, 400), action: "none" as const, action_arg: "", pivot: false, asking: "" };
         }
         note = `\n\nYour previous output was not valid JSON: ${parsed.error}`;
       }
@@ -559,6 +608,61 @@ export class SpecSession {
     const pivot = isPivot(b.deltas);
     const base = pivot ? blankPivotSpec() : spec;
     return { ...b, deltas: normalizeDeltas(base, b.deltas), pivot };
+  }
+
+  /**
+   * Between the model's raw batch and the applied one, do the two things the
+   * model is unreliable at (A37):
+   *  1. GUARANTEE the answer is recorded. If last turn asked a blocking
+   *     question and this message answers it but the model didn't resolve it,
+   *     the harness resolves it + records the answer as a decision — so the
+   *     spec (the ONLY memory) actually holds it and it is never re-asked.
+   *  2. PRESENT the plan on request. "show/present the architecture/plan" maps
+   *     to the status action (the harness prints the full plan) instead of a
+   *     lock-in + re-ask.
+   * Then remember the question now on the table for next turn's guarantee.
+   */
+  private postProcess(batch: DeltaBatch, spec: Spec, userMessage: string): DeltaBatch {
+    if (!isPivot(batch.deltas)) {
+      if (batch.action === "none" && SHOW_PLAN_RE.test(userMessage)) {
+        batch.action = "status";
+        if (!batch.reply.trim()) batch.reply = "here's where the plan stands:";
+      }
+      if (
+        batch.action === "none" &&
+        this.lastAskedId &&
+        isAnswerShaped(userMessage) &&
+        !batch.deltas.some(
+          (d) => d.section === "open_questions" && (d.op === "resolve" || d.op === "remove") && d.id === this.lastAskedId,
+        )
+      ) {
+        const q = spec.open_questions.find((o) => o.id === this.lastAskedId && o.blocking);
+        if (q) {
+          batch.deltas.push(
+            { section: "open_questions", op: "resolve", id: q.id, drift: false },
+            {
+              section: "decisions",
+              op: "add",
+              drift: false,
+              value: {
+                statement: `${q.text} → ${userMessage.trim()}`,
+                rationale: "recorded from the user's answer",
+                claims: [],
+              },
+            },
+          );
+        }
+      }
+    }
+    const finished = this.finishTurn(batch, spec);
+    const remaining = remainingBlockingQuestions(spec, finished.deltas);
+    this.lastAskedId =
+      batch.asking && remaining.some((q) => q.id === batch.asking)
+        ? batch.asking
+        : remaining.length === 1
+          ? remaining[0]!.id
+          : "";
+    return finished;
   }
 
   /** Accept a batch: apply, save, git-commit. Resets the rejection counter. */
