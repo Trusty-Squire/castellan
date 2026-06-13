@@ -239,12 +239,16 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   harness force-resolves it + records the answer as a decision — but ONLY when
   the asked question is unambiguous (model-flagged `asking`, or exactly one open
   fork) and the message is answer-shaped (not a meta/command, META_RE), because
-  force-resolving the wrong question would corrupt the spec. KNOWN LIMITATION:
-  the dominant live failure is the model SPONTANEOUSLY RE-ADDING a question
-  already answered by a decision (e.g. "what's her age?" while a decision records
-  "4-year-old") — a SEMANTIC duplicate lexical rules miss. A reliable fix needs
-  an LLM-assisted reconcile pass (harness-driven, deterministic application);
-  not yet built — owner decision pending.
+  force-resolving the wrong question would corrupt the spec. (4) RECONCILE —
+  the dominant live failure is the model SPONTANEOUSLY RE-ADDING a question a
+  decision already answers ("what's her age?" while a decision records
+  "4-year-old"), a SEMANTIC duplicate lexical rules miss. `SpecSession.reconcile`
+  (run by the REPL after each accepted turn, only when ≥1 decision and ≥1
+  blocking question coexist) makes ONE narrow cheap-model call — "which open
+  questions does a decision already answer?" — and the harness validates the
+  ids and applies the resolves. The model only IDENTIFIES; the harness ACTS
+  (A28 pattern). Best-effort: bad JSON / network resolves nothing, never throws.
+  Owner chose the LLM-reconcile approach over lexical/prompt-only (2026-06-13).
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

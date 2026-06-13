@@ -431,6 +431,14 @@ async function cmdTalk(args: string[]): Promise<number> {
         }
         if (dropped.length > 0) note(st.red(`${dropped.length} edit(s) didn't apply`));
       }
+      // Semantic dedupe (A37): resolve forks a decision already answers, so the
+      // mapper stops re-asking settled questions. Harness-applied; best-effort.
+      try {
+        const cleared = await session.reconcile();
+        if (cleared.length > 0) note(st.dim(`cleared ${cleared.length} already-answered question(s)`));
+      } catch {
+        /* reconcile is best-effort — never break the conversation */
+      }
       if (batch.action !== "none") {
         try {
           for (const line of await dispatchAction(batch.action, batch.action_arg, actionCtx)) {

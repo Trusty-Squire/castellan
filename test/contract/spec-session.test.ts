@@ -108,6 +108,48 @@ describe("SpecSession — guarantees the answer is recorded (A37)", () => {
   });
 });
 
+describe("SpecSession.reconcile — drop questions a decision already answers (A37)", () => {
+  const answeredSpec = `
+thesis: "a companion for my kid"
+requirements:
+  - id: R1
+    statement: "voice loop"
+    acceptance: { tier: 1, gate: "node --test" }
+decisions:
+  - id: D1
+    statement: "designed for a 4-year-old child"
+    rationale: "the user said she is 4"
+open_questions:
+  - { id: Q1, text: "what is the child's age?", blocking: true }
+  - { id: Q2, text: "which laptop OS?", blocking: true }
+`;
+
+  it("resolves the question the decision answers, leaves the rest open", async () => {
+    writeFileSync(specPath, answeredSpec);
+    // the model identifies Q1 as answered by D1; the harness applies the resolve
+    const llm = new MockLlm([{ text: JSON.stringify({ resolved: [{ question: "Q1", decision: "D1" }] }) }]);
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y" });
+    const cleared = await s.reconcile();
+    expect(cleared.map((d) => d.id)).toEqual(["Q1"]);
+    const after = s.load();
+    expect(after.open_questions.map((q) => q.id)).toEqual(["Q2"]);
+  });
+
+  it("makes NO call and resolves nothing when there are no decisions", async () => {
+    writeFileSync(specPath, baseSpec); // Q1 blocking, zero decisions
+    const llm = new MockLlm([]); // would throw if called
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y" });
+    expect(await s.reconcile()).toEqual([]);
+  });
+
+  it("ignores ids the model invents (never resolves a question a decision doesn't justify)", async () => {
+    writeFileSync(specPath, answeredSpec);
+    const llm = new MockLlm([{ text: JSON.stringify({ resolved: [{ question: "Q2", decision: "D9" }] }) }]);
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y" });
+    expect(await s.reconcile()).toEqual([]); // D9 isn't a real decision
+  });
+});
+
 describe("SpecSession — the artifact is the state", () => {
   it("turn proposes deltas; accept applies, saves, git-commits; resume = new session reads same state", async () => {
     const llm = new MockLlm([{ text: JSON.stringify(batchAddDecision) }]);

@@ -526,6 +526,27 @@ export function normalizeDeltas(spec: Spec, deltas: Delta[]): Delta[] {
   return out;
 }
 
+// ── Reconcile: resolve open_questions a decision already answers (A37) ──
+// The mapper re-asks questions the spec already answers, as SEMANTIC duplicates
+// ("what's her age?" while a decision records "4-year-old") that lexical rules
+// can't catch. This is the one judgment that needs a model — but the model only
+// IDENTIFIES; the harness applies the resolves. Narrow task, cheap model.
+export const RECONCILE_PROMPT = `You are a STRICT bookkeeper. Below are DECISIONS already locked in and OPEN
+QUESTIONS still being asked. Return ONLY the questions that a decision ALREADY,
+DEFINITIVELY answers — asking them again would make the user repeat themselves.
+Be conservative: if no decision clearly answers a question, LEAVE IT OPEN.
+Match on meaning, not words (a decision "designed for a 4-year-old" answers
+"what is the child's age?"). Output ONLY JSON:
+{"resolved":[{"question":"Q#","decision":"D#"}]}`;
+
+const ReconcileSchema = z
+  .object({
+    resolved: z
+      .array(z.object({ question: z.string(), decision: z.string() }).passthrough())
+      .default([]),
+  })
+  .passthrough();
+
 export interface SpecSessionOptions {
   path: string;
   llm: LlmClient;
@@ -695,6 +716,65 @@ export class SpecSession {
       }
     }
     return { applied, dropped };
+  }
+
+  /**
+   * Resolve open_questions an existing decision already answers (A37) — the
+   * semantic dedupe the mapper won't do, so the spec stops carrying (and the
+   * model stops re-asking) settled questions. The model only identifies; the
+   * harness validates the ids and applies the resolves. Best-effort: any
+   * failure (bad JSON, network) resolves nothing rather than throwing. Skips
+   * the call entirely unless there is both a decision and a blocking question.
+   * Returns the resolve deltas applied.
+   */
+  async reconcile(): Promise<Delta[]> {
+    const spec = this.load();
+    const blocking = spec.open_questions.filter((q) => q.blocking);
+    if (spec.decisions.length === 0 || blocking.length === 0) return [];
+    let res;
+    try {
+      res = await this.opts.llm.complete({
+        model: this.opts.executorModel,
+        system: RECONCILE_PROMPT,
+        user:
+          `DECISIONS:\n${spec.decisions.map((d) => `${d.id}: ${d.statement}`).join("\n")}\n\n` +
+          `OPEN QUESTIONS:\n${blocking.map((q) => `${q.id}: ${q.text}`).join("\n")}`,
+        json: true,
+        maxTokens: 600,
+      });
+    } catch {
+      return [];
+    }
+    this.usage.in += res.inTokens;
+    this.usage.out += res.outTokens;
+    const parsed = tryParseJson(res.text);
+    if (!parsed.ok) return [];
+    const checked = ReconcileSchema.safeParse(parsed.value);
+    if (!checked.success) return [];
+    const qIds = new Set(blocking.map((q) => q.id));
+    const dIds = new Set(spec.decisions.map((d) => d.id));
+    const deltas: Delta[] = [];
+    const seen = new Set<string>();
+    for (const item of checked.data.resolved) {
+      // only resolve a REAL blocking question justified by a REAL decision
+      if (qIds.has(item.question) && dIds.has(item.decision) && !seen.has(item.question)) {
+        seen.add(item.question);
+        deltas.push({ section: "open_questions", op: "resolve", id: item.question, drift: false });
+      }
+    }
+    if (deltas.length === 0) return [];
+    const next = applyDeltas(spec, deltas);
+    writeFileSync(this.path, yamlStringify(next));
+    if (this.opts.git !== false) {
+      const dir = dirname(this.path);
+      await execa("git", ["add", basename(this.path)], { cwd: dir, reject: false });
+      await execa(
+        "git",
+        ["commit", "-q", "-m", `spec(${basename(this.path)}): reconcile ${deltas.length} answered`],
+        { cwd: dir, reject: false },
+      );
+    }
+    return deltas;
   }
 
   /** Reject a batch: nothing applies; repeated rejections escalate the model. */
