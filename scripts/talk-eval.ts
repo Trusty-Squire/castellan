@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 import { OpenRouterClient } from "../src/llm/openrouter.js";
+import { ClaudeCliClient } from "../src/llm/claude-cli.js";
+import type { LlmClient } from "../src/llm/types.js";
 import { resolveChains } from "../src/contract/derive.js";
 import { resolveChain } from "../src/contract/schema.js";
 import { SpecSession } from "../src/contract/spec-session.js";
@@ -129,12 +131,28 @@ async function main(): Promise<void> {
   const only = args.includes("--scenario") ? args[args.indexOf("--scenario") + 1] : undefined;
   const userModelOverride = args.includes("--user-model") ? args[args.indexOf("--user-model") + 1] : undefined;
 
-  loadDotEnv(process.cwd()); // same env path as `ser` — picks up ~/.config/castellan/.env
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY required for talk-eval (it makes real model calls)");
-  const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
-  const { chains } = resolveChains(process.cwd());
-  const chain = resolveChain(chains, "cheap");
+  // Worker selection (A39): default to the Claude Code subscription (free-ish),
+  // not the metered OpenRouter grant. Haiku is the engine under test; a stronger
+  // Claude judges + plays the simulated user.
+  const worker = args.includes("--worker") ? args[args.indexOf("--worker") + 1] : "claude";
+  let llm: LlmClient;
+  let mapperModel: string;
+  let richModel: string;
+  if (worker === "openrouter") {
+    loadDotEnv(process.cwd());
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error("OPENROUTER_API_KEY required for --worker openrouter");
+    llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
+    const { chains } = resolveChains(process.cwd());
+    const chain = resolveChain(chains, "cheap");
+    mapperModel = chain.executor;
+    richModel = userModelOverride ?? chain.knight;
+  } else {
+    llm = new ClaudeCliClient();
+    mapperModel = "claude-haiku-4-5"; // the cheap engine under test
+    richModel = userModelOverride ?? "claude-sonnet-4-6"; // judges + simulated user
+  }
+  process.stderr.write(`worker: ${worker}  (mapper=${mapperModel}, judge/user=${richModel})\n`);
 
   const scenarios = only ? SCENARIOS.filter((s) => s.id === only) : SCENARIOS;
   if (scenarios.length === 0) throw new Error(`no scenario matched "${only}"`);
@@ -151,17 +169,17 @@ async function main(): Promise<void> {
     const dir = mkdtempSync(join(tmpdir(), `talk-eval-${scenario.id}-`));
     const deps: RunDeps = {
       mapperLlm: llm,
-      mapperModel: chain.executor,
-      knightModel: chain.knight,
+      mapperModel,
+      knightModel: richModel,
       userLlm: llm,
-      userModel: userModelOverride ?? chain.knight, // a stronger sim-user answers faithfully
+      userModel: richModel, // a stronger model answers as the user faithfully
       specPath: join(dir, "eval.spec.yaml"),
     };
 
     // ── Tier 1: process quality (mechanical + funnel-aware judge) ──
     const { transcript, finalSpec } = await runScenario(scenario, deps);
     const mech = scoreTranscript(scenario, transcript);
-    const pj = await judgeProcess(scenario, transcript, llm, chain.knight).catch(() => null);
+    const pj = await judgeProcess(scenario, transcript, llm, richModel).catch(() => null);
     tier1.push([
       scenario.id,
       pct(mech.factsRecorded),
@@ -174,11 +192,11 @@ async function main(): Promise<void> {
 
     // ── Tier 2: output vs same-facts vanilla one-shot (the ablation) ──
     process.stderr.write(`  generating vanilla baseline…\n`);
-    const vanilla = await generateVanillaSpec(scenario, llm, chain.executor);
+    const vanilla = await generateVanillaSpec(scenario, llm, mapperModel);
     const serQ = specQuality(finalSpec, scenario);
     const vanQ = specQuality(vanilla, scenario);
     const { a, b, serIs } = blindAssign(finalSpec, vanilla, si % 2 === 1); // randomize A/B by parity
-    const verdict = await judgeSpecPair(scenario.idea, a, b, llm, chain.knight).catch(() => null);
+    const verdict = await judgeSpecPair(scenario.idea, a, b, llm, richModel).catch(() => null);
     let serWon = "n/a";
     if (verdict) {
       judged += 1;

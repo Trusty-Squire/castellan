@@ -294,6 +294,24 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   the blind judge, ser captured 50% of facts vs vanilla's 100%. i.e. as built,
   the conversation UNDERPERFORMS a same-facts one-shot — the instrument now
   exists to drive that lift positive (needs full multi-scenario runs to confirm).
+- A39. The conversation engine is improved by a GATED SELF-IMPROVEMENT LOOP, not
+  hand-dogfooding (owner direction 2026-06-13): the smart agent (Claude main)
+  is the optimizer; the two-tier eval (A38) is the gate; git is the memory.
+  One iteration = read results/talk-eval JSON → pick the worst metric (baseline
+  n=3: mean Tier-2 lift ≈ −24, root cause = fact-capture, judge forks 2/5) →
+  one targeted edit to the ser engine (mapper prompt or a mechanic) → `pnpm
+  test` must stay green (guardrail) → `pnpm talk-eval` (fitness) → commit if
+  lift rose, `git reset` if not. Exactly ser's own attempt→gate→commit/reset
+  node loop, applied reflexively to ser. WORKER = Claude Haiku via the user's
+  SUBSCRIPTION, not metered OpenRouter — bridged through `ClaudeCliClient`
+  (src/llm/claude-cli.ts), an LlmClient that shells to `claude -p --model
+  <m> --output-format json` (Haiku = engine under test; a stronger Claude =
+  judges + simulated user). `pnpm talk-eval` defaults to `--worker claude`;
+  `--worker openrouter` falls back to the grant. Caveat: `claude -p` wraps the
+  prompt in Claude Code's own system prompt (Haiku-as-CC-agent, not a bare
+  model) — fine for optimizing against the eval, not a substitute for the live
+  cross-executor gauntlet. Anti-overfit: expand scenarios (Haiku-generated,
+  spot-checked) + a held-out set before trusting a lift gain.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level
