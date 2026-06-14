@@ -358,9 +358,19 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   conversation into a committed, MVP-scoped, objectively-gated spec preserving
   every elicited fact, run before derive in `ser talk` and in the eval. RESULT
   (3×3 seed-averaged): mean lift −2.7 → +20.6 (±24, SE ≈ ±8), obj 100% on all
-  three, ser now BEATS vanilla. kid-companion still the laggard (parity, 56%
-  facts). Independent check still TODO: confirm the blind LLM judge agrees (the
-  mechanical metric rewards objectiveRate, which synthesis maximizes).
+  three, ser now BEATS vanilla. CORRECTION after the blind-judge check (don't
+  trust the mechanical +20.6 alone — the metric rewards objectiveRate which
+  synthesis maximizes): judged 3×2 run gave mean lift −8.7 but judge wins 4/6,
+  because results SPLIT BY PRODUCT TYPE. On tractable build-specs (habit-tracker,
+  recipe-box) synthesis clearly wins — obj 100%, facts 100%, judge 2/2 each. On
+  a SUBJECTIVE-QUALITY product (kid-companion: "safe/alive companion for a 4yo")
+  synthesis FAILS — obj 44%, facts 33%, judge 0/2 — and its variance is so high
+  it alone flips the mean (+20.6 lucky run vs −8.7 unlucky). Honest verdict:
+  synthesis is a real, judge-confirmed win for objectively-gateable products,
+  but UNRELIABLE where the core value is subjective (safety/feel) — it can't
+  objectify the gate, falls back to tier-4, and drops facts. NEXT: make
+  synthesis robust on subjective products (objective PROXIES for subjective
+  properties + hard fact-preservation), and stabilize kid-companion.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level
