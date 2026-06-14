@@ -78,6 +78,7 @@ async function runScenario(scenario: Scenario, deps: RunDeps): Promise<{ transcr
         // turn 1 mirrors the REPL seed path (idea phase), not the mapper
         const idea = await extractIdea(userMsg, deps.mapperLlm, deps.mapperModel);
         writeFileSync(deps.specPath, yamlStringify(ideaToTalkSpec(userMsg, idea)));
+        await session.captureDecisions(userMsg).catch(() => []); // A40: capture facts in the opening idea
         const spec = session.load();
         lastAssistant = renderSeed(idea);
         turn = {

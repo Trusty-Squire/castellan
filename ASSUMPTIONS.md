@@ -324,6 +324,15 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   leak facts (50%/33%); next iterations continue. Instrument note: `claude -p`
   ~3-5s/call makes the full judged set >10min; gate detached, and a fast
   mechanical-only fitness mode is the next loop-hardening step.
+  ITERATION 2 (capture-on-seed): the seed/idea path skipped captureDecisions, so
+  facts in the OPENING line ("…on a laptop") never became decisions — fixed in
+  the REPL + eval runner. Committed as a CORRECTNESS gap-fix, NOT a gated win:
+  the run that gated it was dominated by instrument noise (parallel `claude -p`
+  contention broke a conversation to composite 0; the vanilla baseline swung
+  20–100 across runs), so no trustworthy lift delta. KEY FINDING: the eval is
+  too noisy to gate AMBIGUOUS tuning changes — it needs SEED-AVERAGING (N runs
+  per scenario, averaged) and CONCURRENCY CONTROL before driving further edits.
+  That instrument-hardening is the real next step, ahead of more engine tweaks.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

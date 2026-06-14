@@ -411,6 +411,9 @@ async function cmdTalk(args: string[]): Promise<number> {
       const idea = await extractIdea(msg, llm, chain.executor);
       undoStack.push(before);
       w(session.path, (await import("yaml")).stringify(ideaToTalkSpec(msg, idea)));
+      // Capture facts in the OPENING idea too ("…on a laptop") — the seed path
+      // would otherwise never record them as decisions (A40).
+      try { await session.captureDecisions(msg); } catch { /* best-effort */ }
       process.stdout.write("\n" + renderSeed(idea) + "\n");
       note((pivotNote ? "new direction — old spec reset ('undo' restores it); " : "") +
         `${idea.components.length} requirements, ${idea.decisions.filter((d) => d.bucket === 1).length} to decide`);
