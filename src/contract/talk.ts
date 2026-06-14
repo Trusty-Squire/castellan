@@ -7,6 +7,7 @@ import { parseMission } from "./schema.js";
 import { parseSpec, unverifiedLoadBearing, type Spec } from "./spec.js";
 import { checkSpec, verifyClaim, type DeltaBatch } from "./spec-session.js";
 import { deriveV2 } from "./derive2.js";
+import { synthesizeSpec } from "./synthesize.js";
 import { scoreSpec, renderScoreLine } from "./spec-score.js";
 import { autofillSpec } from "./autofill.js";
 
@@ -75,7 +76,10 @@ export function ensureSpecFile(cwd: string, explicit?: string): { path: string; 
 
 /** Compile the spec; returns the mission path on success, null on refusal. */
 async function deriveSpec(ctx: TalkActionContext, lines: string[]): Promise<string | null> {
-  const spec = parseSpec(readFileSync(ctx.specPath, "utf8"), ctx.specPath);
+  const elicited = parseSpec(readFileSync(ctx.specPath, "utf8"), ctx.specPath);
+  // Synthesis pass (A41): turn the conversation's elicited spec into a committed,
+  // MVP-scoped, objectively-gated spec before compiling it to a gated mission.
+  const spec = await synthesizeSpec(elicited, ctx.llm, ctx.executorModel).catch(() => elicited);
   const result = await deriveV2({
     spec,
     workdir: dirname(ctx.specPath),

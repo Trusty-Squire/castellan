@@ -339,6 +339,28 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   losing) to ~parity with vanilla, winning 2/3 scenarios, facts 44–83% (was ~0).
   σ is still large: a future edit must move the mean by ≳2·SE (~17) to gate as
   real; tiny tweaks need more seeds. Laggard = kid-companion (−25, facts 44%).
+- A41. Why ser-talk only TIED a vanilla one-shot (investigation, 2026-06-14),
+  and the structural fix. Distilled from the artifacts: (1) ser emitted
+  SUBJECTIVE tier-4 "a human verifies it feels good" gates where vanilla wrote
+  objective shell commands — fatal for a product whose thesis is UNATTENDED
+  loops; (2) ser EXPANDED scope ("allow custom habits, more flexibility") where
+  vanilla CUT to an MVP; (3) ser HEDGED ("React Native or Flutter") where vanilla
+  COMMITTED ("Native iOS SwiftUI"); (4) ser dropped/contradicted user facts
+  (said cross-platform when the user said iPhone). ROOT: ser builds the spec via
+  lossy INCREMENTAL edits over disposable history (A28) — it never reasons over
+  the WHOLE at once, so the idea-phase's two original sins (subjective gates,
+  scope expansion) persist; and it optimized for a rich PRODUCT, not a tight
+  LOOP-HARNESS spec. THREE FIXES: (a) the eval now scores OBJECTIVE-gate rate
+  (tier 1-3), composite dominated by it, so tier-4-heavy specs score low
+  (specQuality.objectiveRate); (b) idea-phase prompt demands a shell-command
+  gate per component + "scope is subtraction"; (c) a SYNTHESIS pass
+  (src/contract/synthesize.ts) — one holistic call turns the elicited
+  conversation into a committed, MVP-scoped, objectively-gated spec preserving
+  every elicited fact, run before derive in `ser talk` and in the eval. RESULT
+  (3×3 seed-averaged): mean lift −2.7 → +20.6 (±24, SE ≈ ±8), obj 100% on all
+  three, ser now BEATS vanilla. kid-companion still the laggard (parity, 56%
+  facts). Independent check still TODO: confirm the blind LLM judge agrees (the
+  mechanical metric rewards objectiveRate, which synthesis maximizes).
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

@@ -320,27 +320,35 @@ export function processScore(mech: Score, judge: ProcessJudgment | null): number
 // ══ TIER 2 — output quality vs a vanilla one-shot spec (the headline ablation) ══
 
 export interface SpecQuality {
-  gateCoverage: number; // fraction of requirements with an objective (tier>=1) gate
-  ungated: number; // count of tier-0 requirements (lower is better)
+  gateCoverage: number; // fraction with ANY gate (tier>=1) — incl. human review
+  objectiveRate: number; // fraction with an AUTOMATABLE gate (tier 1-3) — the loop metric
+  ungated: number; // tier-0 count (no check at all)
+  human: number; // tier-4 count (needs a human → breaks the unattended loop)
   factCoverage: number; // fraction of the user's facts that survived into the spec
   components: number; // requirement count (decomposition)
   composite: number; // 0..100
 }
 
-/** Mechanical spec quality — scores ser-talk's spec AND the vanilla spec alike. */
+/**
+ * Mechanical spec quality — scores ser-talk's spec AND the vanilla spec alike.
+ * The composite is dominated by `objectiveRate`, NOT mere gate presence: a spec
+ * whose gates are tier-4 "a human verifies it feels good" can't loop unattended,
+ * which is the whole product. So those score low even though they're "gated".
+ */
 export function specQuality(spec: Spec, scenario: Scenario): SpecQuality {
   const reqs = spec.requirements;
-  const gated = reqs.filter((r) => r.acceptance.tier >= 1).length;
-  const gateCoverage = reqs.length ? gated / reqs.length : 0;
+  const gateCoverage = reqs.length ? reqs.filter((r) => r.acceptance.tier >= 1).length / reqs.length : 0;
+  const objectiveRate = reqs.length ? reqs.filter((r) => r.acceptance.tier >= 1 && r.acceptance.tier <= 3).length / reqs.length : 0;
   const ungated = reqs.filter((r) => r.acceptance.tier === 0).length;
+  const human = reqs.filter((r) => r.acceptance.tier === 4).length;
   const hay = [...spec.decisions.map((d) => d.statement), ...reqs.map((r) => r.statement), spec.thesis];
   const factCoverage = scenario.facts.length
     ? scenario.facts.filter((f) => factRecorded(f, hay)).length / scenario.facts.length
     : 1;
   const components = reqs.length;
   const decomp = components >= 2 && components <= 8 ? 1 : components === 1 ? 0 : 0.5;
-  const composite = Math.round(50 * gateCoverage + 40 * factCoverage + 10 * decomp);
-  return { gateCoverage, ungated, factCoverage, components, composite };
+  const composite = Math.round(50 * objectiveRate + 35 * factCoverage + 15 * decomp);
+  return { gateCoverage, objectiveRate, ungated, human, factCoverage, components, composite };
 }
 
 /** Blind A/B assignment so the comparative judge can't tell which spec is which. */

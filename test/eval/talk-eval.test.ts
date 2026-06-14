@@ -119,13 +119,30 @@ describe("tier 2 — output quality", () => {
     open_questions: [],
   } as unknown as Spec;
 
-  it("specQuality scores gates, ungated, fact coverage, decomposition", () => {
+  it("specQuality scores objective gates, ungated, fact coverage, decomposition", () => {
     const q = specQuality(spec, scenario);
-    expect(q.gateCoverage).toBe(0.5); // 1 of 2 requirements gated
+    expect(q.gateCoverage).toBe(0.5); // 1 of 2 has any gate
+    expect(q.objectiveRate).toBe(0.5); // 1 of 2 is automatable (tier 1-3)
     expect(q.ungated).toBe(1);
+    expect(q.human).toBe(0);
     expect(q.factCoverage).toBe(1); // "age 4" + "laptop" both present
     expect(q.components).toBe(2);
-    expect(q.composite).toBe(75); // 50*0.5 + 40*1 + 10*1
+    expect(q.composite).toBe(75); // 50*0.5 + 35*1 + 15*1
+  });
+
+  it("specQuality penalizes tier-4 human gates — they can't loop unattended", () => {
+    const human = {
+      ...spec,
+      requirements: [
+        { id: "R1", statement: "feels safe", acceptance: { tier: 4, artifact: "review.md" } },
+        { id: "R2", statement: "feels nice", acceptance: { tier: 4, artifact: "review2.md" } },
+      ],
+    } as unknown as Spec;
+    const q = specQuality(human, scenario);
+    expect(q.gateCoverage).toBe(1); // both "gated"…
+    expect(q.objectiveRate).toBe(0); // …but neither is automatable
+    expect(q.human).toBe(2);
+    expect(q.composite).toBeLessThan(60); // dragged down despite full gate coverage
   });
 
   it("blindAssign hides which spec is ser, and remembers the mapping", () => {

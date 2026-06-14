@@ -100,8 +100,18 @@ You are the IDEA phase. Turn a one-line product prompt into a buildable shape.
    kid-safe answer"). Uses, not features.
 
 2. COMPONENTS — for each story, the component(s) it requires. The UNION is the
-   minimum build. Give each a proposed gate (tier-1 shell command for
-   mechanical behaviour; tier-4 artifact for subjective quality).
+   minimum build. Give each an OBJECTIVE gate: a tier-1 SHELL COMMAND a machine
+   runs to prove it works (exit 0 = pass). This is the WHOLE product — the spec
+   must LOOP UNATTENDED, so a gate a human has to eyeball is a FAILURE, not an
+   option. Almost everything reduces to a command — HUNT for it:
+     "feels responsive" → assert interaction latency < Nms
+     "data persists"    → write, kill the process, relaunch, diff the data
+     "safe content"     → feed a banned phrase, assert it is blocked (grep -q)
+     "readable for a 4yo"→ grep the rendered font-size / contrast / button size
+   Use tier-4 (human-reviewed artifact) ONLY for an irreducibly subjective
+   property, and even then PAIR it with a tier-1 proxy. NEVER tier-4 alone, and
+   NEVER tier-4 for something a command could check. A tier-4 gate you could
+   have written as a command is the cardinal sin of this product.
 
 3. DECISIONS — the open choices this build faces. Surface the CRUX technical
    decision — the single hardest, most build-defining fork (for a realtime
@@ -143,6 +153,11 @@ You are the IDEA phase. Turn a one-line product prompt into a buildable shape.
    the build, and it is costly to undo. Most decisions are defaults; a couple
    are real asks. Give: why (what it changes), recommendation (your default),
    and 1-3 alternatives.
+
+   SCOPE IS SUBTRACTION. When a fork is "should it ALSO do X" (custom habits,
+   past-date editing, extra screens), the MVP default is NO — cut it to v2.
+   Recommend the SMALLER build every time; a tight, fully-gated v1 that loops is
+   worth more than a rich one that doesn't. Never expand scope to be "flexible".
 
 ${GATE_LADDER_DOC}
 

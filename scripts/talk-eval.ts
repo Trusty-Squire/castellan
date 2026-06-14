@@ -22,6 +22,7 @@ import { SpecSession } from "../src/contract/spec-session.js";
 import { blankSpec, stripTrailingQuestion } from "../src/contract/talk.js";
 import { extractIdea } from "../src/contract/ingest.js";
 import { ideaToTalkSpec, renderSeed } from "../src/contract/brief.js";
+import { synthesizeSpec } from "../src/contract/synthesize.js";
 import { scoreSpec } from "../src/contract/spec-score.js";
 import { loadDotEnv } from "../src/env.js";
 import type { Spec } from "../src/contract/spec.js";
@@ -120,9 +121,12 @@ async function runScenario(scenario: Scenario, deps: RunDeps): Promise<{ transcr
     userMsg = (await simUserMessage(scenario, lastAssistant, deps).catch(() => "")) || "tell me more";
   }
 
-  const finalSpec = session.load();
+  // The conversation produced an elicited spec; the SYNTHESIS pass turns it into
+  // the committed, MVP-scoped, objectively-gated spec that actually gets scored.
+  const elicited = session.load();
+  const finalSpec = await synthesizeSpec(elicited, deps.mapperLlm, deps.mapperModel).catch(() => elicited);
   return {
-    transcript: { scenarioId: scenario.id, turns, finalDecisions: finalSpec.decisions.map((d) => d.statement) },
+    transcript: { scenarioId: scenario.id, turns, finalDecisions: elicited.decisions.map((d) => d.statement) },
     finalSpec,
   };
 }
@@ -170,6 +174,7 @@ async function main(): Promise<void> {
     scenarioId: string;
     lift: number;
     facts: number;
+    obj: number; // ser objective-gate rate (the loop metric)
     serComp: number;
     vanComp: number;
     serWon: "ser" | "vanilla" | "tie" | null;
@@ -191,7 +196,7 @@ async function main(): Promise<void> {
       const serWon: Run["serWon"] = verdict ? (verdict.winner === "tie" ? "tie" : verdict.winner === serIs ? "ser" : "vanilla") : null;
       const lift = serQ.composite - vanQ.composite;
       process.stderr.write(`  ✓ ${scenario.id} #${runIdx}: lift ${lift >= 0 ? "+" : ""}${lift} (facts ${pct(serQ.factCoverage)})\n`);
-      return { scenarioId: scenario.id, lift, facts: serQ.factCoverage, serComp: serQ.composite, vanComp: vanQ.composite, serWon, dump: { scenario: scenario.id, runIdx, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla } };
+      return { scenarioId: scenario.id, lift, facts: serQ.factCoverage, obj: serQ.objectiveRate, serComp: serQ.composite, vanComp: vanQ.composite, serWon, dump: { scenario: scenario.id, runIdx, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla } };
     } catch (err) {
       process.stderr.write(`  ✗ ${scenario.id} #${runIdx} errored: ${(err as Error).message.split("\n")[0]}\n`);
       return null;
@@ -242,13 +247,14 @@ async function main(): Promise<void> {
       `${r.length}/${seeds}`,
       `${Math.round(mean(r.map((x) => x.serComp)))} vs ${Math.round(mean(r.map((x) => x.vanComp)))}`,
       `${mean(lifts) >= 0 ? "+" : ""}${mean(lifts).toFixed(1)} ±${sd(lifts).toFixed(0)}`,
+      pct(mean(r.map((x) => x.obj))),
       pct(mean(r.map((x) => x.facts))),
       judged > 0 ? `${r.filter((x) => x.serWon === "ser").length}/${r.filter((x) => x.serWon !== null).length}` : "n/a",
     ]);
   }
 
   process.stdout.write("\n══ TIER 2 — output vs same-facts vanilla, averaged over seeds ══\n");
-  process.stdout.write(table(["scenario", "runs", "ser vs van", "lift μ±σ", "facts μ", "wins"], rows) + "\n");
+  process.stdout.write(table(["scenario", "runs", "ser vs van", "lift μ±σ", "obj μ", "facts μ", "wins"], rows) + "\n");
   process.stdout.write(`\nMEAN LIFT: ${mean(allLifts) >= 0 ? "+" : ""}${mean(allLifts).toFixed(1)} (±${sd(allLifts).toFixed(0)}, n=${allLifts.length})` + (judged > 0 ? `   |   judge wins ${serWins}/${judged}` : "") + "\n");
 
   mkdirSync(join(process.cwd(), "results"), { recursive: true });
