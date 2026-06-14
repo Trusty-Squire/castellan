@@ -144,3 +144,64 @@ Each layer ships only if it beats the prior on the eval:
 the kid-companion cloud-chatbot). Add a **completeness/fidelity tier**: a
 sweep-style judge asks "does this spec serve the stated product, honor the
 facts, and gate what *matters*?" `objectiveRate` becomes a floor, not the score.
+
+## 7. The funnel (user journey) — and where dogfooding lives
+
+Castellan is an **advisor, not an assistant**: an assistant makes *you* bring the
+judgment and supervise every turn (expensive × supervised); an advisor brings the
+judgment, makes it concrete as a **quantifiable spec**, and loops against it
+unattended (cheap × hands-off). Thesis: **cheap × quantifiable specs enable
+loops.** The user's effort is front-loaded (high at idea, where only they hold the
+forks), near-zero at build (the advisor + gates carry it), and rises again at
+audit (their eyes on the real thing) — always as *direction*, never labor.
+
+Seven stages:
+1. **Idea** — distill the 1-line pitch + the core user stories; a light, advisory
+   competitive/uniqueness flag (model-knowledge or browser; never blocking);
+   surface ONLY the load-bearing forks the user holds (safety, hardware, rules),
+   one at a time, each with a recommended default.
+2. **Spec (execution)** — decompose into small, maximally-parallel components;
+   COMMIT the tech (no menus); surface genuine tensions as economical
+   multiple-choice with a recommendation; attach an OBJECTIVE gate to every
+   component (the membrane — this is what makes it loopable).
+3. **Polish** — design look/feel around the stories + eng realities; design
+   becomes *gated* requirements too ("buttons ≥48px" → a grep, not a vibe).
+4. **Signoff** — the adversarial SWEEP (gstack-autoplan pattern: safety/scope/
+   fidelity/essence reviewers) attacks the spec; the committee synthesizes; the
+   user gives one signoff. This is where "objective-but-wrong" dies and the
+   advisor's *wisdom* is made legible.
+5. **Build** — cheap fresh-agent loops on the gates; the user watches, doesn't
+   drive (loop endurance: iterations per intervention). Honest halt on a gate it
+   can't meet after retries.
+6. **Audit — DOGFOODING LIVES HERE.** Per-component gates being green ≠ the product
+   works; the gap (e2e/integration/feel bugs) is found only by *using* the thing.
+   Two modes: (a) AUTOMATED dogfooding — an agent drives the real product
+   (Playwright) like the target user, hunting bugs — this is **the eval's
+   simulated-user agent re-pointed** from "test the spec author" to "test the
+   shipped product," and the two-tier eval becomes the audit's scoring; (b) HUMAN
+   dogfooding — the user uses it and reacts. Crucially, every bug found becomes a
+   **regression gate** — dogfooding *feeds* the quantifiable spec instead of
+   bypassing it: it discovers the unanticipated, gates lock it, the loop fixes it,
+   the spec stays quantifiable as the product evolves. Refactor/tune happen here,
+   made SAFE by the gates (nothing regresses silently). This B↔A loops until right.
+7. **Ship.**
+
+The dogfooding resolution (the lesson of the v0.2→v0.3 work): you DOGFOOD a
+PRODUCT (a thing you use) and you MEASURE a SPEC (a plan you can't use). Hand-
+dogfooding the spec felt unproductive because it was the wrong phase — that work
+became the quantified eval (§6). Dogfooding's right home is audit; the eval
+harness + simulated user we built for spec-quality graduate into the audit engine.
+
+## 8. Updates since this draft (settled in conversation 2026-06-14)
+
+- **Thesis/positioning:** cheap × quantifiable specs enable loops; advisor-not-
+  assistant. NOT "out-opinion Codex" (competes on the wrong axis). Two axes a good
+  advisor needs: *rigorous* (quantifiable gates → loopable; the moat) AND *wise*
+  (right forks/real product → the sweep; quality control, not the pitch).
+- **Engine: build on goose** (spiked + confirmed). Authoring = goose WITH a session
+  (recipes + `--sub-recipe` sweep + research MCP); build = goose `--no-session`
+  (stateless, gated). Our gates are the spine; the membrane/contract stay ours; no
+  Rust. The `SpecSession`/cheap-model authoring layers of §2–§5 are superseded by
+  the goose authoring agent (the *behaviors* — memory, dialectic, sweep — carry
+  over to the premium runtime; a cheap model proved an incompetent adversary).
+  See memory `castellan-product-direction` for the full chain.
