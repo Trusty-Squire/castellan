@@ -157,75 +157,67 @@ async function main(): Promise<void> {
 
   const scenarios = only ? SCENARIOS.filter((s) => s.id === only) : SCENARIOS;
   if (scenarios.length === 0) throw new Error(`no scenario matched "${only}"`);
+  // --mechanical: skip the slow, high-variance LLM judges and gate on the
+  // deterministic Tier-2 lift alone — fast, stable signal for tuning edits.
+  const mechanicalOnly = args.includes("--mechanical");
 
-  const tier1: string[][] = []; // process quality
-  const tier2: string[][] = []; // output vs vanilla
-  const dump: unknown[] = [];
-  let serWins = 0;
-  let judged = 0;
+  interface Row {
+    si: number;
+    t1: string[];
+    t2: string[];
+    serWon: "ser" | "vanilla" | "tie" | null;
+    lift: number;
+    dump: unknown;
+  }
 
-  for (let si = 0; si < scenarios.length; si++) {
-    const scenario = scenarios[si]!;
-    process.stderr.write(`\n▶ ${scenario.id}: "${scenario.idea}"\n`);
+  async function evalScenario(scenario: Scenario, si: number): Promise<Row> {
     const dir = mkdtempSync(join(tmpdir(), `talk-eval-${scenario.id}-`));
     const deps: RunDeps = {
       mapperLlm: llm,
       mapperModel,
       knightModel: richModel,
       userLlm: llm,
-      userModel: richModel, // a stronger model answers as the user faithfully
+      userModel: richModel,
       specPath: join(dir, "eval.spec.yaml"),
     };
-
-    // ── Tier 1: process quality (mechanical + funnel-aware judge) ──
     const { transcript, finalSpec } = await runScenario(scenario, deps);
     const mech = scoreTranscript(scenario, transcript);
-    const pj = await judgeProcess(scenario, transcript, llm, richModel).catch(() => null);
-    tier1.push([
-      scenario.id,
-      pct(mech.factsRecorded),
-      String(mech.reasks),
-      String(mech.askedWhenSettled),
-      mech.turnsToBuildable === null ? "—" : `t${mech.turnsToBuildable}`,
-      pj ? `${pj.forks}/${pj.captured}/${pj.defaulted}/${pj.coherence}` : "n/a",
-      String(processScore(mech, pj)),
-    ]);
-
-    // ── Tier 2: output vs same-facts vanilla one-shot (the ablation) ──
-    process.stderr.write(`  generating vanilla baseline…\n`);
+    const pj = mechanicalOnly ? null : await judgeProcess(scenario, transcript, llm, richModel).catch(() => null);
     const vanilla = await generateVanillaSpec(scenario, llm, mapperModel);
     const serQ = specQuality(finalSpec, scenario);
     const vanQ = specQuality(vanilla, scenario);
-    const { a, b, serIs } = blindAssign(finalSpec, vanilla, si % 2 === 1); // randomize A/B by parity
-    const verdict = await judgeSpecPair(scenario.idea, a, b, llm, richModel).catch(() => null);
-    let serWon = "n/a";
-    if (verdict) {
-      judged += 1;
-      const winnerIsSer = verdict.winner === serIs;
-      if (verdict.winner !== "tie" && winnerIsSer) serWins += 1;
-      serWon = verdict.winner === "tie" ? "tie" : winnerIsSer ? "ser ✓" : "VANILLA";
-    }
-    tier2.push([
-      scenario.id,
-      `${serQ.composite} vs ${vanQ.composite}`,
-      (serQ.composite - vanQ.composite >= 0 ? "+" : "") + String(serQ.composite - vanQ.composite),
-      `${pct(serQ.gateCoverage)}/${pct(vanQ.gateCoverage)}`,
-      `${pct(serQ.factCoverage)}/${pct(vanQ.factCoverage)}`,
+    const { a, b, serIs } = blindAssign(finalSpec, vanilla, si % 2 === 1);
+    const verdict = mechanicalOnly ? null : await judgeSpecPair(scenario.idea, a, b, llm, richModel).catch(() => null);
+    let serWon: Row["serWon"] = null;
+    if (verdict) serWon = verdict.winner === "tie" ? "tie" : verdict.winner === serIs ? "ser" : "vanilla";
+    const lift = serQ.composite - vanQ.composite;
+    process.stderr.write(`  ✓ ${scenario.id}: lift ${lift >= 0 ? "+" : ""}${lift}\n`);
+    return {
+      si,
+      t1: [scenario.id, pct(mech.factsRecorded), String(mech.reasks), String(mech.askedWhenSettled), mech.turnsToBuildable === null ? "—" : `t${mech.turnsToBuildable}`, pj ? `${pj.forks}/${pj.captured}/${pj.defaulted}/${pj.coherence}` : "n/a", String(processScore(mech, pj))],
+      t2: [scenario.id, `${serQ.composite} vs ${vanQ.composite}`, (lift >= 0 ? "+" : "") + lift, `${pct(serQ.gateCoverage)}/${pct(vanQ.gateCoverage)}`, `${pct(serQ.factCoverage)}/${pct(vanQ.factCoverage)}`, serWon === null ? "n/a" : serWon === "ser" ? "ser ✓" : serWon === "vanilla" ? "VANILLA" : "tie"],
       serWon,
-    ]);
-
-    dump.push({ scenario: scenario.id, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla });
+      lift,
+      dump: { scenario: scenario.id, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla },
+    };
   }
 
+  process.stderr.write(`running ${scenarios.length} scenario(s) in parallel${mechanicalOnly ? " [mechanical-only]" : ""}…\n`);
+  const rows = (await Promise.all(scenarios.map((s, i) => evalScenario(s, i)))).sort((x, y) => x.si - y.si);
+
+  const serWins = rows.filter((r) => r.serWon === "ser").length;
+  const judged = rows.filter((r) => r.serWon !== null).length;
+  const meanLift = Math.round(rows.reduce((s, r) => s + r.lift, 0) / rows.length);
+
   process.stdout.write("\n══ TIER 1 — process quality (did it extract the right decisions?) ══\n");
-  process.stdout.write(table(["scenario", "facts", "reask", "incoh", "build@", "judge f/c/d/c", "score"], tier1) + "\n");
+  process.stdout.write(table(["scenario", "facts", "reask", "incoh", "build@", "judge f/c/d/c", "score"], rows.map((r) => r.t1)) + "\n");
   process.stdout.write("\n══ TIER 2 — output vs same-facts vanilla one-shot (the ablation) ══\n");
-  process.stdout.write(table(["scenario", "ser vs van", "lift", "gates s/v", "facts s/v", "judge"], tier2) + "\n");
-  process.stdout.write(`\nser-talk beat vanilla on ${serWins}/${judged} judged specs.\n`);
+  process.stdout.write(table(["scenario", "ser vs van", "lift", "gates s/v", "facts s/v", "judge"], rows.map((r) => r.t2)) + "\n");
+  process.stdout.write(`\nMEAN LIFT: ${meanLift >= 0 ? "+" : ""}${meanLift}` + (judged > 0 ? `   |   judge wins ${serWins}/${judged}` : "") + "\n");
 
   mkdirSync(join(process.cwd(), "results"), { recursive: true });
   const out = join(process.cwd(), "results", `talk-eval-${scenarios.length}-scenarios.json`);
-  writeFileSync(out, JSON.stringify(dump, null, 2));
+  writeFileSync(out, JSON.stringify(rows.map((r) => r.dump), null, 2));
   process.stderr.write(`\ntranscripts → ${out}\n`);
 }
 
