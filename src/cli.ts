@@ -326,7 +326,8 @@ async function cmdSpec(args: string[]): Promise<number> {
 async function cmdTalk(args: string[]): Promise<number> {
   const flags = parseFlags(args, ["chain", "chains", "budget"]);
   const { SpecSession } = await import("./contract/spec-session.js");
-  const { dispatchAction, ensureSpecFile, renderPlan, stripTrailingQuestion } = await import("./contract/talk.js");
+  const { dispatchAction, ensureSpecFile, renderPlan, stripTrailingQuestion, funnelStage, funnelNext, renderFunnel } =
+    await import("./contract/talk.js");
 
   // Color: --no-color forces off, --color forces on, else auto (TTY or
   // FORCE_COLOR/CLICOLOR_FORCE). Auto-detection is unreliable under some
@@ -385,6 +386,7 @@ async function cmdTalk(args: string[]): Promise<number> {
     /^TODO/.test(sp.thesis) || (sp.requirements.length === 1 && /^TODO/.test(sp.requirements[0]!.statement));
   const isCommand = (m: string): boolean => /^(build|run|ship|check|derive|status|score|ready|verify)\b/i.test(m);
   let lastReady = (await scoreSpec(session.load())).ready;
+  let built = false; // flips after the first run — advances the funnel to POLISH
   const note = (s: string): void => { process.stdout.write(st.dim("· " + s) + "\n"); };
 
   process.stdout.write(st.bold("ser") + st.gray(" — just talk. it builds the plan as you go; 'undo' reverts, empty line exits.") + "\n");
@@ -457,18 +459,23 @@ async function cmdTalk(args: string[]): Promise<number> {
               : /READY|complete|every requirement|building\./i.test(line) ? st.green(line) : line;
             process.stdout.write(colored + "\n");
           }
+          if (batch.action === "run") built = true; // crossed into POLISH
         } catch (err) {
           note(st.red(`${batch.action} failed: ${(err as Error).message.split("\n")[0]}`));
         }
       }
       // Readiness: announce ONLY on the flip to buildable (mechanical = instant, free).
       // Present the plan BEFORE inviting "build it" — so the user sees what they'd ship.
-      const ready = (await scoreSpec(session.load())).ready;
+      const spec = session.load();
+      const ready = (await scoreSpec(spec)).ready;
       if (ready && !lastReady) {
-        for (const line of renderPlan(session.load())) process.stdout.write(st.dim(line) + "\n");
+        for (const line of renderPlan(spec)) process.stdout.write(st.dim(line) + "\n");
         process.stdout.write(st.green('\n✓ that\'s buildable — say "build it" when you want to go.') + "\n");
       }
       lastReady = ready;
+      // The funnel, every turn: where you are (idea → build → polish) + next move.
+      const stage = funnelStage(ready, built);
+      process.stdout.write(st.dim(renderFunnel(stage, funnelNext(spec, stage))) + "\n");
     } catch (err) {
       note(st.red(`hiccup: ${(err as Error).message.split("\n")[0]} — keep talking`));
     }

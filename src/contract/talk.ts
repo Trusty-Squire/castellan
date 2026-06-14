@@ -154,6 +154,45 @@ export function stripTrailingQuestion(reply: string): string {
   return cut > 0 ? t.slice(0, cut + 1).trimEnd() : "";
 }
 
+// ── The funnel: idea → build → polish (surfaced as a per-turn stage line) ──
+// IDEA  = shape it: components, decisions, and VERIFY the load-bearing claims.
+// BUILD = make it real: compile + run gated, harden gates, fix what they flag.
+// POLISH= make it good: a designer's-eye review of the product (gstack-style).
+export type Stage = "idea" | "build" | "polish";
+
+/** Where the conversation is. idea until buildable; build once it compiles;
+ *  polish once it has been built at least once this session. */
+export function funnelStage(ready: boolean, built: boolean): Stage {
+  if (built) return "polish";
+  return ready ? "build" : "idea";
+}
+
+/** The single most useful next move for the current stage. */
+export function funnelNext(spec: Spec, stage: Stage): string {
+  if (stage === "polish") return "design review — a designer's eye on the product";
+  if (stage === "build") return 'say "build it" to run the gated build';
+  // idea: surface the one thing still keeping it from buildable
+  const bq = spec.open_questions.find((q) => q.blocking);
+  if (bq) return `answer: ${bq.text}`;
+  const t0 = spec.requirements.find((r) => r.acceptance.tier === 0);
+  if (t0) return `give ${t0.id} an objective check`;
+  const claim = unverifiedLoadBearing(spec)[0];
+  if (claim) return `verify the load-bearing claim: ${claim.claim}`;
+  return "keep shaping it";
+}
+
+/** The compact stage line: ✓ done · ● current · ○ ahead, plus the next move. */
+export function renderFunnel(stage: Stage, next: string): string {
+  const order: Stage[] = ["idea", "build", "polish"];
+  const ci = order.indexOf(stage);
+  const mark = (s: Stage): string => {
+    const i = order.indexOf(s);
+    const lit = i === ci ? `● ${s.toUpperCase()}` : s;
+    return i < ci ? `✓ ${s}` : lit;
+  };
+  return `${order.map(mark).join("  ▸  ")}    next: ${next}`;
+}
+
 export async function dispatchAction(
   action: TalkAction,
   arg: string,

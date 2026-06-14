@@ -258,6 +258,15 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   `renderPlan` now leads with "components — what gets built" in plain language,
   each "proven by:" a plain gate label (not a raw shell command); decisions are
   framed "yours to veto". Dogfood: "I have no idea what the components are."
+  (7) FUNNEL — the idea→build→polish pipeline existed in code but was invisible,
+  so `ser talk` prints a per-turn stage line `✓ idea ▸ ● BUILD ▸ polish  next:
+  …` (funnelStage/funnelNext/renderFunnel). Stage = idea until buildable, build
+  once it compiles, polish after the first run (`built` flag). Owner's mapping
+  (2026-06-13): IDEA shapes + VERIFIES load-bearing claims; BUILD compiles/runs
+  gated + hardens gates + fixes what they flag; POLISH = a designer's-eye review
+  of the product, modeled on gstack's plan-design-review/design-review. The
+  stage line + next-hint ship now; the POLISH design-review pass itself is the
+  next build (not yet implemented).
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

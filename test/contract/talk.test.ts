@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, utimesSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dispatchAction, missionPathFor, ensureSpecFile, blankSpec, renderPlan, stripTrailingQuestion, type TalkActionContext } from "../../src/contract/talk.js";
+import { dispatchAction, missionPathFor, ensureSpecFile, blankSpec, renderPlan, stripTrailingQuestion, funnelStage, funnelNext, renderFunnel, type TalkActionContext } from "../../src/contract/talk.js";
 import { DeltaBatchSchema, salvageBatch, DELTA_MAPPER_PROMPT } from "../../src/contract/spec-session.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { SquireError } from "../../src/errors.js";
@@ -137,6 +137,22 @@ describe("dispatchAction (mechanical, no LLM unless the action needs one)", () =
     expect(lines[0]).toContain("thesis:");
     expect(out).toContain("components — what gets built (1)");
     expect(out).toContain("READY to compile");
+  });
+
+  it("funnelStage: idea until buildable, build once ready, polish once built", () => {
+    expect(funnelStage(false, false)).toBe("idea");
+    expect(funnelStage(true, false)).toBe("build");
+    expect(funnelStage(true, true)).toBe("polish");
+  });
+
+  it("funnelNext surfaces the one thing keeping idea from buildable", () => {
+    expect(funnelNext(parseSpec(unreadySpec), "idea")).toBe("answer: what hardware?");
+    expect(funnelNext(parseSpec(buildReadySpec), "build")).toContain('say "build it"');
+    expect(funnelNext(parseSpec(buildReadySpec), "polish")).toContain("design review");
+  });
+
+  it("renderFunnel marks done ✓, current ●, ahead plain", () => {
+    expect(renderFunnel("build", "go")).toBe("✓ idea  ▸  ● BUILD  ▸  polish    next: go");
   });
 
   it("stripTrailingQuestion drops a posed fork but keeps the lock-in before it", () => {
