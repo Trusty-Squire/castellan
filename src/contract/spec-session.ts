@@ -547,6 +547,29 @@ const ReconcileSchema = z
   })
   .passthrough();
 
+// ── Capture: turn stated constraints into recorded decisions (A40) ──
+export const CAPTURE_DECISIONS_PROMPT = `Extract the concrete product DECISIONS or constraints the user JUST stated —
+platform/hardware, storage, scope limits, specific choices, hard requirements.
+Phrase each as a short, specific decision in the user's intent. ONLY new ones
+not already in EXISTING DECISIONS; if they stated nothing concrete, return an
+empty list. Do NOT invent — capture only what they actually said.
+Output ONLY JSON: {"decisions":[{"statement":"..."}]}`;
+
+const CaptureDecisionsSchema = z.object({
+  decisions: z.array(z.object({ statement: z.string().min(1) }).passthrough()).default([]),
+});
+
+/** Significant-word overlap of two short statements (0..1) — cheap dedupe. */
+function wordOverlap(a: string, b: string): number {
+  const sig = (s: string): Set<string> => new Set(s.split(/[^a-z0-9]+/i).filter((w) => w.length >= 4));
+  const x = sig(a);
+  const y = sig(b);
+  if (x.size === 0 || y.size === 0) return 0;
+  let inter = 0;
+  for (const w of x) if (y.has(w)) inter += 1;
+  return inter / Math.min(x.size, y.size);
+}
+
 export interface SpecSessionOptions {
   path: string;
   llm: LlmClient;
@@ -775,6 +798,56 @@ export class SpecSession {
       );
     }
     return deltas;
+  }
+
+  /**
+   * Record the concrete decisions the user just STATED that the mapper failed to
+   * capture (A40). The eval's headline finding: ser-talk crystallized ~0
+   * decisions while a vanilla one-shot produced 5 — resolving a question, or a
+   * volunteered fact ("I'm on iPhone", "local storage"), never became a recorded
+   * decision. This is reconcile's sibling: the model EXTRACTS, the harness adds.
+   * Best-effort; dedups against existing decisions. Returns the added deltas.
+   */
+  async captureDecisions(userMessage: string): Promise<Delta[]> {
+    if (!userMessage.trim()) return [];
+    const spec = this.load();
+    const existing = spec.decisions.map((d) => d.statement);
+    let res;
+    try {
+      res = await this.opts.llm.complete({
+        model: this.opts.executorModel,
+        system: CAPTURE_DECISIONS_PROMPT,
+        user: `EXISTING DECISIONS:\n${existing.map((s) => `- ${s}`).join("\n") || "(none)"}\n\nUSER JUST SAID:\n${userMessage}`,
+        json: true,
+        maxTokens: 400,
+      });
+    } catch {
+      return [];
+    }
+    this.usage.in += res.inTokens;
+    this.usage.out += res.outTokens;
+    const parsed = tryParseJson(res.text);
+    if (!parsed.ok) return [];
+    const checked = CaptureDecisionsSchema.safeParse(parsed.value);
+    if (!checked.success) return [];
+    const seen = existing.map((s) => s.toLowerCase());
+    const deltas: Delta[] = [];
+    for (const d of checked.data.decisions) {
+      const s = d.statement.trim();
+      if (!s || seen.some((e) => wordOverlap(e, s.toLowerCase()) >= 0.6)) continue;
+      seen.push(s.toLowerCase());
+      deltas.push({ section: "decisions", op: "add", drift: false, value: { statement: s, rationale: "captured from the conversation", claims: [] } });
+    }
+    if (deltas.length === 0) return [];
+    const normalized = normalizeDeltas(spec, deltas);
+    const next = applyDeltas(spec, normalized);
+    writeFileSync(this.path, yamlStringify(next));
+    if (this.opts.git !== false) {
+      const dir = dirname(this.path);
+      await execa("git", ["add", basename(this.path)], { cwd: dir, reject: false });
+      await execa("git", ["commit", "-q", "-m", `spec(${basename(this.path)}): capture ${normalized.length} decision(s)`], { cwd: dir, reject: false });
+    }
+    return normalized;
   }
 
   /** Reject a batch: nothing applies; repeated rejections escalate the model. */

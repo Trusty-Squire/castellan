@@ -93,6 +93,7 @@ async function runScenario(scenario: Scenario, deps: RunDeps): Promise<{ transcr
         const batch = await session.turn(userMsg);
         if (!batch.pivot && batch.deltas.length > 0) await session.acceptLenient(batch);
         await session.reconcile().catch(() => []);
+        await session.captureDecisions(userMsg).catch(() => []); // A40: record stated constraints
         const spec = session.load();
         const blockingAfter = blockingCount(spec);
         let reply = batch.reply;

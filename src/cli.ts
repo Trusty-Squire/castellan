@@ -442,6 +442,13 @@ async function cmdTalk(args: string[]): Promise<number> {
       } catch {
         /* reconcile is best-effort — never break the conversation */
       }
+      // Capture (A40): record constraints the user stated that the mapper dropped.
+      let captured: unknown[] = [];
+      try {
+        captured = await session.captureDecisions(msg);
+      } catch {
+        /* capture is best-effort */
+      }
       // Coherence: when NOTHING is open to ask, the model must not pose a fork —
       // "laptop locked but asking anyway". Strip a trailing question; the ✓ line
       // below carries the next step.
@@ -452,6 +459,7 @@ async function cmdTalk(args: string[]): Promise<number> {
       if (reply) process.stdout.write("\n" + reply + "\n");
       if (applied.length > 0) note(styleLockedIn(applied, st));
       if (cleared.length > 0) note(st.dim(`cleared ${cleared.length} already-answered question(s)`));
+      if (captured.length > 0) note(st.dim(`recorded ${captured.length} decision(s) from what you said`));
       if (batch.action !== "none") {
         try {
           for (const line of await dispatchAction(batch.action, batch.action_arg, actionCtx)) {

@@ -150,6 +150,36 @@ open_questions:
   });
 });
 
+describe("SpecSession.captureDecisions — record stated constraints (A40)", () => {
+  it("adds decisions the user stated, deduping against existing ones", async () => {
+    const llm = new MockLlm([
+      { text: JSON.stringify({ decisions: [{ statement: "targets iPhone only" }, { statement: "pricing is freemium" }] }) },
+    ]);
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y", git: false });
+    const added = await s.captureDecisions("i'm on iphone and want it free");
+    // both are new (base spec has no decisions) → both recorded
+    expect(added).toHaveLength(2);
+    const after = s.load();
+    expect(after.decisions.map((d) => d.statement)).toContain("targets iPhone only");
+  });
+
+  it("makes no call and returns nothing for an empty message", async () => {
+    const llm = new MockLlm([]); // would throw if called
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y", git: false });
+    expect(await s.captureDecisions("   ")).toEqual([]);
+  });
+
+  it("skips a near-duplicate of an existing decision", async () => {
+    writeFileSync(
+      specPath,
+      `thesis: t\nrequirements:\n  - id: R1\n    statement: x\n    acceptance: { tier: 1, gate: "y" }\ndecisions:\n  - id: D1\n    statement: "targets iPhone only platform"\n    rationale: r\n`,
+    );
+    const llm = new MockLlm([{ text: JSON.stringify({ decisions: [{ statement: "targets iPhone only" }] }) }]);
+    const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y", git: false });
+    expect(await s.captureDecisions("iphone")).toEqual([]); // overlaps D1 → skipped
+  });
+});
+
 describe("SpecSession — the artifact is the state", () => {
   it("turn proposes deltas; accept applies, saves, git-commits; resume = new session reads same state", async () => {
     const llm = new MockLlm([{ text: JSON.stringify(batchAddDecision) }]);

@@ -312,6 +312,18 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   model) — fine for optimizing against the eval, not a substitute for the live
   cross-executor gauntlet. Anti-overfit: expand scenarios (Haiku-generated,
   spot-checked) + a held-out set before trusting a lift gain.
+- A40. First gated iteration of the A39 loop (2026-06-13): the eval's headline
+  finding was that ser-talk crystallized ~0 decisions while a same-facts vanilla
+  one-shot produced ~5 — so it LOST the ablation. Fix: `SpecSession.captureDecisions`,
+  reconcile's sibling — each turn the model EXTRACTS the concrete constraints the
+  user stated (platform, storage, scope) and the harness records them as
+  decisions (deduped via wordOverlap; best-effort; runs in the REPL and the eval
+  runner). Gated on the full 3-scenario eval: mean Tier-2 lift −24 → −9, blind
+  judge wins 1/3 → 2/3, habit-tracker facts 0% → 100% (lift −40 → +0). Lift rose
+  ⇒ committed (the loop's own rule). Not yet at positive lift — recipe/kid still
+  leak facts (50%/33%); next iterations continue. Instrument note: `claude -p`
+  ~3-5s/call makes the full judged set >10min; gate detached, and a fast
+  mechanical-only fitness mode is the next loop-hardening step.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level
