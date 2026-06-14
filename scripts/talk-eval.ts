@@ -22,22 +22,38 @@ import { extractIdea } from "../src/contract/ingest.js";
 import { ideaToTalkSpec, renderSeed } from "../src/contract/brief.js";
 import { scoreSpec } from "../src/contract/spec-score.js";
 import { loadDotEnv } from "../src/env.js";
+import type { Spec } from "../src/contract/spec.js";
 import {
   SCENARIOS,
   scoreTranscript,
-  formatScoreTable,
   simUserMessage,
+  judgeProcess,
+  processScore,
+  specQuality,
+  generateVanillaSpec,
+  judgeSpecPair,
+  blindAssign,
   type Scenario,
   type EvalTurn,
   type Transcript,
   type RunDeps,
 } from "../src/eval/talk-eval.js";
 
+function pct(x: number): string {
+  return `${Math.round(x * 100)}%`;
+}
+/** Fixed-width table from a header + rows. */
+function table(head: string[], rows: string[][]): string {
+  const w = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));
+  const line = (c: string[]): string => c.map((x, i) => x.padEnd(w[i]!)).join("  ");
+  return [line(head), ...rows.map(line)].join("\n");
+}
+
 function blockingCount(spec: { open_questions: { blocking: boolean }[] }): number {
   return spec.open_questions.filter((q) => q.blocking).length;
 }
 
-async function runScenario(scenario: Scenario, deps: RunDeps): Promise<Transcript> {
+async function runScenario(scenario: Scenario, deps: RunDeps): Promise<{ transcript: Transcript; finalSpec: Spec }> {
   writeFileSync(deps.specPath, yamlStringify(blankSpec()));
   const session = new SpecSession({
     path: deps.specPath,
@@ -101,7 +117,11 @@ async function runScenario(scenario: Scenario, deps: RunDeps): Promise<Transcrip
     userMsg = (await simUserMessage(scenario, lastAssistant, deps).catch(() => "")) || "tell me more";
   }
 
-  return { scenarioId: scenario.id, turns, finalDecisions: session.load().decisions.map((d) => d.statement) };
+  const finalSpec = session.load();
+  return {
+    transcript: { scenarioId: scenario.id, turns, finalDecisions: finalSpec.decisions.map((d) => d.statement) },
+    finalSpec,
+  };
 }
 
 async function main(): Promise<void> {
@@ -119,9 +139,14 @@ async function main(): Promise<void> {
   const scenarios = only ? SCENARIOS.filter((s) => s.id === only) : SCENARIOS;
   if (scenarios.length === 0) throw new Error(`no scenario matched "${only}"`);
 
-  const rows: { scenario: string; score: ReturnType<typeof scoreTranscript> }[] = [];
-  const transcripts: Transcript[] = [];
-  for (const scenario of scenarios) {
+  const tier1: string[][] = []; // process quality
+  const tier2: string[][] = []; // output vs vanilla
+  const dump: unknown[] = [];
+  let serWins = 0;
+  let judged = 0;
+
+  for (let si = 0; si < scenarios.length; si++) {
+    const scenario = scenarios[si]!;
     process.stderr.write(`\n▶ ${scenario.id}: "${scenario.idea}"\n`);
     const dir = mkdtempSync(join(tmpdir(), `talk-eval-${scenario.id}-`));
     const deps: RunDeps = {
@@ -129,19 +154,59 @@ async function main(): Promise<void> {
       mapperModel: chain.executor,
       knightModel: chain.knight,
       userLlm: llm,
-      // the simulated user can be a stronger model so it answers faithfully
-      userModel: userModelOverride ?? chain.knight,
+      userModel: userModelOverride ?? chain.knight, // a stronger sim-user answers faithfully
       specPath: join(dir, "eval.spec.yaml"),
     };
-    const transcript = await runScenario(scenario, deps);
-    transcripts.push(transcript);
-    rows.push({ scenario: scenario.id, score: scoreTranscript(scenario, transcript) });
+
+    // ── Tier 1: process quality (mechanical + funnel-aware judge) ──
+    const { transcript, finalSpec } = await runScenario(scenario, deps);
+    const mech = scoreTranscript(scenario, transcript);
+    const pj = await judgeProcess(scenario, transcript, llm, chain.knight).catch(() => null);
+    tier1.push([
+      scenario.id,
+      pct(mech.factsRecorded),
+      String(mech.reasks),
+      String(mech.askedWhenSettled),
+      mech.turnsToBuildable === null ? "—" : `t${mech.turnsToBuildable}`,
+      pj ? `${pj.forks}/${pj.captured}/${pj.defaulted}/${pj.coherence}` : "n/a",
+      String(processScore(mech, pj)),
+    ]);
+
+    // ── Tier 2: output vs same-facts vanilla one-shot (the ablation) ──
+    process.stderr.write(`  generating vanilla baseline…\n`);
+    const vanilla = await generateVanillaSpec(scenario, llm, chain.executor);
+    const serQ = specQuality(finalSpec, scenario);
+    const vanQ = specQuality(vanilla, scenario);
+    const { a, b, serIs } = blindAssign(finalSpec, vanilla, si % 2 === 1); // randomize A/B by parity
+    const verdict = await judgeSpecPair(scenario.idea, a, b, llm, chain.knight).catch(() => null);
+    let serWon = "n/a";
+    if (verdict) {
+      judged += 1;
+      const winnerIsSer = verdict.winner === serIs;
+      if (verdict.winner !== "tie" && winnerIsSer) serWins += 1;
+      serWon = verdict.winner === "tie" ? "tie" : winnerIsSer ? "ser ✓" : "VANILLA";
+    }
+    tier2.push([
+      scenario.id,
+      `${serQ.composite} vs ${vanQ.composite}`,
+      (serQ.composite - vanQ.composite >= 0 ? "+" : "") + String(serQ.composite - vanQ.composite),
+      `${pct(serQ.gateCoverage)}/${pct(vanQ.gateCoverage)}`,
+      `${pct(serQ.factCoverage)}/${pct(vanQ.factCoverage)}`,
+      serWon,
+    ]);
+
+    dump.push({ scenario: scenario.id, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla });
   }
 
-  process.stdout.write("\n" + formatScoreTable(rows) + "\n");
+  process.stdout.write("\n══ TIER 1 — process quality (did it extract the right decisions?) ══\n");
+  process.stdout.write(table(["scenario", "facts", "reask", "incoh", "build@", "judge f/c/d/c", "score"], tier1) + "\n");
+  process.stdout.write("\n══ TIER 2 — output vs same-facts vanilla one-shot (the ablation) ══\n");
+  process.stdout.write(table(["scenario", "ser vs van", "lift", "gates s/v", "facts s/v", "judge"], tier2) + "\n");
+  process.stdout.write(`\nser-talk beat vanilla on ${serWins}/${judged} judged specs.\n`);
+
   mkdirSync(join(process.cwd(), "results"), { recursive: true });
-  const out = join(process.cwd(), "results", `talk-eval-${transcripts.length}-scenarios.json`);
-  writeFileSync(out, JSON.stringify({ rows, transcripts }, null, 2));
+  const out = join(process.cwd(), "results", `talk-eval-${scenarios.length}-scenarios.json`);
+  writeFileSync(out, JSON.stringify(dump, null, 2));
   process.stderr.write(`\ntranscripts → ${out}\n`);
 }
 

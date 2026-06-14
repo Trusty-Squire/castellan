@@ -6,10 +6,16 @@ import {
   isShowPlanAsk,
   scoreTranscript,
   formatScoreTable,
+  specQuality,
+  blindAssign,
+  processScore,
   type Scenario,
   type Transcript,
   type EvalTurn,
+  type Score,
+  type ProcessJudgment,
 } from "../../src/eval/talk-eval.js";
+import type { Spec } from "../../src/contract/spec.js";
 
 const scenario: Scenario = {
   id: "demo",
@@ -94,7 +100,47 @@ describe("scoreTranscript", () => {
     expect(scoreTranscript(scenario, t).presentedOnRequest).toBeNull();
   });
 
-  it("formatScoreTable renders a row per scenario plus a mean", () => {
+});
+
+describe("tier 2 — output quality", () => {
+  const spec = {
+    thesis: "ai companion",
+    stories: [],
+    scope_fence: [],
+    requirements: [
+      { id: "R1", statement: "voice", acceptance: { tier: 1, gate: "x" } },
+      { id: "R2", statement: "presence", acceptance: { tier: 0 } },
+    ],
+    decisions: [
+      { id: "D1", statement: "designed for age 4", rationale: "r", claims: [] },
+      { id: "D2", statement: "runs on a laptop", rationale: "r", claims: [] },
+    ],
+    claims: [],
+    open_questions: [],
+  } as unknown as Spec;
+
+  it("specQuality scores gates, ungated, fact coverage, decomposition", () => {
+    const q = specQuality(spec, scenario);
+    expect(q.gateCoverage).toBe(0.5); // 1 of 2 requirements gated
+    expect(q.ungated).toBe(1);
+    expect(q.factCoverage).toBe(1); // "age 4" + "laptop" both present
+    expect(q.components).toBe(2);
+    expect(q.composite).toBe(75); // 50*0.5 + 40*1 + 10*1
+  });
+
+  it("blindAssign hides which spec is ser, and remembers the mapping", () => {
+    expect(blindAssign("S", "V", false)).toEqual({ a: "S", b: "V", serIs: "A" });
+    expect(blindAssign("S", "V", true)).toEqual({ a: "V", b: "S", serIs: "B" });
+  });
+
+  it("processScore blends mechanical 60% + judge 40%, or mechanical alone if no judge", () => {
+    const mech = { overall: 80 } as Score;
+    expect(processScore(mech, null)).toBe(80);
+    const judge: ProcessJudgment = { forks: 5, captured: 5, defaulted: 5, coherence: 5, reason: "" };
+    expect(processScore(mech, judge)).toBe(88); // 0.6*80 + 0.4*100
+  });
+
+  it("formatScoreTable still renders (legacy tier-1 table)", () => {
     const out = formatScoreTable([
       { scenario: "demo", score: scoreTranscript(scenario, { scenarioId: "demo", turns: [turn({ ready: true, blockingAfter: 0 })], finalDecisions: ["age 4", "laptop"] }) },
     ]);

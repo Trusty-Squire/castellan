@@ -10,7 +10,9 @@
  * `runScenario`/`simUserMessage` are LIVE (network) and run only from the
  * `pnpm talk-eval` script — never in the test suite (zero-network invariant).
  */
+import { z } from "zod";
 import type { LlmClient } from "../llm/types.js";
+import { SpecSchema, type Spec } from "../contract/spec.js";
 
 // ── Scenarios ──────────────────────────────────────────────────────────────
 
@@ -250,4 +252,179 @@ export async function simUserMessage(
     maxTokens: 120,
   });
   return res.text.trim().replace(/^["']|["']$/g, "");
+}
+
+function parseJsonLoose(text: string): unknown {
+  const cleaned = text.replace(/```json?/gi, "").replace(/```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+// ══ TIER 1 — process quality: a funnel-aware judge of the EXTRACTION ══════════
+// The mechanical rubric (scoreTranscript) catches re-asks/coherence/convergence.
+// This judge assesses the thing mechanics can't: did the conversation extract
+// the RIGHT decisions for the idea→build→polish funnel? Structured 1-5 per
+// dimension (not a vibe number) so it supplements, not replaces, the mechanics.
+
+const ProcessJudgmentSchema = z.object({
+  forks: z.number().min(0).max(5), // asked the load-bearing forks, not trivia
+  captured: z.number().min(0).max(5), // converted answers into recorded decisions
+  defaulted: z.number().min(0).max(5), // defaulted tech choices instead of interrogating
+  coherence: z.number().min(0).max(5), // moved coherently through the funnel
+  reason: z.string().default(""),
+});
+export type ProcessJudgment = z.infer<typeof ProcessJudgmentSchema>;
+
+const JUDGE_PROCESS_SYSTEM = `You judge how well an assistant ELICITED a buildable software spec from a user.
+The assistant's job is a funnel: IDEA (surface the load-bearing forks + decisions
+only the user can answer — hardware, audience, constraints — and default the tech
+choices itself) → BUILD → POLISH. Score the EXTRACTION, not politeness.
+Rate each 0-5:
+- forks: did it ask the decisive forks (not trivia, not things it should default)?
+- captured: did the user's answers become recorded DECISIONS (not dropped)?
+- defaulted: did it default tech choices (libraries, storage) instead of asking?
+- coherence: did it avoid re-asking settled things and move forward?
+Output ONLY JSON: {"forks":n,"captured":n,"defaulted":n,"coherence":n,"reason":"..."}`;
+
+export async function judgeProcess(
+  scenario: Scenario,
+  t: Transcript,
+  llm: LlmClient,
+  model: string,
+): Promise<ProcessJudgment | null> {
+  const convo = t.turns.map((x, i) => `T${i + 1} user: ${x.user}\nT${i + 1} assistant: ${x.reply || "(plan shown)"}`).join("\n");
+  const res = await llm.complete({
+    model,
+    system: JUDGE_PROCESS_SYSTEM,
+    user: `PRODUCT: ${scenario.idea}\n\nFINAL DECISIONS:\n${t.finalDecisions.map((d) => `- ${d}`).join("\n") || "(none)"}\n\nTRANSCRIPT:\n${convo}`,
+    json: true,
+    maxTokens: 400,
+  });
+  const parsed = ProcessJudgmentSchema.safeParse(parseJsonLoose(res.text));
+  return parsed.success ? parsed.data : null;
+}
+
+/** 0..100 process score: 60% mechanical (scoreTranscript), 40% judge (if any). */
+export function processScore(mech: Score, judge: ProcessJudgment | null): number {
+  if (!judge) return mech.overall;
+  const judgePct = ((judge.forks + judge.captured + judge.defaulted + judge.coherence) / 20) * 100;
+  return Math.round(0.6 * mech.overall + 0.4 * judgePct);
+}
+
+// ══ TIER 2 — output quality vs a vanilla one-shot spec (the headline ablation) ══
+
+export interface SpecQuality {
+  gateCoverage: number; // fraction of requirements with an objective (tier>=1) gate
+  ungated: number; // count of tier-0 requirements (lower is better)
+  factCoverage: number; // fraction of the user's facts that survived into the spec
+  components: number; // requirement count (decomposition)
+  composite: number; // 0..100
+}
+
+/** Mechanical spec quality — scores ser-talk's spec AND the vanilla spec alike. */
+export function specQuality(spec: Spec, scenario: Scenario): SpecQuality {
+  const reqs = spec.requirements;
+  const gated = reqs.filter((r) => r.acceptance.tier >= 1).length;
+  const gateCoverage = reqs.length ? gated / reqs.length : 0;
+  const ungated = reqs.filter((r) => r.acceptance.tier === 0).length;
+  const hay = [...spec.decisions.map((d) => d.statement), ...reqs.map((r) => r.statement), spec.thesis];
+  const factCoverage = scenario.facts.length
+    ? scenario.facts.filter((f) => factRecorded(f, hay)).length / scenario.facts.length
+    : 1;
+  const components = reqs.length;
+  const decomp = components >= 2 && components <= 8 ? 1 : components === 1 ? 0 : 0.5;
+  const composite = Math.round(50 * gateCoverage + 40 * factCoverage + 10 * decomp);
+  return { gateCoverage, ungated, factCoverage, components, composite };
+}
+
+/** Blind A/B assignment so the comparative judge can't tell which spec is which. */
+export function blindAssign<T>(ser: T, vanilla: T, flip: boolean): { a: T; b: T; serIs: "A" | "B" } {
+  return flip ? { a: vanilla, b: ser, serIs: "B" } : { a: ser, b: vanilla, serIs: "A" };
+}
+
+const VANILLA_SYSTEM = `You are a software architect. Given an idea and the user's constraints, produce a
+build spec in ONE shot (no questions). Output ONLY JSON:
+{"thesis":"...","requirements":[{"statement":"...","check":"shell/command test or null"}],"decisions":[{"statement":"..."}]}
+Each requirement's "check" is an OBJECTIVE command that proves it works, or null if
+none fits. Capture the user's stated constraints as decisions. Be concrete.`;
+
+/** The same-facts one-shot baseline: what a plain LLM gives you with no process. */
+export async function generateVanillaSpec(scenario: Scenario, llm: LlmClient, model: string): Promise<Spec> {
+  const facts = scenario.facts.map((f) => `- ${f.key}: ${f.value}`).join("\n");
+  const res = await llm.complete({
+    model,
+    system: VANILLA_SYSTEM,
+    user: `IDEA: ${scenario.idea}\n\nUSER CONSTRAINTS:\n${facts}`,
+    json: true,
+    maxTokens: 1200,
+  });
+  const raw = parseJsonLoose(res.text) as
+    | { thesis?: string; requirements?: { statement?: string; check?: string | null }[]; decisions?: { statement?: string }[] }
+    | null;
+  const reqs = (raw?.requirements ?? [])
+    .filter((r) => r.statement)
+    .map((r, i) => ({
+      id: `R${i + 1}`,
+      statement: r.statement!,
+      acceptance: r.check ? { tier: 1 as const, gate: r.check } : { tier: 0 as const },
+    }));
+  const obj = {
+    thesis: raw?.thesis || scenario.idea,
+    stories: [],
+    scope_fence: [],
+    requirements: reqs.length > 0 ? reqs : [{ id: "R1", statement: scenario.idea, acceptance: { tier: 0 as const } }],
+    decisions: (raw?.decisions ?? [])
+      .filter((d) => d.statement)
+      .map((d, i) => ({ id: `D${i + 1}`, statement: d.statement!, rationale: "one-shot baseline", claims: [] })),
+    claims: [],
+    open_questions: [],
+  };
+  return SpecSchema.parse(obj);
+}
+
+const PairVerdictSchema = z.object({
+  a: z.object({ gates: z.number(), needs: z.number(), decomp: z.number() }).partial().passthrough(),
+  b: z.object({ gates: z.number(), needs: z.number(), decomp: z.number() }).partial().passthrough(),
+  winner: z.enum(["A", "B", "tie"]),
+  reason: z.string().default(""),
+});
+export type PairVerdict = z.infer<typeof PairVerdictSchema>;
+
+const JUDGE_PAIR_SYSTEM = `Two build specs (A and B) describe the SAME product. Judge which is better to
+actually build. Score each 1-10 on: gates (are the acceptance checks objective and
+strong?), needs (does it capture the user's stated constraints?), decomp (sensible
+component breakdown?). Pick the overall winner. Be impartial — A and B are in
+random order and you do not know how either was produced.
+Output ONLY JSON: {"a":{"gates":n,"needs":n,"decomp":n},"b":{"gates":n,"needs":n,"decomp":n},"winner":"A"|"B"|"tie","reason":"..."}`;
+
+function specForJudge(spec: Spec): string {
+  const reqs = spec.requirements
+    .map((r) => `  - ${r.statement} [check: ${r.acceptance.tier === 0 ? "none" : r.acceptance.tier === 4 ? r.acceptance.artifact : r.acceptance.gate}]`)
+    .join("\n");
+  const decs = spec.decisions.map((d) => `  - ${d.statement}`).join("\n") || "  (none)";
+  return `thesis: ${spec.thesis}\nrequirements:\n${reqs}\ndecisions:\n${decs}`;
+}
+
+export async function judgeSpecPair(
+  idea: string,
+  specA: Spec,
+  specB: Spec,
+  llm: LlmClient,
+  model: string,
+): Promise<PairVerdict | null> {
+  const res = await llm.complete({
+    model,
+    system: JUDGE_PAIR_SYSTEM,
+    user: `PRODUCT: ${idea}\n\nSPEC A:\n${specForJudge(specA)}\n\nSPEC B:\n${specForJudge(specB)}`,
+    json: true,
+    maxTokens: 500,
+  });
+  const parsed = PairVerdictSchema.safeParse(parseJsonLoose(res.text));
+  return parsed.success ? parsed.data : null;
 }

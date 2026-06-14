@@ -280,7 +280,20 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   runner is LIVE (network) and runs ONLY from the script (zero-network test
   invariant preserved, like derive-bench/poker-bench). RL/fine-tuning is
   deferred until this eval shows mechanics+prompt can't carry the cheap model.
-  First live read (habit-tracker, 2026-06-13): 77/100 — facts 50%, 1 re-ask.
+  TWO TIERS (owner design 2026-06-13): TIER 1 = process quality — the mechanical
+  rubric PLUS a funnel-aware judge (judgeProcess) scoring extraction on forks/
+  captured/defaulted/coherence (0-5 each), blended 60/40 (processScore). TIER 2
+  = output vs a SAME-FACTS vanilla one-shot spec (generateVanillaSpec) — the
+  headline ablation: does the whole conversation beat a plain LLM handed the
+  same facts? Scored mechanically (specQuality: gate coverage, fact coverage,
+  decomposition) AND by a blind, order-randomized comparative judge
+  (blindAssign + judgeSpecPair). The money number is the LIFT (ser − vanilla).
+  PURE pieces (specQuality, blindAssign, processScore, scoreTranscript) are
+  hermetically tested; judges/vanilla are LIVE/script-only. FIRST LIVE READING
+  (recipe-box, n=1, 2026-06-13): ser 80 vs vanilla 100, lift −20, vanilla won
+  the blind judge, ser captured 50% of facts vs vanilla's 100%. i.e. as built,
+  the conversation UNDERPERFORMS a same-facts one-shot — the instrument now
+  exists to drive that lift positive (needs full multi-scenario runs to confirm).
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level
