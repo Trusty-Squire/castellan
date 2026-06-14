@@ -30,7 +30,6 @@ import {
   scoreTranscript,
   simUserMessage,
   judgeProcess,
-  processScore,
   specQuality,
   generateVanillaSpec,
   judgeSpecPair,
@@ -159,66 +158,102 @@ async function main(): Promise<void> {
   const scenarios = only ? SCENARIOS.filter((s) => s.id === only) : SCENARIOS;
   if (scenarios.length === 0) throw new Error(`no scenario matched "${only}"`);
   // --mechanical: skip the slow, high-variance LLM judges and gate on the
-  // deterministic Tier-2 lift alone — fast, stable signal for tuning edits.
+  // deterministic Tier-2 lift alone. --seeds N: run each scenario N times and
+  // AVERAGE, so conversation+vanilla noise cancels (the loop can't gate a tuning
+  // change off one noisy run). --concurrency K: cap simultaneous claude -p
+  // processes — unbounded parallelism was breaking runs (A40).
   const mechanicalOnly = args.includes("--mechanical");
+  const seeds = args.includes("--seeds") ? Math.max(1, parseInt(args[args.indexOf("--seeds") + 1] ?? "1", 10)) : 1;
+  const concurrency = args.includes("--concurrency") ? Math.max(1, parseInt(args[args.indexOf("--concurrency") + 1] ?? "2", 10)) : 2;
 
-  interface Row {
-    si: number;
-    t1: string[];
-    t2: string[];
-    serWon: "ser" | "vanilla" | "tie" | null;
+  interface Run {
+    scenarioId: string;
     lift: number;
+    facts: number;
+    serComp: number;
+    vanComp: number;
+    serWon: "ser" | "vanilla" | "tie" | null;
     dump: unknown;
   }
 
-  async function evalScenario(scenario: Scenario, si: number): Promise<Row> {
-    const dir = mkdtempSync(join(tmpdir(), `talk-eval-${scenario.id}-`));
-    const deps: RunDeps = {
-      mapperLlm: llm,
-      mapperModel,
-      knightModel: richModel,
-      userLlm: llm,
-      userModel: richModel,
-      specPath: join(dir, "eval.spec.yaml"),
-    };
-    const { transcript, finalSpec } = await runScenario(scenario, deps);
-    const mech = scoreTranscript(scenario, transcript);
-    const pj = mechanicalOnly ? null : await judgeProcess(scenario, transcript, llm, richModel).catch(() => null);
-    const vanilla = await generateVanillaSpec(scenario, llm, mapperModel);
-    const serQ = specQuality(finalSpec, scenario);
-    const vanQ = specQuality(vanilla, scenario);
-    const { a, b, serIs } = blindAssign(finalSpec, vanilla, si % 2 === 1);
-    const verdict = mechanicalOnly ? null : await judgeSpecPair(scenario.idea, a, b, llm, richModel).catch(() => null);
-    let serWon: Row["serWon"] = null;
-    if (verdict) serWon = verdict.winner === "tie" ? "tie" : verdict.winner === serIs ? "ser" : "vanilla";
-    const lift = serQ.composite - vanQ.composite;
-    process.stderr.write(`  ✓ ${scenario.id}: lift ${lift >= 0 ? "+" : ""}${lift}\n`);
-    return {
-      si,
-      t1: [scenario.id, pct(mech.factsRecorded), String(mech.reasks), String(mech.askedWhenSettled), mech.turnsToBuildable === null ? "—" : `t${mech.turnsToBuildable}`, pj ? `${pj.forks}/${pj.captured}/${pj.defaulted}/${pj.coherence}` : "n/a", String(processScore(mech, pj))],
-      t2: [scenario.id, `${serQ.composite} vs ${vanQ.composite}`, (lift >= 0 ? "+" : "") + lift, `${pct(serQ.gateCoverage)}/${pct(vanQ.gateCoverage)}`, `${pct(serQ.factCoverage)}/${pct(vanQ.factCoverage)}`, serWon === null ? "n/a" : serWon === "ser" ? "ser ✓" : serWon === "vanilla" ? "VANILLA" : "tie"],
-      serWon,
-      lift,
-      dump: { scenario: scenario.id, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla },
-    };
+  async function evalRun(scenario: Scenario, runIdx: number): Promise<Run | null> {
+    try {
+      const dir = mkdtempSync(join(tmpdir(), `talk-eval-${scenario.id}-`));
+      const deps: RunDeps = { mapperLlm: llm, mapperModel, knightModel: richModel, userLlm: llm, userModel: richModel, specPath: join(dir, "eval.spec.yaml") };
+      const { transcript, finalSpec } = await runScenario(scenario, deps);
+      const mech = scoreTranscript(scenario, transcript);
+      const pj = mechanicalOnly ? null : await judgeProcess(scenario, transcript, llm, richModel).catch(() => null);
+      const vanilla = await generateVanillaSpec(scenario, llm, mapperModel);
+      const serQ = specQuality(finalSpec, scenario);
+      const vanQ = specQuality(vanilla, scenario);
+      const { a, b, serIs } = blindAssign(finalSpec, vanilla, runIdx % 2 === 1);
+      const verdict = mechanicalOnly ? null : await judgeSpecPair(scenario.idea, a, b, llm, richModel).catch(() => null);
+      const serWon: Run["serWon"] = verdict ? (verdict.winner === "tie" ? "tie" : verdict.winner === serIs ? "ser" : "vanilla") : null;
+      const lift = serQ.composite - vanQ.composite;
+      process.stderr.write(`  ✓ ${scenario.id} #${runIdx}: lift ${lift >= 0 ? "+" : ""}${lift} (facts ${pct(serQ.factCoverage)})\n`);
+      return { scenarioId: scenario.id, lift, facts: serQ.factCoverage, serComp: serQ.composite, vanComp: vanQ.composite, serWon, dump: { scenario: scenario.id, runIdx, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla } };
+    } catch (err) {
+      process.stderr.write(`  ✗ ${scenario.id} #${runIdx} errored: ${(err as Error).message.split("\n")[0]}\n`);
+      return null;
+    }
   }
 
-  process.stderr.write(`running ${scenarios.length} scenario(s) in parallel${mechanicalOnly ? " [mechanical-only]" : ""}…\n`);
-  const rows = (await Promise.all(scenarios.map((s, i) => evalScenario(s, i)))).sort((x, y) => x.si - y.si);
+  // Concurrency-limited task pool over scenarios × seeds.
+  const tasks: { scenario: Scenario; runIdx: number }[] = [];
+  scenarios.forEach((s, si) => {
+    for (let k = 0; k < seeds; k++) tasks.push({ scenario: s, runIdx: si * seeds + k });
+  });
+  const runs: (Run | null)[] = new Array(tasks.length);
+  let nextTask = 0;
+  process.stderr.write(`running ${scenarios.length} scenario(s) × ${seeds} seed(s) @ concurrency ${concurrency}${mechanicalOnly ? " [mechanical]" : ""}…\n`);
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, tasks.length) }, async () => {
+      for (;;) {
+        const i = nextTask++;
+        if (i >= tasks.length) return;
+        runs[i] = await evalRun(tasks[i]!.scenario, tasks[i]!.runIdx);
+      }
+    }),
+  );
 
-  const serWins = rows.filter((r) => r.serWon === "ser").length;
-  const judged = rows.filter((r) => r.serWon !== null).length;
-  const meanLift = Math.round(rows.reduce((s, r) => s + r.lift, 0) / rows.length);
+  // Aggregate per scenario (average across seeds).
+  const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, c) => a + c, 0) / xs.length : 0);
+  const sd = (xs: number[]): number => {
+    if (xs.length < 2) return 0;
+    const m = mean(xs);
+    return Math.sqrt(mean(xs.map((x) => (x - m) ** 2)));
+  };
+  const rows: string[][] = [];
+  const allLifts: number[] = [];
+  let serWins = 0;
+  let judged = 0;
+  for (const scenario of scenarios) {
+    const r = runs.filter((x): x is Run => x !== null && x.scenarioId === scenario.id);
+    if (r.length === 0) {
+      rows.push([scenario.id, "0/" + seeds, "—", "—", "—", "—"]);
+      continue;
+    }
+    const lifts = r.map((x) => x.lift);
+    allLifts.push(...lifts);
+    serWins += r.filter((x) => x.serWon === "ser").length;
+    judged += r.filter((x) => x.serWon !== null).length;
+    rows.push([
+      scenario.id,
+      `${r.length}/${seeds}`,
+      `${Math.round(mean(r.map((x) => x.serComp)))} vs ${Math.round(mean(r.map((x) => x.vanComp)))}`,
+      `${mean(lifts) >= 0 ? "+" : ""}${mean(lifts).toFixed(1)} ±${sd(lifts).toFixed(0)}`,
+      pct(mean(r.map((x) => x.facts))),
+      judged > 0 ? `${r.filter((x) => x.serWon === "ser").length}/${r.filter((x) => x.serWon !== null).length}` : "n/a",
+    ]);
+  }
 
-  process.stdout.write("\n══ TIER 1 — process quality (did it extract the right decisions?) ══\n");
-  process.stdout.write(table(["scenario", "facts", "reask", "incoh", "build@", "judge f/c/d/c", "score"], rows.map((r) => r.t1)) + "\n");
-  process.stdout.write("\n══ TIER 2 — output vs same-facts vanilla one-shot (the ablation) ══\n");
-  process.stdout.write(table(["scenario", "ser vs van", "lift", "gates s/v", "facts s/v", "judge"], rows.map((r) => r.t2)) + "\n");
-  process.stdout.write(`\nMEAN LIFT: ${meanLift >= 0 ? "+" : ""}${meanLift}` + (judged > 0 ? `   |   judge wins ${serWins}/${judged}` : "") + "\n");
+  process.stdout.write("\n══ TIER 2 — output vs same-facts vanilla, averaged over seeds ══\n");
+  process.stdout.write(table(["scenario", "runs", "ser vs van", "lift μ±σ", "facts μ", "wins"], rows) + "\n");
+  process.stdout.write(`\nMEAN LIFT: ${mean(allLifts) >= 0 ? "+" : ""}${mean(allLifts).toFixed(1)} (±${sd(allLifts).toFixed(0)}, n=${allLifts.length})` + (judged > 0 ? `   |   judge wins ${serWins}/${judged}` : "") + "\n");
 
   mkdirSync(join(process.cwd(), "results"), { recursive: true });
-  const out = join(process.cwd(), "results", `talk-eval-${scenarios.length}-scenarios.json`);
-  writeFileSync(out, JSON.stringify(rows.map((r) => r.dump), null, 2));
+  const out = join(process.cwd(), "results", `talk-eval-${scenarios.length}x${seeds}.json`);
+  writeFileSync(out, JSON.stringify(runs.filter(Boolean).map((r) => (r as Run).dump), null, 2));
   process.stderr.write(`\ntranscripts → ${out}\n`);
 }
 

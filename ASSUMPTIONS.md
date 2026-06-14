@@ -332,7 +332,13 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   20–100 across runs), so no trustworthy lift delta. KEY FINDING: the eval is
   too noisy to gate AMBIGUOUS tuning changes — it needs SEED-AVERAGING (N runs
   per scenario, averaged) and CONCURRENCY CONTROL before driving further edits.
-  That instrument-hardening is the real next step, ahead of more engine tweaks.
+  DONE: talk-eval now takes `--seeds N` (averages, reports lift μ±σ) and
+  `--concurrency K` (a task pool — concurrency 2 fixed the contention that broke
+  runs). Stable re-baseline (3 scenarios × 3 seeds, mechanical): MEAN LIFT
+  −2.7 ±26 (SE ≈ ±8.7) — the capture iterations took ser-talk from −24 (clearly
+  losing) to ~parity with vanilla, winning 2/3 scenarios, facts 44–83% (was ~0).
+  σ is still large: a future edit must move the mean by ≳2·SE (~17) to gate as
+  real; tiny tweaks need more seeds. Laggard = kid-companion (−25, facts 44%).
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level
