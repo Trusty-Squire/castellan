@@ -100,36 +100,58 @@ async function deriveSpec(ctx: TalkActionContext, lines: string[]): Promise<stri
   return mp;
 }
 
+/** A requirement's gate in plain words — what proves it works — not raw shell. */
+function gateLabel(a: Spec["requirements"][number]["acceptance"]): string {
+  if (a.tier === 0) return "no check yet ⚠";
+  if (a.tier === 4) return `human-reviewed (${a.artifact})`;
+  return `auto-checked: ${a.gate}`;
+}
+
 /**
- * The plan in plain words — what `ser talk` presents when asked to show the
- * architecture / requirements / stories (and on the flip to buildable). Terse
- * but COMPLETE: every requirement with its gate, the decisions made, the
- * stories served, what's still open.
+ * The plan in plain words. Leads with the COMPONENTS — what actually gets
+ * built — in legible language, each with how it's proven (not a raw shell
+ * command). Then the decisions the user can veto, the stories served, and
+ * anything still open. Terse but complete.
  */
 export function renderPlan(spec: Spec): string[] {
   const lines: string[] = [];
   lines.push(`thesis: ${spec.thesis}`);
+  lines.push("");
+  lines.push(`components — what gets built (${spec.requirements.length}):`);
+  spec.requirements.forEach((r, i) => {
+    lines.push(`  ${i + 1}. ${r.statement}`);
+    lines.push(`       proven by: ${gateLabel(r.acceptance)}`);
+  });
+  if (spec.decisions.length > 0) {
+    lines.push("");
+    lines.push(`decisions (yours to veto — say "undo" or correct any, ${spec.decisions.length}):`);
+    for (const d of spec.decisions) lines.push(`  • ${d.statement}`);
+  }
   if (spec.stories.length > 0) {
-    lines.push(`stories (${spec.stories.length}):`);
+    lines.push("");
+    lines.push(`user stories (${spec.stories.length}):`);
     for (const s of spec.stories) lines.push(`  • ${s}`);
   }
-  lines.push(`requirements (${spec.requirements.length}):`);
-  for (const r of spec.requirements) {
-    const a = r.acceptance;
-    const gate =
-      a.tier === 0 ? "no gate yet" : a.tier === 4 ? `tier4 artifact: ${a.artifact}` : `tier${a.tier}: ${a.gate}`;
-    lines.push(`  ${r.id} ${r.statement} [${gate}]`);
-  }
-  if (spec.decisions.length > 0) {
-    lines.push(`decisions (${spec.decisions.length}):`);
-    for (const d of spec.decisions) lines.push(`  ${d.id} ${d.statement}`);
-  }
   const blocking = spec.open_questions.filter((q) => q.blocking);
-  if (spec.open_questions.length > 0) {
-    lines.push(`open questions (${blocking.length} blocking):`);
-    for (const q of spec.open_questions) lines.push(`  ${q.id} ${q.text}${q.blocking ? " *" : ""}`);
+  if (blocking.length > 0) {
+    lines.push("");
+    lines.push(`still open (${blocking.length}):`);
+    for (const q of blocking) lines.push(`  ? ${q.text}`);
   }
   return lines;
+}
+
+/**
+ * When nothing is open to ask, the model must not pose a fork (it contradicts
+ * "buildable"). Drop a trailing question, keeping the lock-in before it; the
+ * harness's own ✓/next-step line carries the conversation. Empty if the reply
+ * was nothing but a question.
+ */
+export function stripTrailingQuestion(reply: string): string {
+  const t = reply.trimEnd();
+  if (!t.endsWith("?")) return reply;
+  const cut = Math.max(t.lastIndexOf(". "), t.lastIndexOf("! "), t.lastIndexOf("\n"));
+  return cut > 0 ? t.slice(0, cut + 1).trimEnd() : "";
 }
 
 export async function dispatchAction(

@@ -249,6 +249,15 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   ids and applies the resolves. The model only IDENTIFIES; the harness ACTS
   (A28 pattern). Best-effort: bad JSON / network resolves nothing, never throws.
   Owner chose the LLM-reconcile approach over lexical/prompt-only (2026-06-13).
+  (5) COHERENCE — the model also re-asks a settled fork in REPLY PROSE with no
+  open_question backing it ("laptop locked but asking anyway" while a decision
+  records the hardware, spec already buildable). reconcile can't catch it (no
+  question to resolve), so the REPL strips a trailing question from the reply
+  whenever NO blocking question remains (`stripTrailingQuestion`) — the model's
+  own rule ("nothing open → don't ask") enforced mechanically. (6) LEGIBILITY —
+  `renderPlan` now leads with "components — what gets built" in plain language,
+  each "proven by:" a plain gate label (not a raw shell command); decisions are
+  framed "yours to veto". Dogfood: "I have no idea what the components are."
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

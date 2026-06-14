@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, utimesSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dispatchAction, missionPathFor, ensureSpecFile, blankSpec, renderPlan, type TalkActionContext } from "../../src/contract/talk.js";
+import { dispatchAction, missionPathFor, ensureSpecFile, blankSpec, renderPlan, stripTrailingQuestion, type TalkActionContext } from "../../src/contract/talk.js";
 import { DeltaBatchSchema, salvageBatch, DELTA_MAPPER_PROMPT } from "../../src/contract/spec-session.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { SquireError } from "../../src/errors.js";
@@ -119,22 +119,32 @@ describe("dispatchAction (mechanical, no LLM unless the action needs one)", () =
     expect(lines.join("\n")).toContain("NOT ready");
   });
 
-  it("renderPlan lists each requirement with its gate, plus decisions", () => {
+  it("renderPlan leads with components in plain words, gates as plain labels", () => {
     const spec = parseSpec(buildReadySpec);
     const out = renderPlan(spec).join("\n");
-    expect(out).toContain("R1 voice interaction loop [tier1: node --test loop]");
-    expect(out).toContain("R2 child-safe content [tier4 artifact: review.md]");
-    expect(out).toContain("thesis: a fox companion for kids");
+    expect(out).toContain("components — what gets built (2)");
+    expect(out).toContain("1. voice interaction loop");
+    expect(out).toContain("proven by: auto-checked: node --test loop");
+    expect(out).toContain("proven by: human-reviewed (review.md)");
+    expect(out).not.toContain("[tier1:"); // no raw gate-bracket noise
   });
 
-  it("status presents the full plan (thesis, requirements + gates) then the gates", async () => {
+  it("status presents the full plan (components first) then the gates", async () => {
     const p = join(dir, "x.spec.yaml");
     writeFileSync(p, readySpec);
     const lines = await dispatchAction("status", "", ctx(p));
     const out = lines.join("\n");
     expect(lines[0]).toContain("thesis:");
-    expect(out).toContain("requirements (1)");
+    expect(out).toContain("components — what gets built (1)");
     expect(out).toContain("READY to compile");
+  });
+
+  it("stripTrailingQuestion drops a posed fork but keeps the lock-in before it", () => {
+    expect(stripTrailingQuestion("Locked in: child age 4 for content filtering. What hardware runs it?")).toBe(
+      "Locked in: child age 4 for content filtering.",
+    );
+    expect(stripTrailingQuestion("All set — ready to build.")).toBe("All set — ready to build."); // no question, untouched
+    expect(stripTrailingQuestion("What hardware runs it?")).toBe(""); // nothing but a question → empty
   });
 
   it("verify with nothing to verify says so without an LLM call", async () => {

@@ -326,7 +326,7 @@ async function cmdSpec(args: string[]): Promise<number> {
 async function cmdTalk(args: string[]): Promise<number> {
   const flags = parseFlags(args, ["chain", "chains", "budget"]);
   const { SpecSession } = await import("./contract/spec-session.js");
-  const { dispatchAction, ensureSpecFile, renderPlan } = await import("./contract/talk.js");
+  const { dispatchAction, ensureSpecFile, renderPlan, stripTrailingQuestion } = await import("./contract/talk.js");
 
   // Color: --no-color forces off, --color forces on, else auto (TTY or
   // FORCE_COLOR/CLICOLOR_FORCE). Auto-detection is unreliable under some
@@ -421,24 +421,35 @@ async function cmdTalk(args: string[]): Promise<number> {
       // A pivot is a new product — re-decompose it via the idea phase (same
       // calibrated path), rather than the mapper's incremental decomposition.
       if (batch.pivot) { await seed(true); continue; }
-      if (batch.reply) process.stdout.write("\n" + batch.reply + "\n");
+      // Apply FIRST so we know the post-turn open forks before printing the reply.
+      let applied: Parameters<typeof styleLockedIn>[0] = [];
       if (batch.deltas.length > 0) {
-        const { applied, dropped } = await session.acceptLenient(batch);
-        if (applied.length > 0) {
+        const res = await session.acceptLenient(batch);
+        applied = res.applied;
+        if (res.applied.length > 0) {
           undoStack.push(before);
           if (undoStack.length > 20) undoStack = undoStack.slice(-20);
-          note(styleLockedIn(applied, st));
         }
-        if (dropped.length > 0) note(st.red(`${dropped.length} edit(s) didn't apply`));
+        if (res.dropped.length > 0) note(st.red(`${res.dropped.length} edit(s) didn't apply`));
       }
       // Semantic dedupe (A37): resolve forks a decision already answers, so the
       // mapper stops re-asking settled questions. Harness-applied; best-effort.
+      let cleared: unknown[] = [];
       try {
-        const cleared = await session.reconcile();
-        if (cleared.length > 0) note(st.dim(`cleared ${cleared.length} already-answered question(s)`));
+        cleared = await session.reconcile();
       } catch {
         /* reconcile is best-effort — never break the conversation */
       }
+      // Coherence: when NOTHING is open to ask, the model must not pose a fork —
+      // "laptop locked but asking anyway". Strip a trailing question; the ✓ line
+      // below carries the next step.
+      let reply = batch.reply;
+      if (session.load().open_questions.filter((q) => q.blocking).length === 0) {
+        reply = stripTrailingQuestion(reply);
+      }
+      if (reply) process.stdout.write("\n" + reply + "\n");
+      if (applied.length > 0) note(styleLockedIn(applied, st));
+      if (cleared.length > 0) note(st.dim(`cleared ${cleared.length} already-answered question(s)`));
       if (batch.action !== "none") {
         try {
           for (const line of await dispatchAction(batch.action, batch.action_arg, actionCtx)) {
