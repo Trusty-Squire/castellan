@@ -17,6 +17,26 @@ turns; a turn needs you. Castellan sells loops; a loop doesn't. North-star
 metric: loop endurance — unattended iterations per human intervention —
 alongside cost per verified iteration.
 
+## Product strategy — v0.3 (recorded 2026-06-14; owner's strategic insights, for posterity across sessions. Design authority: SPEC-v0.3.md)
+
+CENTERPIECE: **cheap model + reliable harness + opinionated product funnel → effective loops.** The three are ONE system; no single piece (the guardrails, the gates, the cheap loop) is "the point" — view them holistically. The funnel supplies the product instinct and tool knowledge the user lacks → that yields an efficient, objectively-gated spec → which lets a cheap+reliable loop reach a finished product with minimum human intervention.
+
+WHAT IT IS: a tool that **raises the quality FLOOR of what the long tail builds**, by removing the need for product instinct + tool/eval-harness knowledge, cheaply and reliably. The hobby dev never has to learn what PMF or an eval harness *is* — Castellan is their instinct and their harness.
+
+THE USER: the **long tail of hobby developers** (no product instinct, no eval-harness knowledge). NOT SV serial entrepreneurs / pros — they have instinct + want control and will use Claude Code/Cursor. Do not design for them.
+
+THE BASELINE (we kept benchmarking the wrong opponent — don't): the normie doing **lossy gradient descent with an assistant** — supplying where-to-go (instinct) and how-to-get-there (tool knowledge) badly, over many costly cycles. NOT a vanilla one-shot, NOT frontier models, NOT experts. Value = the delta for THAT person.
+
+THE METRIC: **churn-to-satisfaction at the final HUMAN gate** — minimize the non-expert's painful feedback cycles to reach a product they're satisfied with. The human IS the final gate by design; the pitch is NOT "autonomous teammate / no human" — it is "needs no expertise and far fewer cycles."
+
+POSITIONING: floor-raiser / churn-reducer for non-experts. NOT "advisor that out-opinions Codex" (wrong axis), NOT "autonomous teammate."
+
+SCOPE OF THE FLOOR: it supplies EXECUTION instinct (scoping, UX best-practice, safety, gateability) + tool knowledge. It does NOT supply VISION (what's worth building, for whom) — that stays the user's; garbage-vision-in → well-built-garbage-out (still a floor-raise on execution).
+
+DECISIVE FALSIFICATION TEST (unproduced — build before more architecture): does a real non-expert reach a satisfying product in fewer/cheaper cycles WITH Castellan than WITH an assistant (Claude Code / Lovable)? Churn-to-satisfaction vs an assistant, real hobby devs.
+
+ENGINE: built on **goose** (spiked + confirmed: recipes + `--sub-recipe` sweep + `--no-session` gated nodes + a custom MCP membrane; no Rust). Authoring = a premium, tool-using agent (a cheap model proved an incompetent advisor — it can't tell load-bearing from cosmetic); the cheap×reliable thesis is the BUILD loop only. The membrane (objective-gate enforcement) + honest-halt + reset are ours and are the defensible core. Funnel = idea → spec → polish → signoff → build → AUDIT (where dogfooding lives) → ship.
+
 ## What this is
 A verification harness that lets cheap LLMs complete long
 multi-step coding tasks reliably. v0.1 is an EXPERIMENT.

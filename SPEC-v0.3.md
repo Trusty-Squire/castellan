@@ -194,10 +194,19 @@ harness + simulated user we built for spec-quality graduate into the audit engin
 
 ## 8. Updates since this draft (settled in conversation 2026-06-14)
 
-- **Thesis/positioning:** cheap × quantifiable specs enable loops; advisor-not-
-  assistant. NOT "out-opinion Codex" (competes on the wrong axis). Two axes a good
-  advisor needs: *rigorous* (quantifiable gates → loopable; the moat) AND *wise*
-  (right forks/real product → the sweep; quality control, not the pitch).
+- **Thesis/positioning (corrected 2026-06-14):** the centerpiece is **cheap model
+  + reliable harness + opinionated product funnel → effective loops** — one system,
+  viewed holistically. The PRODUCT raises the quality FLOOR for the **long tail of
+  hobby devs** (no product instinct, no eval-harness knowledge), cheaply and
+  reliably. Positioning = floor-raiser / churn-reducer, NOT "advisor that
+  out-opinions Codex" and NOT "autonomous teammate." The right BASELINE is the
+  normie's lossy gradient descent *with an assistant* (not vanilla/frontier/
+  experts); the METRIC is **churn-to-satisfaction at the final HUMAN gate** (the
+  human is the final gate by design). It supplies EXECUTION instinct + tool
+  knowledge, not VISION (that stays the user's). Quantifiable gates are the
+  mechanism (loopable + the membrane is the defensible core); the funnel/guardrails
+  are valuable *because* they cut churn at the final eval; cheap+reliable is what
+  makes the loops affordable at long-tail scale. See CLAUDE.md "Product strategy".
 - **Engine: build on goose** (spiked + confirmed). Authoring = goose WITH a session
   (recipes + `--sub-recipe` sweep + research MCP); build = goose `--no-session`
   (stateless, gated). Our gates are the spine; the membrane/contract stay ours; no
@@ -205,3 +214,17 @@ harness + simulated user we built for spec-quality graduate into the audit engin
   the goose authoring agent (the *behaviors* — memory, dialectic, sweep — carry
   over to the premium runtime; a cheap model proved an incompetent adversary).
   See memory `castellan-product-direction` for the full chain.
+- **THE decisive experiment (build this before more architecture).** An adversarial
+  review of this architecture (8 lenses, repo-grounded) found 0 fatal / 12 serious
+  objections; the load-bearing one is that the floor-raising value is unproven on a
+  real product. The falsification test the project's own "every claim carries a test"
+  rule demands, and currently lacks: **does a real non-expert reach a product they're
+  satisfied with in fewer / cheaper cycles WITH Castellan than WITH an assistant
+  (Claude Code / Lovable)?** Measure churn-to-satisfaction against the assistant
+  baseline, with real hobby devs — NOT cost-vs-frontier, NOT parity-vs-vanilla (the
+  earlier evals benchmarked the wrong opponent). Standing serious risks to track:
+  (a) the floor-raising delta is unmeasured; (b) does the long tail adopt a tool that
+  commits for them (relief vs loss-of-control); (c) does the dogfood + human-final-gate
+  loop converge in *few* cycles for a normie; (d) gate completeness (objective-but-
+  the-requirement-was-never-written) — the membrane enforces objectivity, not the
+  right requirement, so it leans on the sweep + the human final gate.
