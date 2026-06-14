@@ -267,6 +267,20 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   of the product, modeled on gstack's plan-design-review/design-review. The
   stage line + next-hint ship now; the POLISH design-review pass itself is the
   next build (not yet implemented).
+- A38. `ser talk` quality is measured, not eyeballed (owner call 2026-06-13:
+  hand-dogfooding a stochastic conversation engine is whack-a-mole and violates
+  the project's own gate-not-prose / loop-endurance thesis). `pnpm talk-eval`
+  (scripts/talk-eval.ts + src/eval/talk-eval.ts) runs simulated-user agents
+  against the REAL SpecSession across product scenarios and scores each
+  transcript by a MOSTLY-MECHANICAL rubric — facts-recorded (keyword presence
+  in decisions), re-asks (token-Jaccard between asked questions), incoherent
+  asks (question posed with 0 blocking questions), turns-to-buildable, and
+  present-on-request — all deterministic from spec state, no gameable prose
+  judging. `scoreTranscript` + helpers are PURE and hermetically tested; the
+  runner is LIVE (network) and runs ONLY from the script (zero-network test
+  invariant preserved, like derive-bench/poker-bench). RL/fine-tuning is
+  deferred until this eval shows mechanics+prompt can't carry the cheap model.
+  First live read (habit-tracker, 2026-06-13): 77/100 — facts 50%, 1 re-ask.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level
