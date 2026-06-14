@@ -371,6 +371,25 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   objectify the gate, falls back to tier-4, and drops facts. NEXT: make
   synthesis robust on subjective products (objective PROXIES for subjective
   properties + hard fact-preservation), and stabilize kid-companion.
+- A42. v0.3 authoring rearchitecture (owner decisions 2026-06-14; design
+  authority = SPEC-v0.3.md). ser is a STANDALONE product — no gstack runtime
+  dependency; authoring lives in-tree. The investigation (A41 + reading the raw
+  transcripts/specs) showed the conversation, not synthesis, is the root: the
+  delta-mapper's disposable history (A28) gave the authoring agent amnesia, so
+  it re-asked, collapsed rich products, and declared buildable before eliciting
+  the essence; and the conversation was the only UNVERIFIED stage in a
+  verification product. New architecture: memory-ful authoring agent → per-turn
+  DIVERSE-LENS dialectic (scope-cutter / risk-essence / fact-keeper) that COMMITS
+  on architectural forks (never a menu) → an adversarial SWEEP over the
+  synthesized canon (the gstack autoplan pattern, minus YC/demand-validation) →
+  ser's GATE-OBJECTIVITY membrane (every requirement automatable, facts
+  preserved — ser's soul, not outsourced) → fresh gated build agents (unchanged,
+  always correct). The SPEC CONTRACT (SpecSchema + loop-harness obligations) is
+  the seam: any author can fill it; ser enforces loopability on input. This
+  DELETES the delta-mapper + capture/reconcile/answer-capture (prosthetics for
+  amnesia). Sequenced as eval-gated layers; the eval gains a sweep-style
+  completeness tier so objectiveRate (gameable: objective gates on shallow
+  requirements, per the kid-companion cloud-chatbot) is a floor, not the score.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

@@ -55,7 +55,7 @@ function blockingCount(spec: { open_questions: { blocking: boolean }[] }): numbe
   return spec.open_questions.filter((q) => q.blocking).length;
 }
 
-async function runScenario(scenario: Scenario, deps: RunDeps): Promise<{ transcript: Transcript; finalSpec: Spec }> {
+async function runScenario(scenario: Scenario, deps: RunDeps): Promise<{ transcript: Transcript; finalSpec: Spec; elicited: Spec }> {
   writeFileSync(deps.specPath, yamlStringify(blankSpec()));
   const session = new SpecSession({
     path: deps.specPath,
@@ -128,6 +128,7 @@ async function runScenario(scenario: Scenario, deps: RunDeps): Promise<{ transcr
   return {
     transcript: { scenarioId: scenario.id, turns, finalDecisions: elicited.decisions.map((d) => d.statement) },
     finalSpec,
+    elicited,
   };
 }
 
@@ -185,7 +186,7 @@ async function main(): Promise<void> {
     try {
       const dir = mkdtempSync(join(tmpdir(), `talk-eval-${scenario.id}-`));
       const deps: RunDeps = { mapperLlm: llm, mapperModel, knightModel: richModel, userLlm: llm, userModel: richModel, specPath: join(dir, "eval.spec.yaml") };
-      const { transcript, finalSpec } = await runScenario(scenario, deps);
+      const { transcript, finalSpec, elicited } = await runScenario(scenario, deps);
       const mech = scoreTranscript(scenario, transcript);
       const pj = mechanicalOnly ? null : await judgeProcess(scenario, transcript, llm, richModel).catch(() => null);
       const vanilla = await generateVanillaSpec(scenario, llm, mapperModel);
@@ -196,7 +197,7 @@ async function main(): Promise<void> {
       const serWon: Run["serWon"] = verdict ? (verdict.winner === "tie" ? "tie" : verdict.winner === serIs ? "ser" : "vanilla") : null;
       const lift = serQ.composite - vanQ.composite;
       process.stderr.write(`  ✓ ${scenario.id} #${runIdx}: lift ${lift >= 0 ? "+" : ""}${lift} (facts ${pct(serQ.factCoverage)})\n`);
-      return { scenarioId: scenario.id, lift, facts: serQ.factCoverage, obj: serQ.objectiveRate, serComp: serQ.composite, vanComp: vanQ.composite, serWon, dump: { scenario: scenario.id, runIdx, transcript, mech, processJudge: pj, serQ, vanQ, verdict, vanilla } };
+      return { scenarioId: scenario.id, lift, facts: serQ.factCoverage, obj: serQ.objectiveRate, serComp: serQ.composite, vanComp: vanQ.composite, serWon, dump: { scenario: scenario.id, runIdx, transcript, elicited, finalSpec, mech, processJudge: pj, serQ, vanQ, verdict, vanilla } };
     } catch (err) {
       process.stderr.write(`  ✗ ${scenario.id} #${runIdx} errored: ${(err as Error).message.split("\n")[0]}\n`);
       return null;
