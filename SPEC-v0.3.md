@@ -17,6 +17,17 @@ ser ships as `castellan` and must work with **no external dependency**. Therefor
 
 This makes ser standalone AND composable.
 
+**gstack's form (confirmed by inspection 2026-06-14).** gstack is a Claude-Code
+skill monorepo (`~/.claude/skills/gstack`, bun-based), not a callable library —
+its `package.json` exposes only `browse`/`make-pdf` bins; the authoring (`/spec`)
+and the sweep (`/autoplan` = CEO/design/eng/DX reviews) are SKILLS run inside a
+Claude session. So depending on it would mean orchestrating headless `claude -p`
+with the gstack skills + a Claude subscription at runtime — heavy for a
+cheap-LLM product. Decision: ser implements the lean PATTERN in-tree and accepts
+a gstack-authored spec **through the contract** (§3) when present. gstack stays
+OPTIONAL; the membrane runs on its output regardless (gate-objectivity is not
+gstack's job).
+
 ## 1. Why (the evidence)
 
 Measured this build cycle (two-tier eval, subscription Haiku worker):

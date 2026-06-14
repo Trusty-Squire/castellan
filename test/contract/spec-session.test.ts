@@ -221,14 +221,16 @@ describe("SpecSession — the artifact is the state", () => {
     expect(final.requirements.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("bounded context: each turn sends current spec + last message only (no transcript)", async () => {
+  it("memory-ful authoring (A42): each turn carries the FULL conversation, not just the last message", async () => {
     const llm = new MockLlm([{ text: JSON.stringify(batchAddDecision) }, { text: JSON.stringify({ deltas: [], question: "", note: "" }) }]);
     const s = new SpecSession({ path: specPath, llm, executorModel: "cheap/x", knightModel: "frontier/y" });
     await s.accept(await s.turn("first message"));
     await s.turn("second message");
-    // second call's user content contains the SPEC and the SECOND message, not the first
+    // the authoring agent REMEMBERS: the second call carries the spec, the new
+    // message, AND the prior turn (so it can't re-ask or lose the thread).
     expect(llm.calls[1]!.user).toContain("second message");
-    expect(llm.calls[1]!.user).not.toContain("first message");
+    expect(llm.calls[1]!.user).toContain("first message");
+    expect(llm.calls[1]!.user).toContain("CONVERSATION SO FAR");
   });
 
   it("two consecutive rejections escalate generative turns to the knight", async () => {

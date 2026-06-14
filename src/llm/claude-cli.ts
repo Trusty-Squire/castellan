@@ -32,6 +32,18 @@ export function parseClaudeResult(stdout: string): { text: string; inTokens: num
   };
 }
 
+/**
+ * `claude -p` runs as a Claude Code AGENT, so it sometimes wraps JSON in
+ * preamble ("I need to… {…}"). When the caller wants JSON, salvage the object
+ * so the agent's narration doesn't break the parse downstream. Returns the
+ * original text if no balanced object is found.
+ */
+export function extractJsonBlock(text: string): string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  return start !== -1 && end > start ? text.slice(start, end + 1) : text;
+}
+
 export class ClaudeCliClient implements LlmClient {
   private readonly bin: string;
   private readonly timeoutMs: number;
@@ -69,7 +81,16 @@ export class ClaudeCliClient implements LlmClient {
           lastErr = `claude -p error: ${parsed.text.slice(0, 200)}`;
           continue;
         }
-        return { text: parsed.text, inTokens: parsed.inTokens, outTokens: parsed.outTokens };
+        // The agent may narrate around requested JSON — salvage the object.
+        const text = req.json ? extractJsonBlock(parsed.text) : parsed.text;
+        // When JSON was asked for but the agent produced pure prose (no object
+        // at all — common on sensitive prompts), retry: a fresh call almost
+        // always returns JSON. Don't poison a run with the agent's narration.
+        if (req.json && !text.includes("{")) {
+          lastErr = `claude -p returned no JSON: ${parsed.text.slice(0, 80)}`;
+          continue;
+        }
+        return { text, inTokens: parsed.inTokens, outTokens: parsed.outTokens };
       } catch (err) {
         lastErr = (err as Error).message.split("\n")[0] ?? "claude -p failed";
       }

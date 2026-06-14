@@ -113,8 +113,16 @@ export function blankPivotSpec(): Spec {
 export const DELTA_MAPPER_PROMPT = `${CASTELLAN_IDENTITY}
 
 Your role: a thought partner who is brutally economical with words, plus a
-silent bookkeeper. The spec below is the ONLY state; this conversation is
-disposable.
+silent bookkeeper. You REMEMBER the whole conversation (it is given to you above
+under CONVERSATION SO FAR) — you are not amnesiac. Use that memory: never re-ask
+what was already answered, and build a real UNDERSTANDING of the product.
+
+Do NOT declare it "ready to build" just because every requirement has a gate.
+First understand what this product actually IS — its load-bearing forks. For a
+child's safety-critical companion that means: what must be SAFE (the content
+rules), where the data/voice goes (privacy), what the thing actually DOES. If you
+have not elicited the essence, you are not ready, no matter how many gates exist.
+A shallow gated spec that misreads the product is worse than no spec.
 
 You have NO tools and cannot build, run, edit, or test anything yourself —
 but you can ask the HARNESS to act by setting "action" in your output:
@@ -588,6 +596,21 @@ export class SpecSession {
   /** The open_question the model surfaced last turn, so the next answer is
    *  guaranteed-recorded even if the model forgets to resolve it (A37). */
   private lastAskedId = "";
+  /** The full conversation (A42 / SPEC-v0.3): the authoring agent REMEMBERS,
+   *  it is not amnesiac. This is fed back every turn so it builds a real
+   *  understanding of the product instead of re-deriving it from a lossy spec. */
+  private history: { user: string; reply: string }[] = [];
+
+  /** Record a turn in memory and return the batch unchanged. */
+  private remember(userMessage: string, batch: DeltaBatch): DeltaBatch {
+    this.history.push({ user: userMessage, reply: batch.reply });
+    return batch;
+  }
+
+  private renderHistory(): string {
+    if (this.history.length === 0) return "(this is the first message)";
+    return this.history.map((h, i) => `[turn ${i + 1}] user: ${h.user}\n[turn ${i + 1}] you: ${h.reply}`).join("\n");
+  }
 
   constructor(opts: SpecSessionOptions) {
     this.opts = opts;
@@ -618,7 +641,7 @@ export class SpecSession {
       const res = await this.opts.llm.complete({
         model,
         system: DELTA_MAPPER_PROMPT,
-        user: `CURRENT SPEC (yaml):\n${yamlStringify(spec)}\n\nUSER MESSAGE:\n${userMessage}${note}`,
+        user: `CONVERSATION SO FAR:\n${this.renderHistory()}\n\nCURRENT SPEC (yaml):\n${yamlStringify(spec)}\n\nUSER MESSAGE:\n${userMessage}${note}`,
         json: true,
         maxTokens: 2000,
       });
@@ -633,13 +656,13 @@ export class SpecSession {
             ? { ...(parsed.value as object), deltas: coerceRawDeltas((parsed.value as { deltas?: unknown }).deltas) }
             : parsed.value;
         const checked = DeltaBatchSchema.safeParse(coerced);
-        if (checked.success) return this.postProcess(markDrift(checked.data), spec, userMessage);
-        if (attempt === 1) return this.postProcess(salvageBatch(parsed.value), spec, userMessage); // degrade, never crash
+        if (checked.success) return this.remember(userMessage, this.postProcess(markDrift(checked.data), spec, userMessage));
+        if (attempt === 1) return this.remember(userMessage, this.postProcess(salvageBatch(parsed.value), spec, userMessage)); // degrade, never crash
         note = `\n\nYour previous output failed validation:\n${formatZodIssues(checked.error.issues)}`;
       } else {
         if (attempt === 1) {
           // Bookkeeping failed twice; keep the conversation alive with raw text.
-          return { deltas: [], question: "", note: "", reply: res.text.slice(0, 400), action: "none" as const, action_arg: "", pivot: false, asking: "" };
+          return this.remember(userMessage, { deltas: [], question: "", note: "", reply: res.text.slice(0, 400), action: "none" as const, action_arg: "", pivot: false, asking: "" });
         }
         note = `\n\nYour previous output was not valid JSON: ${parsed.error}`;
       }

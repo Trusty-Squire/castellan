@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { parseClaudeResult } from "../../src/llm/claude-cli.js";
+import { parseClaudeResult, extractJsonBlock } from "../../src/llm/claude-cli.js";
+
+describe("extractJsonBlock", () => {
+  it("salvages a JSON object from agent preamble", () => {
+    expect(extractJsonBlock('I need to think. {"reply":"hi"} done')).toBe('{"reply":"hi"}');
+    expect(extractJsonBlock('{"a":1}')).toBe('{"a":1}');
+    expect(extractJsonBlock("(The tool was unavailable)")).toBe("(The tool was unavailable)"); // no object → unchanged
+  });
+});
 
 describe("parseClaudeResult", () => {
   it("extracts text + usage from the claude -p json envelope", () => {
