@@ -1,0 +1,12 @@
+goal: "Deliberately-failing demo: the agent writes the wrong content, so the check never passes (exercises the honest-halt path)."
+budget_usd: 1.00
+chain: cheap
+workdir: "halt-fixture"
+nodes:
+  - id: report
+    brief: >
+      Write src/report.txt whose first line is the word OK. Run
+      `grep -q OK src/report.txt` before declaring done.
+    blast_radius: ["src/**"]
+    done_check: "grep -q OK src/report.txt"
+    budget_usd: 0.40

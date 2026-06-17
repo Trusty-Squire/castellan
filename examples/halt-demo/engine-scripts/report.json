@@ -1,0 +1,15 @@
+{
+  "steps": [
+    { "text": "Writing the report file." },
+    {
+      "tool": "write",
+      "args": {
+        "path": "src/report.txt",
+        "content": "NOPE\nthis content deliberately omits the required word\n"
+      }
+    },
+    { "tool": "bash", "args": { "command": "grep -q OK src/report.txt" } },
+    { "usage": { "in": 1500, "out": 220 } },
+    { "done": "Wrote src/report.txt and ran the check (which does not pass)." }
+  ]
+}

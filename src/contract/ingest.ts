@@ -91,6 +91,22 @@ export const IDEA_PROMPT = `${CASTELLAN_IDENTITY}
 
 You are the IDEA phase. Turn a one-line product prompt into a buildable shape.
 
+0. REALITY CHECK (do this FIRST, it governs everything below). Ask: what would it
+   ACTUALLY take for this to ACHIEVE THE USER'S STATED GOAL? When the goal is
+   ambitious or outcome-oriented ("influence public opinion", "make money", "go
+   viral", "rank #1", "change minds"), the build-defining fork is almost NEVER
+   technical — it is MECHANISM and SCALE: by what concrete mechanism does this move
+   the needle, and at what scale (one unit, or a coordinated many)? Surface THAT as
+   the crux decision (canGuess=FALSE, forksHard=TRUE, costlyToUndo=TRUE). If the
+   minimal stories would NOT plausibly achieve the stated goal, SAY SO in a
+   decision — never quietly ship a thin core that cannot work; that is the failure
+   the user notices last and resents most. AND when the approach leans on deception,
+   inauthentic accounts, manipulation, or breaking a platform's terms (astroturfing,
+   fake engagement, coordinated sockpuppets), surface LEGITIMACY as a first-class
+   fork: name the honest/authentic alternative, and that the inauthentic path very
+   likely violates platform ToS and may be unlawful — do not refuse and do not
+   moralize, but the user must choose it knowingly.
+
 1. USER STORIES — the FEWEST stories that capture the CORE: the things without
    which this is not the product. A simple tool may have just 2-3; do NOT pad
    to 5. EXCLUDE nice-to-haves, v2 features, and edge cases — they are "later",
@@ -113,7 +129,11 @@ You are the IDEA phase. Turn a one-line product prompt into a buildable shape.
    NEVER tier-4 for something a command could check. A tier-4 gate you could
    have written as a command is the cardinal sin of this product.
 
-3. DECISIONS — the open choices this build faces. Surface the CRUX technical
+3. DECISIONS — the open choices this build faces. FIRST, treat every CONSTRAINT and
+   NON-GOAL in the input as SETTLED FACT: never surface a decision the input already
+   answered. If it says "no brokerages / doesn't want to sign up", brokerages are RULED
+   OUT — do not ask "brokerages or crypto"; build the ruled-in path. Re-asking a settled
+   constraint as a fork is a failure the user will resent. Then: surface the CRUX technical
    decision — the single hardest, most build-defining fork (for a realtime
    collaborative app, the SYNC model: CRDT / OT / last-write-wins; for a game,
    the netcode) — never skip it to ask something generic like "where to
@@ -168,7 +188,7 @@ Output ONLY JSON:
 
 /** Run the idea phase on a prompt; buckets are computed in code from the model's 3-test. */
 export async function extractIdea(prompt: string, llm: LlmClient, model: string): Promise<IdeaResult> {
-  const res = await llm.complete({ model, system: IDEA_PROMPT, user: `PRODUCT PROMPT:\n${prompt}`, json: true, maxTokens: 2500 });
+  const res = await llm.complete({ model, system: IDEA_PROMPT, user: `PRODUCT PROMPT:\n${prompt}`, json: true, maxTokens: 4000 });
   const parsed = tryParseJson(res.text);
   if (!parsed.ok) throw new SquireError("IDEA_INVALID", `idea phase produced invalid JSON: ${parsed.error}`);
   const checked = IdeaSchema.safeParse(parsed.value);
@@ -178,6 +198,121 @@ export async function extractIdea(prompt: string, llm: LlmClient, model: string)
     components: checked.data.components,
     decisions: checked.data.decisions.map((d) => ({ ...d, bucket: bucketOf(d) })),
   };
+}
+
+const ConverseSchema = IdeaSchema.extend({ reply: z.string().default("") });
+
+const CONVERSE_SYSTEM = `${IDEA_PROMPT}
+
+CONVERSATION MODE. You already produced the breakdown the user is looking at; they just gave FEEDBACK on it. Two jobs, in order:
+
+A) "reply" — RESPOND to their specific point, plain and direct, referencing their ACTUAL words. Be as long as the point genuinely needs: a crisp acknowledgement can be one line, but when you're explaining a real fork, a trade-off, or WHY something matters, give the substance — a short paragraph is welcome. Do NOT pad, and do NOT truncate a real explanation to save space; thin, hand-wavy answers are a failure. ENGAGE: if they call something vague (e.g. "appropriate channels is vague"), NAME what's hiding in it and resolve it — make it concrete, or say it conceals a fork, which one, and what the options actually are. If they ask a question, answer it properly. If you genuinely cannot decide it for them, ask ONE pointed question back and say why it's theirs to call. NEVER a generic "got it, updated" — that is the failure they are complaining about.
+
+B) revise the breakdown so it ACTUALLY reflects your reply. If you made something concrete, the stories/decisions must now show that concreteness — do NOT hand back the wording they just flagged. If their point exposes a user-held fork, ADD it to decisions (canGuess=false). If you asked a question back, leave that part as an open decision rather than guessing.
+
+Output ONLY JSON, now WITH a "reply": {"reply":"…","stories":[...],"components":[...],"decisions":[...]}.`;
+
+/** A conversational turn at the idea layer: ser responds to the user's feedback AND revises
+ * the breakdown to reflect that response (never a silent regenerate of the same thing). */
+export async function converseIdea(
+  prompt: string,
+  current: IdeaResult,
+  history: { user: string; ser: string }[],
+  message: string,
+  llm: LlmClient,
+  model: string,
+): Promise<{ reply: string; idea: IdeaResult }> {
+  const user = [
+    `PRODUCT PROMPT:\n${prompt}`,
+    `THE BREAKDOWN THEY ARE LOOKING AT:\nstories:\n${current.stories.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}\ndecisions:\n${current.decisions.map((d) => `  - ${d.question}`).join("\n") || "  (none)"}`,
+    history.length ? `CONVERSATION SO FAR:\n${history.map((h) => `  user: ${h.user}\n  ser: ${h.ser}`).join("\n")}` : "",
+    `THE USER NOW SAYS:\n${message}`,
+  ].filter(Boolean).join("\n\n");
+  const res = await llm.complete({ model, system: CONVERSE_SYSTEM, user, json: true, maxTokens: 4000 });
+  const parsed = tryParseJson(res.text);
+  const checked = parsed.ok ? ConverseSchema.safeParse(parsed.value) : null;
+  if (!checked || !checked.success) return { reply: "Hm — let me try that again; say it once more?", idea: current };
+  const d = checked.data;
+  return {
+    reply: d.reply.trim() || "Updated.",
+    idea: { stories: d.stories, components: d.components, decisions: d.decisions.map((x) => ({ ...x, bucket: bucketOf(x) })) },
+  };
+}
+
+// ===================== IDEA PHASE: outcome-discovery conversation =====================
+
+/** The signed-off handoff to the spec phase: what the user wants to be TRUE, not how to build it. */
+export interface OutcomesBrief {
+  intent: string;
+  outcomes: string[];
+  forWhom: string;
+  nonGoals: string[];
+  constraints: string[];
+}
+export const EMPTY_BRIEF: OutcomesBrief = { intent: "", outcomes: [], forWhom: "", nonGoals: [], constraints: [] };
+
+const BriefSchema = z.object({
+  intent: z.string().default(""),
+  outcomes: z.array(z.string()).default([]),
+  forWhom: z.string().default(""),
+  nonGoals: z.array(z.string()).default([]),
+  constraints: z.array(z.string()).default([]),
+});
+const DiscussSchema = z.object({ reply: z.string().default(""), brief: BriefSchema.default({}), ready: z.boolean().default(false) });
+
+const DISCUSS_SYSTEM = `${CASTELLAN_IDENTITY}
+
+You are ser in the IDEA phase — a real conversation, BEFORE any building. Your ONLY job is to understand what the user wants to be TRUE once this exists: their desired TERMINAL OUTCOMES. NOT how to build it. This takes SEVERAL ROUNDS — do not rush to a conclusion or a spec.
+
+HOW TO TALK:
+- Reflect what you heard in your own words, then ask ONE good question at a time. Dig into the things that actually define success: what's TRUE when this works? who is it for? what would make it a failure? what's explicitly NOT wanted? any hard constraint?
+- Engage their ACTUAL words — riff, push back gently, name a tension or an assumption worth checking. Be a sharp collaborator, not a form to fill in.
+- If they raise IMPLEMENTATION (tech, tools, components, "how"), acknowledge briefly and DEFER: "that's the next phase — spec; first let's make sure I've got what you actually want." Do NOT put implementation into the brief.
+- DOMAIN CHECK: you build SOFTWARE — apps, sites, services, tools, agents. If a stated outcome is NOT deliverable as software (a physical object, a smell, a taste, a real-world feeling, or a grand aspiration like "connects to the future of humanity"), do NOT silently record it. Say plainly that it's outside what you can build, and either reframe it to the closest software you COULD make (e.g. "I can't make a scented paper wolf, but I could build an app/keepsake site about it — want that?") or ask them to restate the outcome as something software can deliver. NEVER carry un-buildable outcomes into the brief toward a spec. This applies to outcomes ALREADY in your current brief too: if the brief you were handed contains un-buildable outcomes, flag them and REMOVE them now — do not keep them just because they were recorded in an earlier turn.
+
+THE BRIEF (your running understanding — refine it EVERY turn from what they've actually said):
+- intent: one line, what they're trying to make, in their words.
+- outcomes: the desired terminal outcomes — what is TRUE when this works, in the USER'S terms (not features, not implementation).
+- forWhom: who / the context.
+- nonGoals: what they've said is out of scope.
+- constraints: hard constraints they stated.
+AVOIDANCES MATTER AS MUCH AS OUTCOMES: the moment the user says they do NOT want something, want to AVOID it, or won't do it (e.g. "I don't want to use brokerages because I don't want to sign up", "no ads", "must work offline"), capture it IMMEDIATELY in nonGoals or constraints and NEVER drop it on a later turn — it constrains the whole build, and losing it is exactly the failure that makes the next phase ask a question they already answered.
+ONLY include what they have actually said or confirmed — NEVER invent outcomes to look complete. Empty lists are fine early on.
+
+READY: keep ready=false until you genuinely understand the outcomes well enough that a spec could be built without guessing at anything load-bearing. When you get there, set ready=true and your reply should reflect the brief back and offer to move to spec.
+
+"reply" is your conversational turn: substantive, engages their words, asks the next real question (or reflects + proposes moving on when ready). Output ONLY JSON: {"reply":"…","brief":{"intent":"…","outcomes":[],"forWhom":"…","nonGoals":[],"constraints":[]},"ready":false}.`;
+
+/** One turn of the idea-phase conversation: ser responds AND updates its running understanding
+ * of the user's desired terminal outcomes. No breakdown, no implementation — that's spec. */
+export async function discussIdea(
+  history: { user: string; ser: string }[],
+  message: string,
+  current: OutcomesBrief,
+  llm: LlmClient,
+  model: string,
+): Promise<{ reply: string; brief: OutcomesBrief; ready: boolean }> {
+  const user = [
+    history.length ? `CONVERSATION SO FAR:\n${history.map((h) => `  user: ${h.user}\n  ser: ${h.ser}`).join("\n")}` : "",
+    `YOUR CURRENT BRIEF (refine, don't reset):\n${JSON.stringify(current)}`,
+    `THE USER NOW SAYS:\n${message}`,
+  ].filter(Boolean).join("\n\n");
+  const res = await llm.complete({ model, system: DISCUSS_SYSTEM, user, json: true, maxTokens: 3000 });
+  const parsed = tryParseJson(res.text);
+  const checked = parsed.ok ? DiscussSchema.safeParse(parsed.value) : null;
+  if (!checked || !checked.success) return { reply: "Say a bit more about what you're picturing — what should be true once this exists?", brief: current, ready: false };
+  return { reply: checked.data.reply.trim() || "Tell me more.", brief: checked.data.brief, ready: checked.data.ready };
+}
+
+/** Flatten the approved brief into the rich prompt the spec phase's breakdown consumes. */
+export function briefToText(b: OutcomesBrief): string {
+  return [
+    b.intent && `INTENT: ${b.intent}`,
+    b.forWhom && `FOR: ${b.forWhom}`,
+    b.outcomes.length ? `DESIRED TERMINAL OUTCOMES (what must be true when it works):\n${b.outcomes.map((o) => `- ${o}`).join("\n")}` : "",
+    b.constraints.length ? `CONSTRAINTS:\n${b.constraints.map((c) => `- ${c}`).join("\n")}` : "",
+    b.nonGoals.length ? `NON-GOALS (explicitly out of scope — do not build these):\n${b.nonGoals.map((n) => `- ${n}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 /** Human-readable rendering for `ser idea` and live validation. */

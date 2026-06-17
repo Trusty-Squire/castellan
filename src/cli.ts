@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync, cpSync, mkdtempSync } from "node:fs";
+import { readFileSync, existsSync, cpSync, mkdtempSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve, join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { parseMission, resolveChain, type ChainsFile } from "./contract/schema.js";
@@ -38,38 +38,51 @@ async function main(argv: string[]): Promise<number> {
       return cmdTalk(rest);
     case "login":
       return cmdLogin(rest);
-    case "idea":
-      return cmdIdea(rest);
-    case "plan":
-      return cmdPlan(rest);
-    case undefined:
+    case undefined: {
+      // bare `ser` → the funnel TUI, always a FRESH session (idea→spec→build→audit→ship).
+      const { runTui } = await import("./tui/app.js");
+      return runTui(false);
+    }
+    case "-c":
+    case "--continue": {
+      // `ser --continue` → resume the saved session (like `claude --continue`).
+      const { runTui } = await import("./tui/app.js");
+      return runTui(true);
+    }
     case "-h":
     case "--help":
       printUsage();
-      return command === undefined ? 1 : 0;
+      return 0;
     default:
-      process.stderr.write(`unknown command: ${command}\n`);
-      printUsage();
-      return 1;
+      // No subcommand matched → the whole argv is a product prompt. Run the one
+      // funnel command; idea/spec/plan/build are its stages, selected via --to.
+      return cmdPipeline(argv);
   }
 }
 
 function printUsage(): void {
   process.stdout.write(
     [
-      "ser — Castellan: verified coding agent. Specs compile to gated loops.",
+      "ser — Castellan: verified coding agent. An idea compiles to a gated build.",
       "",
-      "Usage:",
-      "  ser login                 — store OPENROUTER_API_KEY in one place (~/.config/castellan/.env)",
-      "  ser talk [x.spec.yaml] [--color|--no-color]  — unified interface: talk; check/derive/run behind it (creates the spec if absent)",
-      "  ser run <mission.yaml> [--mock] [--chain <name>] [--sandbox]",
-      "  ser derive \"<goal>\" [--chain <name>] [--yes] [--out <file>]",
-      "  ser trace <trace.jsonl>",
-      "  ser do \"<goal>\" [--gate <cmd>] [--radius <glob>] [--budget <usd>]",
-      "  ser fix \"<bug>\" [--test-cmd <cmd>] [--test-file <path>]",
-      "  ser spec init|check|verify|talk <x.spec.yaml> [...]",
-      "  ser validate <mission.yaml> [--chains <file>]",
-      "  ser experiment [-- <experiment args>]",
+      "  ser                               start fresh — talk through an idea, then build it",
+      "  ser --continue   (-c)             resume your last session where you left off",
+      '  ser "<what you want to build>"     non-interactive: idea → spec → build → audit → ship',
+      "",
+      "Stop at any layer with --to (no separate commands to learn):",
+      "  --to idea     your words → clear user stories",
+      "  --to spec     stories → eng + design spec with eval gates (asks only the",
+      "                forks needing real judgment / no objective check)",
+      "  --to build    spec → working code that passes every gate",
+      "  --to audit    + an independent reviewer's polish notes (no build memory)",
+      "  --to ship     (default) verify the gates are green and hand it over",
+      "  --yes         accept ser's recommended fork answers, no prompts",
+      "  --spec <f>    resume from an existing spec   --workdir <dir>  build here",
+      "  --chain <n>   model chain (default: cheap)   --mock           dry engine",
+      "",
+      "Utilities:",
+      "  ser login · ser talk [spec.yaml] · ser do \"<goal>\" · ser fix \"<bug>\"",
+      "  ser run/derive/validate/trace/experiment (advanced; stages of the above)",
       "",
     ].join("\n"),
   );
@@ -183,6 +196,9 @@ async function executeMissionObject(
       "",
     ].join("\n"),
   );
+  // Emit the trace path at START (not only on halt) so a parent TUI can pin the
+  // exact trace file and follow live progress without racing the newest-file scan.
+  process.stdout.write(`trace: ${tracePath}\n`);
 
   const result = await runMission({
     mission,
@@ -530,67 +546,148 @@ async function cmdLogin(args: string[]): Promise<number> {
  * components (minimum viable), and decisions bucketed ask/default/silent. A
  * validation surface for the story-extraction + bucket-tagging before any UI.
  */
-async function cmdIdea(args: string[]): Promise<number> {
-  const flags = parseFlags(args, ["chain", "chains"]);
+/**
+ * The whole funnel under one command: `ser "<what you want>"` walks five layers,
+ * each a STAGE you can stop at with `--to <stage>`:
+ *   idea   user's words → clear user stories
+ *   spec   stories → an eng + design spec with eval gates; asks only the forks
+ *          that need real human judgment or can't be objectively checked
+ *   build  spec → working code that passes every gate (the ground-truth loop)
+ *   audit  finished code → polish notes from an independent reviewer (no build memory)
+ *   ship   verify the gates are green and hand it over
+ * Flags: --yes (accept ser's recommended fork answers) · --spec <file> (resume from a
+ *   spec) · --workdir <dir> (build here) · --out <file> (spec path) · --chain · --mock.
+ */
+async function cmdPipeline(argv: string[]): Promise<number> {
+  const flags = parseFlags(argv, ["chain", "chains", "to", "spec", "out", "workdir", "budget", "harness"]);
   const prompt = flags.positional[0];
-  if (!prompt) throw new SquireError("USAGE", 'ser idea "<product prompt>"');
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new SquireError("NO_API_KEY", "OPENROUTER_API_KEY required for ser idea");
-  const { OpenRouterClient } = await import("./llm/openrouter.js");
+  const fromSpec = flags.value.get("spec");
+  if (!prompt && !fromSpec) {
+    throw new SquireError("USAGE", 'ser "<what you want to build>"  [--to idea|spec|build|audit|ship] [--yes] [--workdir <dir>]');
+  }
+  const STAGES = ["idea", "spec", "build", "audit", "ship"] as const;
+  const to = (flags.value.get("to") ?? "ship") as (typeof STAGES)[number];
+  if (!STAGES.includes(to)) throw new SquireError("USAGE", `--to must be one of ${STAGES.join("|")} (got "${to}")`);
+  const stopAfter = STAGES.indexOf(to);
+  const yes = flags.bool.has("yes");
+
+  const { makeStyler, colorsEnabled } = await import("./style.js");
+  const st = makeStyler(colorsEnabled(process.env, Boolean(process.stdout.isTTY), flags.bool.has("no-color") ? false : flags.bool.has("color") ? true : undefined));
+  const layer = (n: number, name: string): void => { process.stdout.write("\n" + st.bold(`── LAYER ${n} · ${name} ` + "─".repeat(Math.max(0, 44 - name.length))) + "\n"); };
   const { loadChainsForDerive } = await import("./contract/derive.js");
-  const chain = resolveChain(loadChainsForDerive(process.cwd(), flags.value.get("chains")), flags.value.get("chain") ?? "cheap");
+  const chainName = flags.value.get("chain") ?? "cheap";
+  const chain = resolveChain(loadChainsForDerive(process.cwd(), flags.value.get("chains")), chainName);
+  const { stringify } = await import("yaml");
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new SquireError("NO_API_KEY", 'OPENROUTER_API_KEY required — run "ser login"');
+  const { OpenRouterClient } = await import("./llm/openrouter.js");
   const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
-  const { extractIdea, renderIdea } = await import("./contract/ingest.js");
-  const r = await extractIdea(prompt, llm, chain.executor);
-  process.stdout.write(renderIdea(r).join("\n") + "\n");
+
+  // ---- LAYER 1 idea + LAYER 2 spec ----
+  let specPath: string;
+  if (fromSpec) {
+    specPath = resolve(fromSpec);
+    if (!existsSync(specPath)) throw new SquireError("SPEC_NOT_FOUND", `spec not found: ${specPath}`);
+    process.stdout.write(st.gray(`resuming from ${basename(specPath)}`) + "\n");
+  } else {
+    const { extractIdea, renderIdea } = await import("./contract/ingest.js");
+    const { resolveBrief, ideaToSpec } = await import("./contract/brief.js");
+    const { reviewSpec } = await import("./contract/review.js");
+
+    layer(1, "idea — your words → user stories");
+    process.stdout.write(st.gray("mapping your idea to clear user stories…") + "\n");
+    const idea = await extractIdea(prompt!, llm, chain.executor);
+    process.stdout.write("\n" + st.bold("User stories:") + "\n");
+    idea.stories.forEach((s, i) => process.stdout.write(`  ${i + 1}. ${s}\n`));
+    if (stopAfter === 0) { process.stdout.write("\n" + renderIdea(idea).join("\n") + "\n"); return 0; }
+
+    layer(2, "spec — stories → gated eng + design spec");
+    const io = { print: (l: string) => process.stdout.write(l + "\n"), ask: yes ? (async () => "") : ask };
+    const resolutions = await resolveBrief(idea.decisions, io, st);
+    const spec = ideaToSpec(prompt!, idea, resolutions);
+    // review lens (gstack eng + design review, borrowed): notes + the forks that
+    // genuinely need a human / can't be objectively gated.
+    process.stdout.write(st.gray("\nrunning the eng + design review lens…") + "\n");
+    const review = await reviewSpec(spec, llm, chain.executor);
+    // ser closes obvious gaps himself — each becomes a new gated requirement.
+    let rn = spec.requirements.length;
+    for (const p of review.patches) {
+      spec.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
+      process.stdout.write(st.gray("  + ") + p.statement + "\n");
+    }
+    let qn = spec.open_questions.length;
+    for (const q of review.open_questions) {
+      let text = q.text, answered = false;
+      if (!yes) { const a = (await ask(st.bold("\n  judgment call: ") + q.text + st.gray("\n  > "))).trim(); if (a) { text = `${q.text} → ${a}`; answered = true; } }
+      // only block when a human actively skipped a load-bearing call; --yes/answered proceed (flagged).
+      spec.open_questions.push({ id: `Q${++qn}`, text, blocking: q.blocking && !yes && !answered });
+    }
+    specPath = resolve(flags.value.get("out") ?? `${basename(prompt!).replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32).replace(/^-|-$/g, "") || "product"}.spec.yaml`);
+    const { writeFileSync: wf } = await import("node:fs");
+    wf(specPath, stringify(spec));
+    const { scoreSpec, renderScoreLine } = await import("./contract/spec-score.js");
+    const sc = await scoreSpec(spec);
+    process.stdout.write("\n" + st.gray(`spec → ${basename(specPath)}`) + "\n");
+    process.stdout.write((sc.ready ? st.green : st.yellow)(renderScoreLine(sc)) + "\n");
+  }
+  if (stopAfter === 1) return 0;
+
+  // ---- LAYER 3 build (derive the gated plan, then run it for real) ----
+  layer(3, "build — spec → code that passes every gate");
+  const buildDir = resolve(flags.value.get("workdir") ?? `./${basename(specPath).replace(/\.spec\.yaml$/, "") || "build"}`);
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(buildDir, { recursive: true });
+  const missionPath = join(buildDir, "mission.yaml");
+  process.stdout.write(st.gray("deriving the gated build plan…") + "\n");
+  const { runDeriveV2 } = await import("./contract/derive2.js");
+  const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
+  if (drc !== 0) return drc;
+  if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
+  const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
+  const buildRc = await executeMissionObject(mission, buildDir, flags, basename(specPath).replace(/\.spec\.yaml$/, ""));
+  if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red. fix the spec or re-run; ser will not ship unverified work.") + "\n"); return buildRc; }
+  if (stopAfter === 2) return 0;
+
+  // ---- LAYER 4 audit (independent reviewer, no build memory) ----
+  layer(4, "audit — fresh eyes on the finished code");
+  const { auditBuild } = await import("./contract/review.js");
+  const { parseSpec } = await import("./contract/spec.js");
+  const builtSpec = parseSpec(readFileSync(specPath, "utf8"), specPath);
+  const files = collectSourceFiles(buildDir);
+  process.stdout.write(st.gray(`reviewing ${files.length} file(s) against ${builtSpec.stories.length} stories…`) + "\n");
+  const audit = await auditBuild(files, { thesis: builtSpec.thesis, stories: builtSpec.stories }, llm, chain.executor);
+  const rank: Record<string, number> = { high: 0, med: 1, low: 2 };
+  const recs = audit.recommendations.sort((a, b) => (rank[a.severity]! - rank[b.severity]!));
+  if (recs.length === 0) process.stdout.write(st.green("  audit: no polish recommended — the build is clean.") + "\n");
+  for (const r of recs) {
+    const sev = r.severity === "high" ? st.yellow("[high]") : r.severity === "med" ? st.bold("[med] ") : st.gray("[low] ");
+    process.stdout.write(`  ${sev} ${st.gray(r.lens.padEnd(7))} ${r.note}${r.file ? st.gray("  (" + r.file + ")") : ""}\n`);
+  }
+  if (stopAfter === 3) return 0;
+
+  // ---- LAYER 5 ship ----
+  layer(5, "ship");
+  const highs = recs.filter((r) => r.severity === "high").length;
+  process.stdout.write(st.green(`\n✓ shipped → ${buildDir}`) + "\n");
+  process.stdout.write(st.gray(`  every gate green · ${recs.length} audit note(s)${highs ? `, ${highs} high-severity worth a look` : ""}\n`));
   return 0;
 }
 
-/**
- * `ser plan "<prompt>" [out.spec.yaml]` — pipeline slices 1+2: the idea phase
- * decomposes the prompt into stories + components + bucketed decisions, the
- * decision brief resolves the asks with you (accept/pick/type/skip) and shows
- * the defaults, and the result compiles into a spec ready to derive.
- */
-async function cmdPlan(args: string[]): Promise<number> {
-  const flags = parseFlags(args, ["chain", "chains"]);
-  const prompt = flags.positional[0];
-  if (!prompt) throw new SquireError("USAGE", 'ser plan "<product prompt>" [out.spec.yaml]');
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new SquireError("NO_API_KEY", "OPENROUTER_API_KEY required for ser plan");
-  const { OpenRouterClient } = await import("./llm/openrouter.js");
-  const { loadChainsForDerive } = await import("./contract/derive.js");
-  const chain = resolveChain(loadChainsForDerive(process.cwd(), flags.value.get("chains")), flags.value.get("chain") ?? "cheap");
-  const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
-  const { makeStyler, colorsEnabled } = await import("./style.js");
-  const st = makeStyler(colorsEnabled(process.env, Boolean(process.stdout.isTTY), flags.bool.has("no-color") ? false : flags.bool.has("color") ? true : undefined));
-
-  const { extractIdea } = await import("./contract/ingest.js");
-  const { resolveBrief, ideaToSpec } = await import("./contract/brief.js");
-  const { stringify } = await import("yaml");
-
-  process.stdout.write(st.gray("thinking through the stories and components…") + "\n");
-  const idea = await extractIdea(prompt, llm, chain.executor);
-  process.stdout.write("\n" + st.bold("Stories (minimum viable):") + "\n");
-  idea.stories.forEach((s, i) => process.stdout.write(`  ${i + 1}. ${s}\n`));
-  process.stdout.write("\n" + st.bold("Components:") + "\n");
-  for (const c of idea.components) process.stdout.write(`  ${st.green("[t" + c.gate.tier + "]")} ${c.statement}\n`);
-  process.stdout.write("\n");
-
-  const io = { print: (l: string) => process.stdout.write(l + "\n"), ask };
-  const resolutions = await resolveBrief(idea.decisions, io, st);
-
-  const spec = ideaToSpec(prompt, idea, resolutions);
-  const out = resolve(flags.positional[1] ?? `${basename(prompt).replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32).replace(/^-|-$/g, "") || "product"}.spec.yaml`);
-  const { writeFileSync: wf } = await import("node:fs");
-  wf(out, stringify(spec));
-
-  const { scoreSpec, renderScoreLine } = await import("./contract/spec-score.js");
-  const s = await scoreSpec(spec);
-  process.stdout.write("\n" + st.gray(`spec written: ${out}`) + "\n");
-  process.stdout.write((s.ready ? st.green : st.yellow)(renderScoreLine(s)) + "\n");
-  process.stdout.write(st.gray(`refine: ser talk ${basename(out)}   ·   build: ser derive ${basename(out)}`) + "\n");
-  return 0;
+/** Walk a build dir for reviewable source (skips git/node_modules/harness files). */
+function collectSourceFiles(dir: string): { path: string; src: string }[] {
+  const out: { path: string; src: string }[] = [];
+  const skip = new Set([".git", "node_modules", ".squire"]);
+  const ok = /\.(js|jsx|ts|tsx|mjs|cjs|html|css|json|py|go|rs|md)$/;
+  const walk = (d: string, base: string): void => {
+    for (const f of readdirSync(d)) {
+      if (skip.has(f) || f === "mission.yaml" || f.endsWith(".spec.yaml") || f === "progress.log") continue;
+      const p = join(d, f), rel = base ? `${base}/${f}` : f;
+      if (statSync(p).isDirectory()) walk(p, rel);
+      else if (ok.test(f) && out.length < 40) out.push({ path: rel, src: readFileSync(p, "utf8") });
+    }
+  };
+  walk(dir, "");
+  return out;
 }
 
 async function cmdTrace(args: string[]): Promise<number> {

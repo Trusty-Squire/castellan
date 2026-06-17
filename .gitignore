@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .squire/
+.ser/
+build/
 results/
 *.log
 .DS_Store

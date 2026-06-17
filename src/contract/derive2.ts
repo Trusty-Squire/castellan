@@ -105,8 +105,11 @@ export interface DeriveV2Input {
   spec?: Spec;
   workdir: string;
   llm: LlmClient;
-  /** Cheap executor model — every pipeline stage runs on it. */
+  /** Cheap executor model — runs the mechanical stages (decompose, infer-gates, extract-claims). */
   model: string;
+  /** Premium adversary (the knight) for the adversarial-review stage — a cheap model is an
+   * incompetent adversary (it "refutes" trivially-true claims). Falls back to `model` if absent. */
+  judgeModel?: string;
   chainName: string;
   budgetUsd: number;
   maxHumanChecks?: number;
@@ -154,16 +157,26 @@ async function jsonStage<S extends z.ZodTypeAny>(
   throw new SquireError("DERIVE_STAGE_INVALID", `stage "${stage}" produced invalid output after one retry`);
 }
 
+// The adversary's bar is FEASIBILITY, not perfection. Refute only when the plan genuinely
+// CANNOT be built or CANNOT pass its own stated acceptance gates — never because a reasonable,
+// hobby-grade implementation could be more robust, more general, or more like an industrial
+// system. "It won't match NLTK / it lacks SQLite's test suite" is NOT a refutation; "it is
+// mathematically impossible in the stated budget/time" is.
+const FEASIBILITY_GUARD =
+  " REFUTE ONLY GENUINE INFEASIBILITY: the claim makes the project impossible, or a reasonable implementation could not pass the spec's OWN stated acceptance gates. Do NOT refute because it could be more robust/general/industrial, or fails to handle cases no gate requires. A simple, reasonable, hobby-grade build that satisfies the stated stories is NOT refutable. When in doubt, do NOT refute.";
+
 export const LENSES: { id: string; instruction: string }[] = [
   {
     id: "feasibility-arithmetic",
     instruction:
-      "Attack this claim with ARITHMETIC: estimate sizes, counts, time, memory, cost. If the numbers do not work, refute and SHOW the arithmetic as evidence. A refutation without shown arithmetic is worthless.",
+      "Attack this claim with ARITHMETIC: estimate sizes, counts, time, memory, cost. If the numbers genuinely do not work, refute and SHOW the arithmetic as evidence. A refutation without shown arithmetic is worthless." +
+      FEASIBILITY_GUARD,
   },
   {
     id: "prior-art",
     instruction:
-      "Attack this claim with PRIOR ART: how do existing real systems solve this? If practice contradicts the claim, refute and NAME the systems/sources as evidence. A refutation without named prior art is worthless.",
+      "Attack this claim with PRIOR ART: does existing practice show this approach genuinely CANNOT work? If so, refute and NAME the systems/sources. A refutation without named prior art is worthless." +
+      FEASIBILITY_GUARD,
   },
 ];
 
@@ -174,7 +187,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     throw new SquireError("DERIVE_INPUT", "deriveV2 takes exactly one of goal | spec");
   }
   const usage: PlannerUsage = { in: 0, out: 0, costUsd: 0, reportedCalls: 0 };
-  const { llm, model } = input;
+  const { llm, model, judgeModel } = input;
 
   // Spec pre-gates: unanchored requirements and refuted decisions block before any tokens.
   if (input.spec) {
@@ -274,15 +287,23 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     const verdict: ClaimVerdict = { ...claim, lenses: [], refuted: false };
     if (claim.loadBearing) {
       for (const lens of LENSES) {
-        const res = await jsonStage(
-          llm,
-          model,
-          `lens:${lens.id}`,
-          `${lens.instruction} Output ONLY JSON: {"refuted": boolean, "evidence": "shown arithmetic or named sources — REQUIRED when refuted"}.`,
-          `CLAIM: ${claim.statement}\nCONTEXT: ${claim.about}`,
-          LensSchema,
-          usage,
-        );
+        // The adversary is a best-effort QUALITY gate, not a required stage. If it flakes
+        // (bad JSON twice), FAIL OPEN — treat as "not refuted" so a mute adversary never
+        // halts the build. Only a competent, evidence-backed refutation blocks.
+        let res: z.infer<typeof LensSchema>;
+        try {
+          res = await jsonStage(
+            llm,
+            judgeModel ?? model,
+            `lens:${lens.id}`,
+            `${lens.instruction} Output ONLY JSON: {"refuted": boolean, "evidence": "shown arithmetic or named sources — REQUIRED when refuted"}.`,
+            `CLAIM: ${claim.statement}\nCONTEXT: ${claim.about}`,
+            LensSchema,
+            usage,
+          );
+        } catch {
+          res = { refuted: false, evidence: "" };
+        }
         const discarded = res.refuted && res.evidence.trim().length < 10;
         verdict.lenses.push({ lens: lens.id, refuted: res.refuted, evidence: res.evidence, discarded });
         if (res.refuted && !discarded) verdict.refuted = true;
@@ -449,7 +470,11 @@ export async function runDeriveV2(args: string[]): Promise<number> {
     spec,
     workdir,
     llm,
-    model: chain.executor,
+    // Authoring (decompose/infer-gates/extract-claims/adversary) is premium — a cheap model
+    // is an unreliable planner AND an incompetent adversary. The emitted mission still BUILDS
+    // on the cheap chain (chainName) — premium authoring, cheap build loop (the thesis).
+    model: chain.knight,
+    judgeModel: chain.knight,
     chainName,
     budgetUsd: Number(value.get("budget") ?? "2.5"),
   });
