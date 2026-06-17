@@ -304,17 +304,21 @@ async function buildLayer(c: Ctx): Promise<boolean> {
   // — never raw agent chatter. N is the derived node count (NOT spec.requirements).
   const prog = newProgressState(missionNodeCount(buildDir));
   let pinnedTrace: string | null = null;
-  let lastEventAt = Date.now();
+  const startedAt = Date.now();
+  let lastOutputAt = startedAt;
 
+  // `startedAt` fences off any leftover trace from a PRIOR run: the follower only
+  // surfaces a trace this build actually wrote, so we never replay a dead run's ladder.
   const follower = followTrace(squireDir, (ev) => {
-    lastEventAt = Date.now();
     if (prog.total === null) prog.total = missionNodeCount(buildDir);
     const line = renderTraceLine(ev, prog, s);
-    if (line !== null) out(line);
-  });
-  // A heartbeat ONLY when the trace has gone quiet — replaces the old blind 10s tick.
+    if (line !== null) { out(line); lastOutputAt = Date.now(); }
+  }, startedAt);
+  // A heartbeat when no VISIBLE milestone has printed for a while. Time the visible
+  // output, NOT trace activity: an attempt in progress streams plenty of hidden
+  // tool-call events, so gating on those would keep the heartbeat silent mid-work.
   const heartbeat = setInterval(() => {
-    if (Date.now() - lastEventAt > 25_000) { out(s.dim("  …still working — the fleet is on it")); lastEventAt = Date.now(); }
+    if (Date.now() - lastOutputAt > 20_000) { out(s.dim("  …still working — the fleet is on it")); lastOutputAt = Date.now(); }
   }, 5_000);
 
   const code = await new Promise<number | null>((res) => {

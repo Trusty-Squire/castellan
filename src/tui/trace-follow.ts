@@ -19,7 +19,12 @@ export interface TraceFollower {
   stop(): void;
 }
 
-export function followTrace(squireDir: string, onEvent: (ev: TraceEvent) => void): TraceFollower {
+/**
+ * @param since  Only the newest-fallback honours this: a trace file whose mtime predates
+ *   `since` (a PREVIOUS run's leftover trace) is ignored, so we never replay a dead run's
+ *   milestones as if they were live. An explicit pin() always wins regardless of `since`.
+ */
+export function followTrace(squireDir: string, onEvent: (ev: TraceEvent) => void, since = 0): TraceFollower {
   let pinned: string | null = null;
   let active: string | null = null;
   let consumed = 0; // count of lines already emitted from `active`
@@ -34,6 +39,7 @@ export function followTrace(squireDir: string, onEvent: (ev: TraceEvent) => void
       const p = join(squireDir, f);
       let m = 0;
       try { m = statSync(p).mtimeMs; } catch { continue; }
+      if (m < since) continue; // a leftover from an earlier run — don't replay it as live
       if (m > bestMtime) { bestMtime = m; best = p; }
     }
     return best;
