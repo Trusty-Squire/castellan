@@ -10,6 +10,8 @@ import { MockEngine, fileScriptResolver } from "./engine/mock.js";
 import { initRepo, isClean } from "./harness/checkpoint.js";
 import { SquireError } from "./errors.js";
 import type { Engine } from "./engine/types.js";
+import type { LlmClient } from "./llm/types.js";
+import type { Audit } from "./contract/review.js";
 import { validateMissionFile } from "./contract/validate.js";
 import { sanitizeInput } from "./term.js";
 
@@ -624,74 +626,108 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   }
   if (stopAfter === 1) return 0;
 
-  // ---- LAYER 3 build (derive the gated plan, then run it for real) ----
-  layer(3, "build — spec → code that passes every gate");
+  // ---- LAYER 3 build + LAYER 4 audit, as a BOUNDED REBUILD LOOP ----
+  // The autonomous path must not stop at the first failed audit: a visual block
+  // folds its blocking fixes back into the spec and rebuilds, the same crank the
+  // TUI turns. We halt honestly only after exhausting cheap iterations — loop
+  // endurance is the product, so a one-shot stop at a red audit is itself a fail.
   const buildDir = resolve(flags.value.get("workdir") ?? `./${basename(specPath).replace(/\.spec\.yaml$/, "") || "build"}`);
   const { mkdirSync } = await import("node:fs");
   mkdirSync(buildDir, { recursive: true });
   const missionPath = join(buildDir, "mission.yaml");
-  process.stdout.write(st.gray("deriving the gated build plan…") + "\n");
   const { runDeriveV2 } = await import("./contract/derive2.js");
-  const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
-  if (drc !== 0) return drc;
-  // Keep language/test ephemera out of the git diff so reconcile's blast-radius
-  // check never trips on a __pycache__/.pyc/node_modules byproduct the agent
-  // happened to leave behind (these are never deliverables). changedFilesSince
-  // honours .gitignore via `git ls-files --exclude-standard`.
-  const gitignorePath = join(buildDir, ".gitignore");
-  if (!existsSync(gitignorePath)) {
-    const { writeFileSync: wfg } = await import("node:fs");
-    wfg(gitignorePath, ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "node_modules/", ".venv/", "venv/", "*.egg-info/", ".DS_Store"].join("\n") + "\n");
-  }
-  if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
-  const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
-  const buildRc = await executeMissionObject(mission, buildDir, flags, basename(specPath).replace(/\.spec\.yaml$/, ""));
-  if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red. fix the spec or re-run; ser will not ship unverified work.") + "\n"); return buildRc; }
-  if (stopAfter === 2) return 0;
-
-  // ---- LAYER 4 audit (independent reviewer, no build memory) ----
-  layer(4, "audit — fresh eyes on the finished code");
-  const { auditBuild } = await import("./contract/review.js");
   const { parseSpec } = await import("./contract/spec.js");
-  const builtSpec = parseSpec(readFileSync(specPath, "utf8"), specPath);
-  const files = collectSourceFiles(buildDir);
-  process.stdout.write(st.gray(`reviewing ${files.length} file(s) against ${builtSpec.stories.length} stories…`) + "\n");
-  const audit = await auditBuild(files, { thesis: builtSpec.thesis, stories: builtSpec.stories }, llm, chain.executor);
-  const rank: Record<string, number> = { high: 0, med: 1, low: 2 };
-  const recs = audit.recommendations.sort((a, b) => (rank[a.severity]! - rank[b.severity]!));
-  if (recs.length === 0) process.stdout.write(st.green("  audit: no polish recommended — the build is clean.") + "\n");
-  for (const r of recs) {
-    const sev = r.severity === "high" ? st.yellow("[high]") : r.severity === "med" ? st.bold("[med] ") : st.gray("[low] ");
-    process.stdout.write(`  ${sev} ${st.gray(r.lens.padEnd(7))} ${r.note}${r.file ? st.gray("  (" + r.file + ")") : ""}\n`);
-  }
-
-  // Live visual review with TEETH: render the built UI, judge the screenshot, and
-  // BLOCK ship on any unsatisfied story / high-severity finding (this is what
-  // catches "all gates green but the UI doesn't show what was asked for").
+  const { auditBuild } = await import("./contract/review.js");
   const { makeVisualClient } = await import("./backend.js");
-  const vc = await makeVisualClient();
-  if (vc) {
-    const { renderBuild, visualReview, blockingFixes } = await import("./review/visual.js");
-    const shot = await renderBuild(buildDir);
-    if (!shot.ok) {
-      process.stdout.write(st.gray(`  visual review skipped — ${shot.note}\n`));
-    } else {
-      const verdict = await visualReview(shot, { thesis: builtSpec.thesis, stories: builtSpec.stories }, vc.llm, vc.model);
-      if (verdict) {
-        for (const d of verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)) {
-          process.stdout.write(`  ${st.yellow(`${d.score}/10`)} ${st.gray("design ")} ${d.name}\n`);
+  const slug = basename(specPath).replace(/\.spec\.yaml$/, "");
+  const maxRebuilds = Math.max(1, Number(flags.value.get("max-rebuilds") ?? 3));
+  const rank: Record<string, number> = { high: 0, med: 1, low: 2 };
+
+  let recs: Audit["recommendations"] = [];
+  let pendingChange: { stories: string[] } | undefined;
+  let delivered = false;
+
+  for (let attempt = 1; attempt <= maxRebuilds; attempt++) {
+    // Fold the previous audit's blocking fixes into the spec before rebuilding:
+    // each becomes an explicit story (so the visual judge re-checks it) plus, via
+    // ONE design-reviewer pass, objective gates — no full pipeline re-run, no scope
+    // creep. This is the autonomous equivalent of the TUI's pendingChange.
+    if (pendingChange) {
+      process.stdout.write(st.yellow(`\n↻ rebuild ${attempt}/${maxRebuilds} — folding the audit's blocking fixes back into the spec…`) + "\n");
+      await refoldSpec(specPath, pendingChange.stories, llm, chain.executor);
+      pendingChange = undefined;
+    }
+
+    layer(3, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — spec → code that passes every gate");
+    process.stdout.write(st.gray("deriving the gated build plan…") + "\n");
+    const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
+    if (drc !== 0) return drc;
+    // Keep language/test ephemera out of the git diff so reconcile's blast-radius
+    // check never trips on a __pycache__/.pyc/node_modules byproduct.
+    const gitignorePath = join(buildDir, ".gitignore");
+    if (!existsSync(gitignorePath)) {
+      const { writeFileSync: wfg } = await import("node:fs");
+      wfg(gitignorePath, ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "node_modules/", ".venv/", "venv/", "*.egg-info/", ".DS_Store"].join("\n") + "\n");
+    }
+    if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
+    const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
+    const buildRc = await executeMissionObject(mission, buildDir, flags, slug);
+    // A build halt is already a loop-exhausted state — the executor's own rung
+    // ladder retried before giving up — so it's an honest halt, not a first-fail stop.
+    if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red after the executor's retries. ser will not ship unverified work.") + "\n"); return buildRc; }
+    if (stopAfter === 2) return 0;
+
+    // ---- LAYER 4 audit (independent reviewer, no build memory) ----
+    layer(4, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
+    const builtSpec = parseSpec(readFileSync(specPath, "utf8"), specPath);
+    const files = collectSourceFiles(buildDir);
+    process.stdout.write(st.gray(`reviewing ${files.length} file(s) against ${builtSpec.stories.length} stories…`) + "\n");
+    const audit = await auditBuild(files, { thesis: builtSpec.thesis, stories: builtSpec.stories }, llm, chain.executor);
+    recs = audit.recommendations.sort((a, b) => (rank[a.severity]! - rank[b.severity]!));
+    if (recs.length === 0) process.stdout.write(st.green("  audit: no polish recommended — the build is clean.") + "\n");
+    for (const r of recs) {
+      const sev = r.severity === "high" ? st.yellow("[high]") : r.severity === "med" ? st.bold("[med] ") : st.gray("[low] ");
+      process.stdout.write(`  ${sev} ${st.gray(r.lens.padEnd(7))} ${r.note}${r.file ? st.gray("  (" + r.file + ")") : ""}\n`);
+    }
+
+    // Live visual review with TEETH: render the built UI, judge the screenshot,
+    // collect the fixes that must block ship (an unsatisfied story / AI-slop).
+    let fixes: { note: string; fix: string }[] = [];
+    const vc = await makeVisualClient();
+    if (vc) {
+      const { renderBuild, visualReview, blockingFixes } = await import("./review/visual.js");
+      const shot = await renderBuild(buildDir);
+      if (!shot.ok) {
+        process.stdout.write(st.gray(`  visual review skipped — ${shot.note}\n`));
+      } else {
+        const verdict = await visualReview(shot, { thesis: builtSpec.thesis, stories: builtSpec.stories }, vc.llm, vc.model);
+        if (verdict) {
+          for (const d of verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)) {
+            process.stdout.write(`  ${st.yellow(`${d.score}/10`)} ${st.gray("design ")} ${d.name}\n`);
+          }
+          fixes = blockingFixes(verdict);
         }
-        const fixes = blockingFixes(verdict);
-        if (fixes.length > 0) {
-          process.stdout.write(st.yellow(`\nvisual review blocks ship — the built UI doesn't deliver the spec yet:\n`));
-          for (const f of fixes) process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
-          process.stdout.write(st.yellow("\nser will not ship a UI that fails its own design review. Revise the spec/build and re-run.") + "\n");
-          return 1;
-        }
-        process.stdout.write(st.green("  visual review: the screen delivers every story.") + "\n");
       }
     }
+
+    if (fixes.length === 0) {
+      if (vc) process.stdout.write(st.green("  visual review: the screen delivers every story.") + "\n");
+      delivered = true;
+      break;
+    }
+
+    // The audit blocks ship. LOOP if we have attempts left; halt only when spent.
+    process.stdout.write(st.yellow(`\nvisual review blocks ship — the built UI doesn't deliver the spec yet:\n`));
+    for (const f of fixes) process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
+    if (attempt < maxRebuilds) {
+      pendingChange = { stories: fixes.map((f) => f.fix) };
+      process.stdout.write(st.gray(`\nfolding these into the spec and rebuilding (attempt ${attempt + 1}/${maxRebuilds})…`) + "\n");
+      continue;
+    }
+    process.stdout.write(st.yellow(`\nvisual review still blocks after ${maxRebuilds} rebuilds — halting honestly with the issues above. ser will not ship a UI that fails its own design review.`) + "\n");
+    return 1;
   }
+  if (!delivered) return 1;
   if (stopAfter === 3) return 0;
 
   // ---- LAYER 5 ship ----
@@ -700,6 +736,32 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   process.stdout.write(st.green(`\n✓ shipped → ${buildDir}`) + "\n");
   process.stdout.write(st.gray(`  every gate green · ${recs.length} audit note(s)${highs ? `, ${highs} high-severity worth a look` : ""}\n`));
   return 0;
+}
+
+/**
+ * Fold an audit's blocking fixes back into the spec for the next rebuild. Each fix
+ * becomes an explicit story (so the visual judge re-checks it) plus, via ONE design-
+ * reviewer pass, a few objective gates that force the build to deliver it. Bounded
+ * and de-duped — no full pipeline re-run, so it can't re-trigger scope creep.
+ */
+async function refoldSpec(specPath: string, fixes: string[], llm: LlmClient, model: string): Promise<void> {
+  const { parseSpec } = await import("./contract/spec.js");
+  const { designReview } = await import("./review/reviewers.js");
+  const { stringify } = await import("yaml");
+  const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
+  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const spec = parseSpec(rf(specPath, "utf8"), specPath);
+  for (const f of fixes) if (!spec.stories.includes(f)) spec.stories.push(f);
+  const dr = await designReview(spec, llm, model);
+  const seen = new Set(spec.requirements.map((r) => norm(r.statement)));
+  let rn = spec.requirements.length;
+  for (const p of dr.patches.filter((p) => p.kind === "objective").slice(0, 4)) {
+    const key = norm(p.statement);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    spec.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
+  }
+  wf(specPath, stringify(spec));
 }
 
 /** Walk a build dir for reviewable source (skips git/node_modules/harness files). */

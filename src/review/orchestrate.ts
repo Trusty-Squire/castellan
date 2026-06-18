@@ -18,7 +18,14 @@ import type { PipelineResult, ReviewPatch, ReviewDecision, ReviewerResult } from
 export interface ReviewPlanOpts {
   /** Called with each reviewer's name just before its call — for CLI/TUI progress. */
   onReviewer?: (reviewer: ReviewerName) => void;
+  /** Hard cap on objective patches folded into the spec (scope governor). Default 8. */
+  maxObjectivePatches?: number;
+  /** Per-reviewer patch cap (belt-and-braces with the prompt's "at most 3"). Default 3. */
+  maxPatchesPerReviewer?: number;
 }
+
+/** Normalize a patch statement for dedupe (whitespace/case/punctuation-insensitive). */
+const normStatement = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 type Reviewer = (spec: Spec | ReviewSpecInput, llm: LlmClient, model: string) => Promise<ReviewerResult>;
 
@@ -48,11 +55,15 @@ export async function reviewPlan(
     })),
   };
   let rn = working.requirements.length;
+  const maxObjective = opts.maxObjectivePatches ?? 8;
+  const perReviewer = opts.maxPatchesPerReviewer ?? 3;
 
   const reviewers: ReviewerResult[] = [];
   const patches: ReviewPatch[] = [];
   const finalGate: ReviewDecision[] = [];
   const scores: PipelineResult["scores"] = {};
+  const seen = new Set(working.requirements.map((r) => normStatement(r.statement)));
+  let objectiveCount = 0;
 
   for (const [name, fn] of PIPELINE) {
     opts.onReviewer?.(name);
@@ -60,13 +71,21 @@ export async function reviewPlan(
     reviewers.push(result);
     scores[name] = result.overall;
 
-    for (const p of result.patches) {
-      patches.push(p);
-      // Only OBJECTIVE patches fold into the spec the next reviewer reads — they
-      // are real gated requirements. Visual patches are for the audit-layer judge.
-      if (p.kind === "objective") {
-        working.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
+    // Scope governor: take at most `perReviewer` patches, and fold objective ones
+    // only up to the global cap, de-duped. `patches` holds exactly what was KEPT so
+    // the reviewSpec adapter maps requirements 1:1. Visual patches (rare) pass
+    // through to the audit judge.
+    for (const p of result.patches.slice(0, perReviewer)) {
+      if (p.kind !== "objective") {
+        patches.push(p);
+        continue;
       }
+      const key = normStatement(p.statement);
+      if (objectiveCount >= maxObjective || seen.has(key)) continue;
+      seen.add(key);
+      objectiveCount += 1;
+      patches.push(p);
+      working.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
     }
 
     for (const d of result.decisions) {
