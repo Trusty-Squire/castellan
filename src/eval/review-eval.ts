@@ -5,10 +5,16 @@
  * reviewer CATCHES known spec defects (recall) without flagging clean controls
  * (precision) — the same recall/precision contract as poker-bench/visual-eval.
  *
- * "Caught" = the reviewer's haystack (patch statements/gates, low-scored
- * dimensions, decisions) mentions any keyword of a labeled defect. On a clean
- * CONTROL, a probe match is a FALSE POSITIVE — the reviewer flagged a defect that
- * isn't there.
+ * "Caught" (recall) is broad: the reviewer flags the defect via a patch, a
+ * low-scored dimension, or a decision mentioning the defect's keywords.
+ *
+ * A FALSE POSITIVE (control) is deliberately STRICTER: it requires a serious
+ * ALARM — a dimension the reviewer scored "broken" (<=2) or a blocking /
+ * user_challenge decision — that matches a defect. This asymmetry is the point:
+ * a reviewer naturally echoes the spec's vocabulary in praise, in fixed principle
+ * labels (a dimension *named* "AI slop avoidance" always contains "slop"), and in
+ * legit improvement patches; none of those are the reviewer crying wolf. Only a
+ * severe assertion that a clean spec is deficient counts against precision.
  */
 import type { ReviewerResult } from "../review/types.js";
 import type { ReviewSpecInput } from "../review/reviewers.js";
@@ -45,8 +51,8 @@ export interface ReviewEvalScore {
   falsePositives: string[]; // probe tags the reviewer matched
 }
 
-/** The text a defect can be "caught" in: patches, low dimensions, decisions. */
-function haystack(r: ReviewerResult): string {
+/** RECALL haystack — broad: any signal the reviewer flagged the defect counts. */
+function recallHaystack(r: ReviewerResult): string {
   const parts: string[] = [];
   for (const d of r.dimensions) if (d.score <= 5) parts.push(d.name, d.whatMakesIt10);
   for (const p of r.patches) parts.push(p.statement, p.gate);
@@ -54,15 +60,32 @@ function haystack(r: ReviewerResult): string {
   return parts.join("  ").toLowerCase();
 }
 
+/**
+ * ALARM haystack — strict: only a false ESCALATION counts as crying wolf, i.e. a
+ * blocking or user_challenge decision asserting a clean spec is wrong. Dimension
+ * scores are deliberately EXCLUDED: a dimension is a fixed principle label (one
+ * *named* "failure visibility" or "AI slop avoidance" trivially contains "fail" /
+ * "slop"), and its whatMakesIt10 restates the ideal, so both echo the defect
+ * vocabulary even when the spec satisfies the requirement. A graded score is not
+ * an assertion that a defect EXISTS; a blocking/challenge decision is. Improvement
+ * patches and taste decisions are normal reviewer work, not false alarms.
+ */
+function alarmHaystack(r: ReviewerResult): string {
+  const parts: string[] = [];
+  for (const dec of r.decisions) if (dec.blocking || dec.classification === "user_challenge") parts.push(dec.text, dec.why);
+  return parts.join("  ").toLowerCase();
+}
+
 const matches = (text: string, d: LabeledDefect): boolean => d.keywords.some((k) => text.includes(k.toLowerCase()));
 
-/** Pure: does the reviewer catch the fixture's labeled defects, and does it over-flag? */
+/** Pure: does the reviewer catch the fixture's labeled defects, and does it cry wolf? */
 export function scoreReviewerResult(fx: LabeledSpecFixture, r: ReviewerResult): ReviewEvalScore {
-  const text = haystack(r);
+  const recallText = recallHaystack(r);
+  const alarmText = alarmHaystack(r);
   const caught: string[] = [];
   const missed: string[] = [];
-  for (const d of fx.defects) (matches(text, d) ? caught : missed).push(d.tag);
-  const falsePositives = fx.probes.filter((p) => matches(text, p)).map((p) => p.tag);
+  for (const d of fx.defects) (matches(recallText, d) ? caught : missed).push(d.tag);
+  const falsePositives = fx.probes.filter((p) => matches(alarmText, p)).map((p) => p.tag);
   return {
     id: fx.id,
     reviewer: fx.reviewer,

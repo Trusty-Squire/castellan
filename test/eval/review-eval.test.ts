@@ -60,6 +60,16 @@ describe("scoreReviewerResult", () => {
     expect(s.isControl).toBe(true);
   });
 
+  it("an improvement PATCH on a control is NOT a false positive (only severe alarms count)", () => {
+    const polish: ReviewerResult = {
+      reviewer: "design", overall: 8,
+      dimensions: [{ name: "trust at pixel level", score: 8, whatMakesIt10: "" }],
+      patches: [{ statement: "consider showing a real data freshness timestamp", gate: "true", kind: "objective" }],
+      decisions: [{ text: "cards or table?", options: ["cards"], classification: "taste", recommendation: "cards", why: "", ifWrongCost: "", blocking: false }],
+    };
+    expect(scoreReviewerResult(CONTROL, polish).falsePositives).toEqual([]);
+  });
+
   it("a low-scored dimension counts toward catching a defect", () => {
     const onlyDims: ReviewerResult = {
       reviewer: "design", overall: 4, patches: [], decisions: [],
@@ -87,9 +97,17 @@ describe("gateReviewEval", () => {
     expect(g.recall).toBeLessThan(1);
   });
 
-  it("fails when a control over-flags beyond the cap (precision floor)", () => {
-    const overFlag = scoreReviewerResult(CONTROL, CAUGHT_ALL); // the 'caught-all' patches match probes on a control
-    const scores = [scoreReviewerResult(DEFECTIVE, CAUGHT_ALL), overFlag];
+  it("fails when a control over-flags beyond the cap (severe alarms on a clean spec)", () => {
+    // A reviewer crying wolf: broken-scored dims + a blocking challenge, matching
+    // multiple defects on the CLEAN spec.
+    const overFlag: ReviewerResult = {
+      reviewer: "design", overall: 2,
+      dimensions: [{ name: "trust", score: 1, whatMakesIt10: "" }],
+      patches: [],
+      // a single blocking challenge that falsely asserts THREE defects on the clean spec
+      decisions: [{ text: "the size/edge is missing, there is no empty state, and the data source isn't named", options: ["fix it"], classification: "user_challenge", recommendation: "fix it", why: "headline value missing", ifWrongCost: "high", blocking: true }],
+    };
+    const scores = [scoreReviewerResult(DEFECTIVE, CAUGHT_ALL), scoreReviewerResult(CONTROL, overFlag)];
     const g = gateReviewEval("design", scores, { minRecall: 1, maxControlFalsePositives: 1 });
     expect(g.controlFalsePositives).toBeGreaterThan(1);
     expect(g.passed).toBe(false);

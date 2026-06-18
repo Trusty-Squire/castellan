@@ -12,10 +12,12 @@ const CLEAN = spec("clean-dashboard.spec.yaml");
 
 /** The DESIGN reviewer's four clairvoyance defects — the headline clairvoyance catch. */
 const DESIGN_DEFECTS: LabeledDefect[] = [
-  { tag: "size-not-displayed", keywords: ["size", "edge", "percentage", "displayed", "shown", "rendered", "visible"] },
-  { tag: "ai-slop-bare-ui", keywords: ["bare", "unstyled", "slop", "plain background", "generic", "no hierarchy", "lacks hierarchy", "no visual"] },
+  { tag: "size-not-displayed", keywords: ["size", "edge", "percentage", "headline value", "prominent", "largest first", "sorted by"] },
+  { tag: "ai-slop-bare-ui", keywords: ["bare", "unstyled", "slop", "hierarchy", "plain background", "generic", "specificity", "no visual"] },
   { tag: "no-empty-state", keywords: ["empty state", "empty"] },
-  { tag: "trivial-fake-data", keywords: ["placeholder", "fake", "real data", "live data", "data source", "book name", "sample"] },
+  // the design symptoms of trivial/fake lines: real lines name the book, show the
+  // odds, and carry a freshness signal; "A vs B, 2.0/2.0" placeholder data has none.
+  { tag: "trivial-fake-data", keywords: ["book", "sportsbook", "odds", "freshness", "timestamp", "placeholder", "fake", "real data", "data source", "hardcoded", "mock", "sample"] },
 ];
 
 const CEO_DEFECTS: LabeledDefect[] = [
