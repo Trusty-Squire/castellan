@@ -163,7 +163,7 @@ async function jsonStage<S extends z.ZodTypeAny>(
 // system. "It won't match NLTK / it lacks SQLite's test suite" is NOT a refutation; "it is
 // mathematically impossible in the stated budget/time" is.
 const FEASIBILITY_GUARD =
-  " REFUTE ONLY GENUINE INFEASIBILITY: the claim makes the project impossible, or a reasonable implementation could not pass the spec's OWN stated acceptance gates. Do NOT refute because it could be more robust/general/industrial, or fails to handle cases no gate requires. A simple, reasonable, hobby-grade build that satisfies the stated stories is NOT refutable. When in doubt, do NOT refute.";
+  " REFUTE ONLY GENUINE INFEASIBILITY: the claim makes the project impossible, or a reasonable implementation could not pass the spec's OWN stated acceptance gates. Do NOT refute because it could be more robust/general/industrial, or fails to handle cases no gate requires. A simple, reasonable, hobby-grade build that satisfies the stated stories is NOT refutable. SCOPE: only judge claims about whether THE PRODUCT CAN BE BUILT and pass its gates. If the claim is not a buildability claim — e.g. a descriptive meta-claim about the spec's wording or contents ('the requirements mention X', 'the spec describes Y') — it is OUT OF SCOPE: return refuted:false. Refuting such a claim says nothing about feasibility and must never block the build. When in doubt, do NOT refute.";
 
 export const LENSES: { id: string; instruction: string }[] = [
   {
@@ -204,11 +204,16 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     : `GOAL:\n${input.goal}`;
 
   // 2. decompose
+  const coverageRule = input.spec
+    ? ` SPEC MODE — COVERAGE IS MANDATORY: the requirements above are labelled R1, R2, … (specifically: ${input.spec.requirements
+        .map((r) => r.id)
+        .join(", ")}). EVERY node MUST set "requirement" to the id of the requirement it implements, and EVERY one of those requirement ids MUST be covered by at least one node. Do not emit a node without a "requirement"; do not leave any requirement uncovered.`
+    : "";
   const decomposed = await jsonStage(
     llm,
     model,
     "decompose",
-    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet. Output ONLY JSON: {"nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`,
+    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} Output ONLY JSON: {"nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`,
     `${intent}\n\nREPOSITORY SURVEY:\n${survey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`,
     DecomposeSchema,
     usage,
@@ -275,7 +280,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     llm,
     model,
     "extract-claims",
-    'You decompile a plan into the falsifiable claims it rests on. Include IMPLICIT assumptions: what unstated premise would make this plan fail? Mark loadBearing=true when the plan collapses if the claim is false. Output ONLY JSON: {"claims":[{id,statement,loadBearing,about}]}.',
+    'You decompile a plan into the falsifiable claims it rests on. Include IMPLICIT assumptions: what unstated premise would make this plan fail? Mark loadBearing=true when the plan collapses if the claim is false. EVERY claim must be about whether THE PRODUCT CAN BE BUILT and pass its acceptance gates — a prediction about the implementation, its feasibility, its budget, or its data. NEVER emit meta-claims about the spec text itself (e.g. "the requirements mention components/modules", "the spec describes X", "the brief contains Y"): whether a word appears in the requirements is not a buildability fact, and a downstream adversary will waste a refutation on it. If a claim\'s truth turns on the SPEC\'S WORDING rather than the BUILD\'S FEASIBILITY, drop it. Output ONLY JSON: {"claims":[{id,statement,loadBearing,about}]}.',
     `${intent}\n\nPLAN NODES:\n${decomposed.nodes.map((n) => `${n.id}: ${n.brief}`).join("\n")}`,
     ClaimsSchema,
     usage,
@@ -441,8 +446,16 @@ export async function runDeriveV2(args: string[]): Promise<number> {
   const chains = loadChainsForDerive(workdir, value.get("chains"));
   const chain = resolveChain(chains, chainName);
 
-  const isSpec = target.endsWith(".spec.yaml") && existsSync(resolve(target));
-  const spec = isSpec ? parseSpec(readFileSync(resolve(target), "utf8"), target) : undefined;
+  // Detect a spec by CONTENT, not just the `.spec.yaml` extension: the TUI writes
+  // its spec to `.ser/spec.yaml`, and naming it differently must NOT silently turn
+  // the spec file's PATH into the build "goal" (which yields a nonsense "read this
+  // yaml and build something" mission). Any existing YAML file that parses as a spec
+  // is treated as a spec; anything else is a free-text goal.
+  let spec: ReturnType<typeof parseSpec> | undefined;
+  const asPath = resolve(target);
+  if (/\.ya?ml$/.test(target) && existsSync(asPath)) {
+    try { spec = parseSpec(readFileSync(asPath, "utf8"), target); } catch { spec = undefined; }
+  }
 
   // Judge mode: mechanical pre-gates only — no tokens, exit code is the verdict.
   if (bool.has("judge")) {
@@ -460,10 +473,8 @@ export async function runDeriveV2(args: string[]): Promise<number> {
     return 0;
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new SquireError("NO_API_KEY", "OPENROUTER_API_KEY is required for ser derive");
-  const { OpenRouterClient } = await import("../llm/openrouter.js");
-  const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
+  const { makeLlmClient } = await import("../backend.js");
+  const llm = await makeLlmClient();
 
   const result = await deriveV2({
     goal: spec ? undefined : target,

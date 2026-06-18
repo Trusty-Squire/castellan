@@ -172,10 +172,8 @@ async function executeMissionObject(
   if (useMock) {
     engine = new MockEngine({ resolveScript: fileScriptResolver(join(missionDir, "engine-scripts")) });
   } else {
-    const { PiEngine } = await import("./engine/pi.js");
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new SquireError("NO_API_KEY", "OPENROUTER_API_KEY is required for a real run (use --mock otherwise)");
-    engine = new PiEngine();
+    const { makeBuildEngine } = await import("./backend.js");
+    engine = await makeBuildEngine();
   }
 
   // Resolve harness mode: --harness <on|off> overrides the chain's setting.
@@ -289,14 +287,12 @@ async function cmdSpec(args: string[]): Promise<number> {
     const flags = parseFlags(args.slice(1), ["chain", "chains"]);
     const [file, claimId] = flags.positional;
     if (!file || !claimId) throw new SquireError("USAGE", "ser spec verify <x.spec.yaml> <claim-id>");
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) throw new SquireError("NO_API_KEY", "OPENROUTER_API_KEY required for ser spec verify");
-    const { OpenRouterClient } = await import("./llm/openrouter.js");
+    const { makeLlmClient } = await import("./backend.js");
     const { loadChainsForDerive } = await import("./contract/derive.js");
     const chains = loadChainsForDerive(process.cwd(), flags.value.get("chains"));
     const chain = resolveChain(chains, flags.value.get("chain") ?? "cheap");
     const spec = parseSpec(readFileSync(resolve(file), "utf8"), file);
-    const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
+    const llm = await makeLlmClient();
     const r = await verifyClaim(spec, claimId, llm, chain.executor);
     wf(resolve(file), stringify(r.spec));
     process.stdout.write(`${claimId}: ${r.verdict}\n  ${r.evidence}\n`);
@@ -309,14 +305,14 @@ async function cmdSpec(args: string[]): Promise<number> {
     if (!file) throw new SquireError("USAGE", "ser spec score <x.spec.yaml>");
     const spec = parseSpec(readFileSync(resolve(file), "utf8"), file);
     const { scoreSpec, renderScoreLine } = await import("./contract/spec-score.js");
-    // Use the live diagnostician when a key is present; mechanical-only otherwise.
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    // Use the live diagnostician when a backend is available; mechanical-only otherwise.
+    const { backendName, makeLlmClient } = await import("./backend.js");
+    const live = backendName() === "codex" || Boolean(process.env.OPENROUTER_API_KEY);
     let s;
-    if (apiKey) {
-      const { OpenRouterClient } = await import("./llm/openrouter.js");
+    if (live) {
       const { loadChainsForDerive } = await import("./contract/derive.js");
       const chain = resolveChain(loadChainsForDerive(process.cwd(), flags.value.get("chains")), flags.value.get("chain") ?? "cheap");
-      const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
+      const llm = await makeLlmClient();
       s = await scoreSpec(spec, { llm, model: chain.executor });
     } else {
       s = await scoreSpec(spec);
@@ -354,9 +350,7 @@ async function cmdTalk(args: string[]): Promise<number> {
 
   const { path: specFile, created } = ensureSpecFile(process.cwd(), flags.positional[0]);
   if (created) process.stdout.write(st.gray(`new spec: ${specFile} — your first message pins the thesis.`) + "\n");
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new SquireError("NO_API_KEY", "OPENROUTER_API_KEY required for ser talk");
-  const { OpenRouterClient } = await import("./llm/openrouter.js");
+  const { makeLlmClient } = await import("./backend.js");
   const { chains, path: chainsPath } = resolveChains(process.cwd(), flags.value.get("chains"));
   const chainName = flags.value.get("chain") ?? "cheap";
   const chain = resolveChain(chains, chainName);
@@ -364,7 +358,7 @@ async function cmdTalk(args: string[]): Promise<number> {
   if (chainsPath === BUILTIN_CHAINS_SOURCE) {
     process.stdout.write(st.gray(`chain: ${chainName} (built-in defaults — drop a chains.yaml here to customize)`) + "\n");
   }
-  const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
+  const llm = await makeLlmClient();
   const session = new SpecSession({
     path: specFile,
     llm,
@@ -578,10 +572,8 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const chainName = flags.value.get("chain") ?? "cheap";
   const chain = resolveChain(loadChainsForDerive(process.cwd(), flags.value.get("chains")), chainName);
   const { stringify } = await import("yaml");
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new SquireError("NO_API_KEY", 'OPENROUTER_API_KEY required — run "ser login"');
-  const { OpenRouterClient } = await import("./llm/openrouter.js");
-  const llm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
+  const { makeLlmClient } = await import("./backend.js");
+  const llm = await makeLlmClient();
 
   // ---- LAYER 1 idea + LAYER 2 spec ----
   let specPath: string;
@@ -642,6 +634,15 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const { runDeriveV2 } = await import("./contract/derive2.js");
   const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
   if (drc !== 0) return drc;
+  // Keep language/test ephemera out of the git diff so reconcile's blast-radius
+  // check never trips on a __pycache__/.pyc/node_modules byproduct the agent
+  // happened to leave behind (these are never deliverables). changedFilesSince
+  // honours .gitignore via `git ls-files --exclude-standard`.
+  const gitignorePath = join(buildDir, ".gitignore");
+  if (!existsSync(gitignorePath)) {
+    const { writeFileSync: wfg } = await import("node:fs");
+    wfg(gitignorePath, ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "node_modules/", ".venv/", "venv/", "*.egg-info/", ".DS_Store"].join("\n") + "\n");
+  }
   if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
   const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
   const buildRc = await executeMissionObject(mission, buildDir, flags, basename(specPath).replace(/\.spec\.yaml$/, ""));
@@ -662,6 +663,34 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   for (const r of recs) {
     const sev = r.severity === "high" ? st.yellow("[high]") : r.severity === "med" ? st.bold("[med] ") : st.gray("[low] ");
     process.stdout.write(`  ${sev} ${st.gray(r.lens.padEnd(7))} ${r.note}${r.file ? st.gray("  (" + r.file + ")") : ""}\n`);
+  }
+
+  // Live visual review with TEETH: render the built UI, judge the screenshot, and
+  // BLOCK ship on any unsatisfied story / high-severity finding (this is what
+  // catches "all gates green but the UI doesn't show what was asked for").
+  const { makeVisualClient } = await import("./backend.js");
+  const vc = await makeVisualClient();
+  if (vc) {
+    const { renderBuild, visualReview, blockingFixes } = await import("./review/visual.js");
+    const shot = await renderBuild(buildDir);
+    if (!shot.ok) {
+      process.stdout.write(st.gray(`  visual review skipped — ${shot.note}\n`));
+    } else {
+      const verdict = await visualReview(shot, { thesis: builtSpec.thesis, stories: builtSpec.stories }, vc.llm, vc.model);
+      if (verdict) {
+        for (const d of verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)) {
+          process.stdout.write(`  ${st.yellow(`${d.score}/10`)} ${st.gray("design ")} ${d.name}\n`);
+        }
+        const fixes = blockingFixes(verdict);
+        if (fixes.length > 0) {
+          process.stdout.write(st.yellow(`\nvisual review blocks ship — the built UI doesn't deliver the spec yet:\n`));
+          for (const f of fixes) process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
+          process.stdout.write(st.yellow("\nser will not ship a UI that fails its own design review. Revise the spec/build and re-run.") + "\n");
+          return 1;
+        }
+        process.stdout.write(st.green("  visual review: the screen delivers every story.") + "\n");
+      }
+    }
   }
   if (stopAfter === 3) return 0;
 

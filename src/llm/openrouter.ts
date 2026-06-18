@@ -32,12 +32,21 @@ export class OpenRouterClient implements LlmClient {
     user: string;
     json?: boolean;
     maxTokens: number;
+    images?: { dataUrl: string }[];
   }): Promise<{ text: string; inTokens: number; outTokens: number; costUsd?: number }> {
+    // With images, the user message becomes OpenAI-style multimodal content parts
+    // (text + image_url); without, a plain string (unchanged wire format).
+    const userContent = req.images && req.images.length > 0
+      ? [
+          { type: "text", text: req.user },
+          ...req.images.map((img) => ({ type: "image_url", image_url: { url: img.dataUrl } })),
+        ]
+      : req.user;
     const body = {
       model: req.model,
       messages: [
         { role: "system", content: req.system },
-        { role: "user", content: req.user },
+        { role: "user", content: userContent },
       ],
       max_tokens: req.maxTokens,
       temperature: 0,

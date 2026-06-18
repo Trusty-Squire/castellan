@@ -23,7 +23,8 @@
     "derive-bench": "tsx scripts/derive-bench.ts",
     "poker-bench": "tsx scripts/poker-bench.ts",
     "gate-attack": "tsx scripts/gate-attack.ts",
-    "talk-eval": "tsx scripts/talk-eval.ts"
+    "talk-eval": "tsx scripts/talk-eval.ts",
+    "visual-eval": "tsx scripts/visual-eval.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.79.1",

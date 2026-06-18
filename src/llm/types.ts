@@ -6,6 +6,12 @@ export interface LlmClient {
     user: string;
     json?: boolean;
     maxTokens: number;
+    /**
+     * Optional image inputs for multimodal review (the visual design judge sends
+     * a screenshot of the built UI). Each is a data URL ("data:image/png;base64,…").
+     * Clients that don't support vision MUST ignore this field (text-only call).
+     */
+    images?: { dataUrl: string }[];
   }): Promise<{
     text: string;
     inTokens: number;

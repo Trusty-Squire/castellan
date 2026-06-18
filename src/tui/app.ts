@@ -10,7 +10,6 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as readline from "node:readline/promises";
 import { makeStyler, colorsEnabled, type Styler } from "../style.js";
-import { SquireError } from "../errors.js";
 import { LAYERS, type Layer, wrapText } from "./paint.js";
 
 type Brief = import("../contract/ingest.js").OutcomesBrief;
@@ -138,11 +137,9 @@ export async function runTui(resume = false): Promise<number> {
     process.stderr.write('ser needs an interactive terminal. (scripts: ser "<idea>" --to spec)\n');
     return 1;
   }
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new SquireError("NO_API_KEY", 'OPENROUTER_API_KEY required — run "ser login"');
   const s = makeStyler(colorsEnabled(process.env, true));
-  const { OpenRouterClient } = await import("../llm/openrouter.js");
-  const baseLlm = new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL });
+  const { makeLlmClient } = await import("../backend.js");
+  const baseLlm = await makeLlmClient();
   const cost = { total: 0 };
   const llm: import("../llm/types.js").LlmClient = {
     complete: async (req) => { const r = await baseLlm.complete(req); if (typeof r.costUsd === "number" && Number.isFinite(r.costUsd)) cost.total += r.costUsd; return r; },
@@ -396,6 +393,40 @@ async function auditLayer(c: Ctx): Promise<boolean> {
   const recs = audit.recommendations.sort((a, b) => rank[a.severity]! - rank[b.severity]!);
   if (!recs.length) out("  " + s.green("clean — nothing worth polishing."));
   recs.forEach((r) => out("  " + (r.severity === "high" ? s.yellow("[high]") : r.severity === "med" ? "[med] " : s.gray("[low] ")) + " " + s.gray(r.lens.padEnd(7)) + r.note));
+
+  // Live visual review with teeth: render the UI, judge the screenshot, and if a
+  // story isn't visibly delivered (or a high-severity design finding), fold the
+  // fix into the spec and rebuild — the same honest-halt loop the build uses.
+  const { makeVisualClient } = await import("../backend.js");
+  const vc = await makeVisualClient();
+  if (vc) {
+    const { renderBuild, visualReview, blockingFixes } = await import("../review/visual.js");
+    const shot = await spin(c, "rendering the build for a visual review", () => renderBuild(c.sess.buildDir!));
+    if (!shot.ok) out(s.dim(`  visual review skipped — ${shot.note}`));
+    else {
+      const verdict = await spin(c, "design review — fresh eyes on the screen", () => visualReview(shot, { thesis: spec.thesis, stories: spec.stories }, vc.llm, vc.model));
+      if (verdict) {
+        verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)
+          .forEach((d) => out("  " + s.yellow(`${d.score}/10`) + " " + s.gray("design ") + d.name));
+        const fixes = blockingFixes(verdict);
+        if (fixes.length > 0) {
+          out("\n  " + s.yellow("the built UI doesn't deliver the spec yet — i won't ship it:"));
+          fixes.forEach((f) => para(s.yellow("  ✗ "), f.fix));
+          out("\n  " + s.cyan("→ ") + "press Enter and i'll fold these design fixes into the spec, then rebuild.");
+          out(s.dim("  ↵ revise with the fixes · /ship anyway · /quit"));
+          for (;;) {
+            const msg = await ask(c);
+            if (msg === "/quit") return false;
+            if (msg === "/ship") break; // user overrides the block
+            if (msg === "" || msg === "/back") {
+              c.sess.pendingChange = "the built UI failed its visual design review. Apply these fixes: " + fixes.map((f) => f.fix).join("; ");
+              c.sess.layer = "spec"; c.save(); return true;
+            }
+          }
+        } else out("  " + s.green("visual review: the screen delivers every story."));
+      }
+    }
+  }
   for (;;) {
     status(c, "audit");
     const msg = await ask(c);

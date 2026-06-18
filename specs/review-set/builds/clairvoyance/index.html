@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arbitrage Dashboard</title>
+    <style>
+      :root {
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      body {
+        margin: 0;
+        padding: 1.5rem;
+        background: #f5f7fb;
+        color: #111827;
+      }
+
+      .dashboard {
+        display: grid;
+        gap: 1.25rem;
+      }
+
+      .panel {
+        background: #fff;
+        border: 1px solid #d1d5db;
+        border-radius: 0.75rem;
+        padding: 1rem;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: 0.5rem;
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+      }
+
+      th {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #6b7280;
+      }
+
+      #opportunities {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      #opportunities li {
+        border: 1px solid #d1d5db;
+        border-radius: 0.5rem;
+        padding: 0.75rem;
+      }
+
+      .opportunity__header,
+      .opportunity__outcomes {
+        display: flex;
+        gap: 0.65rem;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="dashboard">
+      <section class="panel">
+        <h1>Lines</h1>
+        <table>
+          <thead>
+            <tr>
+              <th>League</th>
+              <th>Event</th>
+              <th>Market</th>
+              <th>Outcome</th>
+              <th>Odds</th>
+              <th>Outcome</th>
+              <th>Odds</th>
+              <th>Start Time</th>
+            </tr>
+          </thead>
+          <tbody id="lines"></tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <h2>Opportunities</h2>
+        <ul id="opportunities"></ul>
+      </section>
+    </main>
+
+    <script src="data.js"></script>
+    <script src="opportunities.js"></script>
+    <script src="render.js"></script>
+    <script>
+      (function () {
+        var events = window.fixtureFeed && Array.isArray(window.fixtureFeed.events) ? window.fixtureFeed.events : [];
+        var lines = document.getElementById('lines');
+        var opportunities = document.getElementById('opportunities');
+
+        if (lines) {
+          lines.innerHTML = window.renderLines ? window.renderLines(events) : '';
+        }
+
+        if (opportunities) {
+          var detected = window.findArbitrage ? window.findArbitrage(events) : [];
+          opportunities.innerHTML = window.renderOpportunities ? window.renderOpportunities(detected) : '';
+        }
+      })();
+    </script>
+  </body>
+</html>

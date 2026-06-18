@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clairvoyance — Arbitrage Dashboard</title>
+<style>
+  :root{--bg:#0b0f17;--card:#141a26;--line:#222b3a;--ink:#e8edf5;--dim:#8a97ab;--accent:#3ddc84;--accent2:#49d6e0;--warn:#f5a623}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,system-ui,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 48px}
+  header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:24px}
+  header h1{font-size:22px;margin:0;letter-spacing:-.01em}
+  header .sub{color:var(--dim);font-size:13px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:22px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 14px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:0 10px 8px}
+  td{padding:10px;border-top:1px solid var(--line)}
+  tbody tr:hover{background:#1a2233}
+  .matchup{font-weight:600}
+  .book{color:var(--dim);font-size:12px}
+  .opps{display:flex;flex-direction:column;gap:10px}
+  .opp{display:flex;align-items:center;justify-content:space-between;background:#101622;border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .opp .meta .ev{font-weight:600}
+  .opp .meta .legs{color:var(--dim);font-size:12px;margin-top:2px}
+  .size{font-variant-numeric:tabular-nums;font-weight:700;font-size:18px;color:var(--accent);min-width:96px;text-align:right}
+  .size .lbl{display:block;font-size:10px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+  .empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:26px 10px;color:var(--dim)}
+  .empty .big{font-size:15px;color:var(--ink)}
+  .empty button{margin-top:6px;background:var(--accent2);color:#06222a;border:0;border-radius:8px;padding:8px 14px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Clairvoyance</h1>
+    <div class="sub">Lines &amp; cross-book arbitrage · updated <span id="updated">just now</span></div>
+  </header>
+
+  <section class="card">
+    <h2>Trade opportunities — ranked by size</h2>
+    <div class="opps" id="opportunities"></div>
+  </section>
+
+  <section class="card">
+    <h2>Current lines</h2>
+    <table>
+      <thead><tr><th>Matchup</th><th>Market</th><th>Best price A</th><th>Best price B</th><th>Books</th></tr></thead>
+      <tbody id="lines"></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+const EVENTS = [
+  { id:'g1', league:'NBA', home:'Riverton Rockets', away:'Harbor Falcons', market:'Moneyline',
+    a:{name:'Rockets', odds:2.12, book:'BetA'}, b:{name:'Falcons', odds:1.98, book:'BetB'} },
+  { id:'g2', league:'NBA', home:'Midtown Meteors', away:'Coastal Cougars', market:'Moneyline',
+    a:{name:'Meteors', odds:2.25, book:'BetC'}, b:{name:'Cougars', odds:1.95, book:'BetA'} },
+  { id:'g3', league:'NHL', home:'Glacier Kings', away:'Summit Wolves', market:'Moneyline',
+    a:{name:'Kings', odds:2.40, book:'BetB'}, b:{name:'Wolves', odds:1.80, book:'BetC'} },
+];
+function arbs(events){
+  return events.map(e=>{
+    const inv = 1/e.a.odds + 1/e.b.odds;
+    return inv < 1 ? { ev:`${e.home} vs ${e.away}`, size:(1/inv-1), legs:`${e.a.name} @ ${e.a.odds} (${e.a.book}) · ${e.b.name} @ ${e.b.odds} (${e.b.book})` } : null;
+  }).filter(Boolean).sort((x,y)=>y.size-x.size);
+}
+function renderLines(events){
+  document.getElementById('lines').innerHTML = events.map(e=>`
+    <tr><td class="matchup">${e.home} vs ${e.away}</td><td>${e.market}</td>
+    <td>${e.a.name} <b>${e.a.odds}</b></td><td>${e.b.name} <b>${e.b.odds}</b></td>
+    <td class="book">${e.a.book}, ${e.b.book}</td></tr>`).join('');
+}
+function renderOpps(opps){
+  const el = document.getElementById('opportunities');
+  if(!opps.length){ el.innerHTML = `<div class="empty"><div class="big">No arbitrage right now</div>
+    <div>We scan every book continuously — opportunities appear here the moment the math works.</div>
+    <button>Rescan books</button></div>`; return; }
+  el.innerHTML = opps.map(o=>`<div class="opp"><div class="meta"><div class="ev">${o.ev}</div>
+    <div class="legs">${o.legs}</div></div>
+    <div class="size">${(o.size*100).toFixed(2)}%<span class="lbl">guaranteed edge</span></div></div>`).join('');
+}
+renderLines(EVENTS);
+renderOpps(arbs(EVENTS));
+</script>
+</body>
+</html>
