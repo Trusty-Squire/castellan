@@ -1,0 +1,17 @@
+# SEED DEFECTIVE FIXTURE — the spec that produced "well-built garbage".
+# Deliberately a low floor: the gates check structure-presence (an <li> exists,
+# the module loads) not quality. Nothing requires the headline value (size/edge)
+# to be DISPLAYED, no empty state, no real data source, no visual specificity,
+# no detector error/empty path. A good design/ceo/eng reviewer patches these.
+thesis: "a web dashboard that surfaces ranked cross-book arbitrage opportunities by size"
+stories:
+  - "A user opens the dashboard and sees current betting lines for several events across multiple books"
+  - "A user sees arbitrage opportunities ranked by size, largest edge first"
+  - "The detector finds a real arbitrage when one exists and reports nothing when none exists"
+requirements:
+  - id: R1
+    statement: "render a list of opportunities on the page"
+    acceptance: { tier: 1, gate: "grep -q '<li' index.html" }
+  - id: R2
+    statement: "compute the cross-book edge for each opportunity"
+    acceptance: { tier: 1, gate: "node -e \"require('./detector.js')\"" }

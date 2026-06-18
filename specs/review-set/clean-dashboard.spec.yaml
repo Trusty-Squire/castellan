@@ -1,0 +1,25 @@
+# CLEAN CONTROL FIXTURE — the same product, but a HIGH floor. The headline value
+# is required to render, there's a designed empty state, a named real data source,
+# explicit visual hierarchy, and the detector's empty/error paths are gated. A good
+# reviewer should NOT flag the clairvoyance defects here (low false-positive rate).
+thesis: "a web dashboard that surfaces ranked cross-book arbitrage opportunities by size"
+stories:
+  - "A user opens the dashboard and sees current betting lines for several events across multiple books, each labeled with the book name and the offered odds"
+  - "A user sees arbitrage opportunities ranked by size, largest edge first, with each opportunity's edge percentage shown prominently next to it"
+  - "The detector finds a real arbitrage when one exists, and when none exists shows a designed empty state explaining that no edge is currently available"
+requirements:
+  - id: R1
+    statement: "each rendered opportunity displays its edge size as a percentage, and the list is sorted by edge descending"
+    acceptance: { tier: 1, gate: "grep -q 'data-edge' index.html && node test/sorted.test.js" }
+  - id: R2
+    statement: "the opportunities section renders a designed empty state (icon, message, context) when there are zero opportunities"
+    acceptance: { tier: 1, gate: "grep -qi 'no opportunities' index.html" }
+  - id: R3
+    statement: "lines come from the named live odds source (the-odds-api), not placeholder data, and each line shows its book name"
+    acceptance: { tier: 1, gate: "grep -q 'the-odds-api' src/feed.js && grep -q 'data-book' index.html" }
+  - id: R4
+    statement: "the page has an explicit visual hierarchy: a header, a primary opportunities panel, and a secondary lines panel, each in a styled card with a defined spacing scale"
+    acceptance: { tier: 1, gate: "grep -q 'class=\"card' index.html && test -f styles.css" }
+  - id: R5
+    statement: "the detector surfaces its own failures: a fetch/compute error renders a visible error banner rather than failing silently"
+    acceptance: { tier: 1, gate: "node test/detector-error.test.js" }
