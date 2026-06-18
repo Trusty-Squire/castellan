@@ -163,7 +163,33 @@ async function jsonStage<S extends z.ZodTypeAny>(
 // system. "It won't match NLTK / it lacks SQLite's test suite" is NOT a refutation; "it is
 // mathematically impossible in the stated budget/time" is.
 const FEASIBILITY_GUARD =
-  " REFUTE ONLY GENUINE INFEASIBILITY: the claim makes the project impossible, or a reasonable implementation could not pass the spec's OWN stated acceptance gates. Do NOT refute because it could be more robust/general/industrial, or fails to handle cases no gate requires. A simple, reasonable, hobby-grade build that satisfies the stated stories is NOT refutable. SCOPE: only judge claims about whether THE PRODUCT CAN BE BUILT and pass its gates. If the claim is not a buildability claim — e.g. a descriptive meta-claim about the spec's wording or contents ('the requirements mention X', 'the spec describes Y') — it is OUT OF SCOPE: return refuted:false. Refuting such a claim says nothing about feasibility and must never block the build. When in doubt, do NOT refute.";
+  " REFUTE ONLY GENUINE INFEASIBILITY: the claim makes the project impossible, or a reasonable implementation could not pass the spec's OWN stated acceptance gates. Do NOT refute because it could be more robust/general/industrial, or fails to handle cases no gate requires. A simple, reasonable, hobby-grade build that satisfies the stated stories is NOT refutable. SCOPE: only judge claims about whether THE PRODUCT CAN BE BUILT and pass its gates. If the claim is not a buildability claim — e.g. a descriptive meta-claim about the spec's wording or contents ('the requirements mention X', 'the spec describes Y') — it is OUT OF SCOPE: return refuted:false. Refuting such a claim says nothing about feasibility and must never block the build. When in doubt, do NOT refute." +
+  " POLARITY — THIS IS WHERE ADVERSARIES GET IT BACKWARDS: naming prior art, a formula, or real systems that SUCCESSFULLY do this is the OPPOSITE of a refutation. It PROVES the claim is buildable → you MUST return refuted:false. Set refuted:true ONLY when your evidence shows the build genuinely CANNOT succeed (a hard impossibility — physics, arithmetic, combinatorics — not 'could be better'). If your evidence reads as 'this is buildable', 'a practical build path exists', 'existing systems already do this', or 'matches the acceptance logic', that is refuted:false. Evidence that affirms feasibility can NEVER accompany refuted:true.";
+
+/**
+ * Polarity guard: a refutation whose evidence actually AFFIRMS buildability is the
+ * model getting the direction backwards (it cited prior art that SUCCEEDS, or a
+ * working formula, then ticked refuted:true). Such "refutations" must be discarded
+ * — naming systems that already do the thing proves it's buildable, it cannot
+ * block the build. These patterns appear only when the evidence argues FOR
+ * feasibility; genuine refutations ("10^160 states >> age of the universe") never
+ * match them.
+ */
+const BUILDABILITY_AFFIRMATIONS: RegExp[] = [
+  /\bbuildable\b/i,
+  /practical build path/i,
+  /rather than (an? )?infeasible/i,
+  /matching the (claim|acceptance|gate)/i,
+  /matches the (claim|acceptance)/i,
+  /demonstrates? (that )?(this|it) (is|can)/i,
+  /(already|routinely) (do|does|implement|perform)/i,
+  /\bis (clearly )?(buildable|feasible|doable)\b/i,
+  /existing (systems|practice|tooling) (already )?(do|implement|show)/i,
+];
+
+export function affirmsBuildability(evidence: string): boolean {
+  return BUILDABILITY_AFFIRMATIONS.some((re) => re.test(evidence));
+}
 
 export const LENSES: { id: string; instruction: string }[] = [
   {
@@ -309,7 +335,10 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         } catch {
           res = { refuted: false, evidence: "" };
         }
-        const discarded = res.refuted && res.evidence.trim().length < 10;
+        // Discard a refutation that is evidence-free OR whose evidence actually
+        // affirms buildability (the model reversed the polarity). Only an
+        // accountable, genuinely-infeasible refutation blocks the build.
+        const discarded = res.refuted && (res.evidence.trim().length < 10 || affirmsBuildability(res.evidence));
         verdict.lenses.push({ lens: lens.id, refuted: res.refuted, evidence: res.evidence, discarded });
         if (res.refuted && !discarded) verdict.refuted = true;
       }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveV2, specPreGate } from "../../src/contract/derive2.js";
+import { deriveV2, specPreGate, affirmsBuildability } from "../../src/contract/derive2.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { MockLlm } from "../../src/llm/mock.js";
 import { SquireError } from "../../src/errors.js";
@@ -118,6 +118,38 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     const c1 = r.claims.find((c) => c.id === "C1")!;
     expect(c1.lenses[0]!.discarded).toBe(true);
     expect(c1.refuted).toBe(false);
+  });
+
+  it("a refutation whose evidence AFFIRMS buildability is DISCARDED (polarity reversal — the clairvoyance bug)", async () => {
+    // The exact failure mode: refuted:true with evidence that says it's buildable.
+    const reversed = JSON.stringify({
+      refuted: true,
+      evidence:
+        "Prior art demonstrates this is buildable. Blackbird and Hummingbot compute cross-exchange arbitrage and only emit profitable opportunities, matching the claim's acceptance gate logic — a practical build path rather than an infeasible requirement.",
+    });
+    const llm = new MockLlm([
+      { text: decomposeOut },
+      { text: gatesOut },
+      { text: claimsOut },
+      { text: reversed }, // C1 feasibility lens: backwards
+      { text: lensOk }, // C1 prior-art lens: clean
+    ]);
+    const r = await deriveV2(base(llm));
+    expect(r.ok).toBe(true); // the build is NOT blocked by a backwards refutation
+    if (!r.ok) return;
+    const c1 = r.claims.find((c) => c.id === "C1")!;
+    expect(c1.lenses[0]!.discarded).toBe(true);
+    expect(c1.refuted).toBe(false);
+  });
+
+  it("affirmsBuildability flags backwards evidence but not a genuine refutation", () => {
+    expect(affirmsBuildability("Prior art demonstrates this is buildable")).toBe(true);
+    expect(affirmsBuildability("a practical build path exists, existing systems already do this")).toBe(true);
+    expect(affirmsBuildability("matching the claim's acceptance gate logic")).toBe(true);
+    // the real poker refutation must NOT be mistaken for an affirmation
+    expect(
+      affirmsBuildability("10^160 game states x 1ns/state >> age of the universe; real solvers (PioSOLVER, Pluribus) use abstraction + subgame solving"),
+    ).toBe(false);
   });
 
   it("free-form gates compile but are flagged in the readback", async () => {
