@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveV2, specPreGate, affirmsBuildability } from "../../src/contract/derive2.js";
+import { deriveV2, specPreGate, affirmsBuildability, groundGateRun } from "../../src/contract/derive2.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { MockLlm } from "../../src/llm/mock.js";
 import { SquireError } from "../../src/errors.js";
@@ -140,6 +140,14 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     const c1 = r.claims.find((c) => c.id === "C1")!;
     expect(c1.lenses[0]!.discarded).toBe(true);
     expect(c1.refuted).toBe(false);
+  });
+
+  it("groundGateRun rewrites bare python/pip to python3/pip3, leaving others intact", () => {
+    expect(groundGateRun("python - <<'PY'\nprint(1)\nPY")).toContain("python3 - <<'PY'");
+    expect(groundGateRun("pip install x")).toBe("pip3 install x");
+    expect(groundGateRun("python3 -m pytest")).toBe("python3 -m pytest"); // already grounded
+    expect(groundGateRun("pytest -q && rg foo")).toBe("pytest -q && rg foo"); // other tools untouched
+    expect(groundGateRun("./mypython.sh")).toBe("./mypython.sh"); // substring untouched
   });
 
   it("affirmsBuildability flags backwards evidence but not a genuine refutation", () => {

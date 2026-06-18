@@ -182,7 +182,34 @@ export async function buildRepoSurvey(workdir: string): Promise<string> {
   if (checks.length > 0) {
     lines.push("", "DETECTED CHECK COMMANDS:", ...checks.map((c) => `  ${c}`));
   }
+
+  // Ground gates in tools that ACTUALLY EXIST here — a gate that calls a missing
+  // command exits 127 and halts the build for no real reason. The gate-inferer is
+  // told to prefer present tools; `python` vs `python3` matters (many boxes lack
+  // the bare `python` alias).
+  const tools = await detectAvailableTools();
+  lines.push(
+    "",
+    "AVAILABLE TOOLS (gates MUST use only these interpreters/runners — present=yes):",
+    ...tools.map((t) => `  ${t.name}: ${t.present ? "yes" : "MISSING — do not use"}`),
+    "Prefer the present ones. Use `python3` (not `python`) unless `python` shows present.",
+  );
   return lines.join("\n");
+}
+
+/** Probe which common interpreters/test-runners exist, so gates only use present ones. */
+export async function detectAvailableTools(): Promise<{ name: string; present: boolean }[]> {
+  const names = ["python3", "python", "pytest", "node", "npm", "go", "cargo", "rg", "bash"];
+  return Promise.all(
+    names.map(async (name) => {
+      try {
+        const r = await execa("command", ["-v", name], { shell: true, reject: false });
+        return { name, present: r.exitCode === 0 };
+      } catch {
+        return { name, present: false };
+      }
+    }),
+  );
 }
 
 /** Detect test/lint/build commands from package.json scripts or a Makefile. */

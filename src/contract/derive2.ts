@@ -191,6 +191,18 @@ export function affirmsBuildability(evidence: string): boolean {
   return BUILDABILITY_AFFIRMATIONS.some((re) => re.test(evidence));
 }
 
+/**
+ * Ground a gate command in tools that exist: rewrite the bare `python`/`pip`
+ * interpreter to `python3`/`pip3`. Many environments lack the `python` alias, so a
+ * gate authored as `python - <<PY` exits 127 and halts the build for no real
+ * reason. Deterministic and source-agnostic — fixes spec-authored gates and
+ * inferred ones alike. Only touches the interpreter word, never `python3` (the
+ * negative lookahead) and never substrings inside other words.
+ */
+export function groundGateRun(run: string): string {
+  return run.replace(/\bpython\b(?!3)/g, "python3").replace(/\bpip\b(?!3)/g, "pip3");
+}
+
 export const LENSES: { id: string; instruction: string }[] = [
   {
     id: "feasibility-arithmetic",
@@ -298,6 +310,15 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         reasons: [`no objective gate could be inferred for node(s): ${ungated.join(", ")}`],
         remediations: ungated.map((node) => remediationFor(node)),
       };
+    }
+  }
+
+  // Ground every gate (spec-authored OR inferred) in tools that exist: bare
+  // `python`/`pip` → `python3`/`pip3`. A gate that calls a missing command exits
+  // 127 and halts the build for a non-reason (the clairvoyance build halt).
+  for (const [id, g] of gatesByNode) {
+    if ((g.type === "command" || g.type === "metric") && g.run) {
+      gatesByNode.set(id, { ...g, run: groundGateRun(g.run) });
     }
   }
 
