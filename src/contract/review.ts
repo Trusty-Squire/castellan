@@ -2,13 +2,17 @@ import { z } from "zod";
 import type { LlmClient } from "../llm/types.js";
 import type { Spec } from "./spec.js";
 import { tryParseJson } from "./derive.js";
+import { reviewPlan } from "../review/orchestrate.js";
+import type { ReviewDecision } from "../review/types.js";
 
 /**
- * The funnel's review lenses, borrowed from gstack's plan-eng-review and
- * plan-design-review. Two uses:
- *   L2 (reviewSpec): apply the lenses to the draft spec BEFORE building —
- *     surface the forks that need genuine human judgment / can't be objectively
- *     gated (these become open_questions), plus eng/design notes.
+ * The funnel's review lenses, borrowed from gstack's plan-* reviews. Two uses:
+ *   L2 (reviewSpec): NOW a thin adapter over the Phase-2 multi-reviewer pipeline
+ *     (src/review/orchestrate.ts → ceo/design/eng/dx). It maps the rich
+ *     PipelineResult back to the original {patches, open_questions} shape so
+ *     cli.ts/app.ts consumers need zero change: objective patches become gated
+ *     requirements, the single final gate (taste + user_challenge) becomes
+ *     open_questions.
  *   L4 (auditBuild): independent reviewers with NO build memory read the
  *     finished code against the spec and return polish recommendations.
  */
@@ -38,31 +42,33 @@ const SpecReviewSchema = z.object({
 });
 export type SpecReview = z.infer<typeof SpecReviewSchema>;
 
-const SPEC_REVIEW_SYSTEM = `You are ser's spec reviewer. You apply two lenses to a draft product spec, like a senior engineer and a senior designer reviewing a plan before code is written.
-ENGINEERING lens: ${ENG_LENS}.
-DESIGN lens: ${DESIGN_LENS}.
-
-Your job is to CLOSE GAPS, not to surface them. For every gap, missing requirement, unhandled edge case, or obvious design improvement you find, DECIDE THE SANE DEFAULT YOURSELF and emit it as a "patch": a new requirement statement plus a runnable shell gate that verifies it (exit 0 = pass). Prefer patching. A patch is right whenever a competent engineer would make the same call without asking — empty/loading/error states, input validation, a missing test, an obvious accessibility fix, a sensible limit. Make the decision; don't punt it.
-
-ONLY escalate to an open_question when the choice GENUINELY needs the user — reasonable people would choose differently AND no cheap automatic test settles it (a product/taste/risk tradeoff that's the user's to own). Mark blocking:true only if building the wrong way is costly to undo. Most reviews should have several patches and zero or one open_question.
-
-Every open_question WILL BE ASKED to the user as a multiple-choice pick, so for each one supply "options": 2-4 concrete candidate answers they can choose between (NOT vague directions — real, buildable choices, e.g. for risk limits: "Max 20% per position, stop-loss at -5%, 3 trades/day"). Put the sane default / your recommendation FIRST. Phrase "text" as a direct question.
-
-Each gate must be a real shell command that exits 0 on success (e.g. "grep -q 'aria-label' index.html", "test -f tests/empty-state.test.js && npm test -- empty-state"). Output ONLY JSON: {"patches":[{"statement":"…","gate":"…"}],"open_questions":[{"text":"…","options":["recommended answer","alternative"],"blocking":false}]}. Keep patches to the 1-6 highest-value gaps. Empty lists are fine.`;
-
+/**
+ * Adapter: run the full ceo/design/eng/dx pipeline, then collapse it to the
+ * legacy shape. Objective patches → gated requirements (the cli/tui push these as
+ * tier-1 checks); the single final gate (taste + user_challenge) → open_questions
+ * the human is asked. Visual patches are dropped here — they belong to the live
+ * audit-layer judge, not the spec-stage adapter. Degrades to empty on any failure.
+ */
 export async function reviewSpec(spec: Spec, llm: LlmClient, model: string): Promise<SpecReview> {
-  const user = [
-    `THESIS: ${spec.thesis}`,
-    `STORIES:\n${spec.stories.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}`,
-    `REQUIREMENTS:\n${spec.requirements
-      .map((r) => `  ${r.id} [tier ${r.acceptance.tier}${r.acceptance.gate ? " gated" : r.acceptance.artifact ? " artifact" : " UNGATED"}] ${r.statement}`)
-      .join("\n")}`,
-  ].join("\n\n");
-  const res = await llm.complete({ model, system: SPEC_REVIEW_SYSTEM, user, json: true, maxTokens: 3000 });
-  const parsed = tryParseJson(res.text);
-  if (!parsed.ok) return { patches: [], open_questions: [] };
-  const checked = SpecReviewSchema.safeParse(parsed.value);
+  const pipeline = await reviewPlan(spec, llm, model);
+  const patches = pipeline.patches
+    .filter((p) => p.kind === "objective")
+    .map((p) => ({ statement: p.statement, gate: p.gate }));
+  const open_questions = pipeline.finalGate.map((d) => ({
+    text: d.text,
+    options: orderedOptions(d),
+    // a user_challenge is always blocking — the plan and the reviewer both think
+    // the user's stated direction is wrong, so it must not slip through silently.
+    blocking: d.blocking || d.classification === "user_challenge",
+  }));
+  const checked = SpecReviewSchema.safeParse({ patches, open_questions });
   return checked.success ? checked.data : { patches: [], open_questions: [] };
+}
+
+/** Recommendation first (de-duped) so the cli/tui multiple-choice pick defaults to it. */
+function orderedOptions(d: ReviewDecision): string[] {
+  if (!d.recommendation) return d.options;
+  return [d.recommendation, ...d.options.filter((o) => o !== d.recommendation)];
 }
 
 // ---------- L4: audit the built code, independent of the builder ----------
