@@ -7,6 +7,7 @@ import {
   specPreGate,
   affirmsBuildability,
   groundGateRun,
+  tractableGateRun,
   isImplementationShapedDecomposition,
   productPlanningContract,
   trimSurveyForDecompose,
@@ -339,6 +340,23 @@ requirements:
     expect(groundGateRun("pytest -q && rg foo")).toBe("python3 -m pytest -q && rg foo");
     expect(groundGateRun("test -f x && pytest -q tests/test_x.py")).toBe("test -f x && python3 -m pytest -q tests/test_x.py");
     expect(groundGateRun("./mypython.sh")).toBe("./mypython.sh"); // substring untouched
+  });
+
+  it("tractableGateRun downgrades node-level e2e gates to a build floor (visual audit keeps the teeth)", () => {
+    for (const e2e of [
+      "npm run test:e2e -- tests/e2e/lines-dashboard.spec.ts",
+      "npm run e2e",
+      "npx playwright test",
+      "cypress run",
+    ]) {
+      const out = tractableGateRun(e2e);
+      expect(out).toContain("npm run build --if-present"); // tractable floor
+      expect(out).not.toMatch(/playwright|cypress|test:e2e/i); // the intractable harness is gone
+    }
+    // non-e2e gates pass through unchanged (just grounded) — no general bootstrap
+    expect(tractableGateRun("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
+    expect(tractableGateRun("npm test -- foo")).toBe("npm test -- foo");
+    expect(tractableGateRun("python -m pytest tests/x.py")).toContain("python3 -m pytest"); // still grounds tools
   });
 
   it("affirmsBuildability flags backwards evidence but not a genuine refutation", () => {

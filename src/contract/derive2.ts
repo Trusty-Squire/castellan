@@ -275,6 +275,28 @@ export function groundGateRun(run: string): string {
     .replace(/(^|[;&|(\n]\s*)pytest\b/g, "$1python3 -m pytest");
 }
 
+/** An end-to-end / browser-harness gate at the NODE level (intractable: a single
+ *  cheap node can't stand up Playwright/Cypress + a project-wide `test:e2e` script
+ *  from nothing). End-to-end is the VISUAL AUDIT's job, not a per-node gate. */
+const E2E_GATE = /\b(playwright|cypress|webdriver\.?io|puppeteer)\b|\bnpm run (test:e2e|e2e)\b|\btest:e2e\b/i;
+
+/** A tractable build floor: install deps if needed, then compile (no-op when there's
+ *  no build script). Something a single cheap node can actually pass. */
+const E2E_BUILD_FLOOR = "if [ ! -d node_modules ]; then npm install --no-fund --no-audit; fi && npm run build --if-present";
+
+/**
+ * Make a gate tractable for the cheap build loop: ground tools (python→python3),
+ * then DOWNGRADE any node-level e2e/browser gate to the build floor. We do NOT try
+ * to make e2e gates work per-node (a single node can't stand up Playwright + a
+ * project-wide harness) — the live visual audit carries the real end-to-end teeth,
+ * so end-to-end verification is relocated there. Non-e2e gates pass through
+ * unchanged (just grounded).
+ */
+export function tractableGateRun(run: string): string {
+  const grounded = groundGateRun(run);
+  return E2E_GATE.test(grounded) ? E2E_BUILD_FLOOR : grounded;
+}
+
 export const LENSES: { id: string; instruction: string }[] = [
   {
     id: "feasibility-arithmetic",
@@ -380,7 +402,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   });
 
   if (needsInference.length > 0) {
-    const inferSystem = `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`;
+    const inferSystem = `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). TRACTABILITY: a gate must be satisfiable by ONE cheap attempt from a fresh checkout using the AVAILABLE TOOLS in the survey. NEVER emit an end-to-end / browser gate (playwright, cypress, "npm run test:e2e"/"npm run e2e") or a project-wide npm script that may not exist — end-to-end is the visual audit's job. For UI nodes prefer "npm run build --if-present" + a grep/test -f check; for logic/data a unit test or node -e assertion. Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`;
     const inferUser = `NODES:\n${needsInference.map((n) => `${n.id}: ${n.brief}`).join("\n")}\n\nREPOSITORY SURVEY (use REAL commands found here):\n${survey}`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const inferred = await jsonStage(
@@ -434,7 +456,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   // 127 and halts the build for a non-reason (the clairvoyance build halt).
   for (const [id, g] of gatesByNode) {
     if ((g.type === "command" || g.type === "metric") && g.run) {
-      gatesByNode.set(id, { ...g, run: groundGateRun(g.run) });
+      gatesByNode.set(id, { ...g, run: tractableGateRun(g.run) });
     }
   }
 
@@ -565,11 +587,11 @@ export function buildDirectMission(input: DirectMissionInput): Mission {
 function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]): Gate {
   if (acceptance.tier === 4) return GateSchema.parse({ type: "human", artifact: acceptance.artifact!, soft: false });
   if (acceptance.tier >= 1 && acceptance.tier <= 2) {
-    return GateSchema.parse({
-      type: acceptance.tier === 1 ? "command" : "metric",
-      run: bootstrapGreenfieldNodeGate(groundGateRun(acceptance.gate!)),
-      soft: false,
-    });
+    // greenfield/rebuild path: bootstrap deps for non-e2e gates; e2e downgrades to
+    // the (already dep-installing) build floor.
+    const grounded = groundGateRun(acceptance.gate!);
+    const run = E2E_GATE.test(grounded) ? E2E_BUILD_FLOOR : bootstrapGreenfieldNodeGate(grounded);
+    return GateSchema.parse({ type: acceptance.tier === 1 ? "command" : "metric", run, soft: false });
   }
   if (acceptance.tier === 3) {
     return GateSchema.parse({
