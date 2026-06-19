@@ -106,33 +106,7 @@ describe("runMission", () => {
     expect(kinds).toContain("reset");
   });
 
-  it("runs a fresh targeted repair agent before escalating a failed gate", async () => {
-    const result = await run(oneNode, (id) => {
-      if (id === "fix:repair1") {
-        return {
-          steps: [
-            { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
-            { tool: "bash", args: { command: "bash check.sh" } },
-            { done: "small repair passed the gate" },
-          ],
-        };
-      }
-      return {
-        steps: [
-          { text: "missed the exact assertion" },
-          { done: "looks okay" },
-        ],
-      };
-    });
-    expect(result.completed).toBe(true);
-    expect(result.nodes[0]!.maxRung).toBe(1);
-    const kinds = readTrace(result.tracePath).map((e) => e.kind);
-    expect(kinds).toContain("repair_start");
-    expect(kinds).not.toContain("escalate");
-    expect(readFileSync(join(repo, "src", "target.ts"), "utf8")).toContain("v = 1");
-  });
-
-  it("escalates after targeted repairs are exhausted", async () => {
+  it("escalates a failed gate to a fresh rung-2 attempt (one retry concept: the ladder)", async () => {
     const result = await run(oneNode, (_id, rung) => {
       if (rung === 1) return { steps: [{ done: "still wrong" }] };
       return {
@@ -145,8 +119,9 @@ describe("runMission", () => {
     expect(result.completed).toBe(true);
     expect(result.nodes[0]!.maxRung).toBe(2);
     const kinds = readTrace(result.tracePath).map((e) => e.kind);
-    expect(kinds.filter((kind) => kind === "repair_start")).toHaveLength(2);
     expect(kinds).toContain("escalate");
+    // no in-rung repair: failure goes straight to a reset + fresh next rung
+    expect(kinds).not.toContain("repair_start");
   });
 
   it("resets after a failed attempt so a bad edit does not persist", async () => {

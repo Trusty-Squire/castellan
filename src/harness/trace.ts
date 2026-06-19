@@ -16,7 +16,6 @@ export const TRACE_KINDS = [
   "confabulation_flag",
   "gate",
   "judge_flag",
-  "repair_start",
   "checkpoint",
   "reset",
   "escalate",

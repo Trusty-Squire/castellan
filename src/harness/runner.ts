@@ -37,55 +37,6 @@ function gateCommandOf(node: MissionNode): string {
   return effectiveGate(node).run ?? "";
 }
 
-function buildGateRepairBrief(info: {
-  node: MissionNode;
-  gateCommand: string;
-  gateExitCode: number;
-  timedOut: boolean;
-  stdoutTail: string;
-  stderrTail: string;
-  reconcileViolations: string[];
-  changedFiles: string[];
-}): string {
-  const lines: string[] = [];
-  lines.push(`TARGETED REPAIR for node ${info.node.id}: ${info.node.brief}`);
-  lines.push("");
-  lines.push("The previous fresh attempt changed the current working tree, but the gate still failed.");
-  lines.push("Do not redesign or re-plan the node. Make the smallest source change that makes this exact gate pass.");
-  lines.push("Preserve useful existing changes in the working tree unless they directly cause the failure.");
-  lines.push("");
-  lines.push("Gate facts:");
-  lines.push(`- command: ${info.gateCommand}`);
-  lines.push(`- exit code: ${info.gateExitCode}${info.timedOut ? " (timed out)" : ""}`);
-  if (info.stdoutTail.trim()) {
-    lines.push("- stdout tail:");
-    lines.push(indentBlock(info.stdoutTail.trim(), "    "));
-  }
-  if (info.stderrTail.trim()) {
-    lines.push("- stderr tail:");
-    lines.push(indentBlock(info.stderrTail.trim(), "    "));
-  }
-  if (info.reconcileViolations.length > 0) {
-    lines.push("- reconcile violations:");
-    for (const v of info.reconcileViolations) lines.push(`    * ${v}`);
-  }
-  lines.push(
-    info.changedFiles.length > 0
-      ? `- files changed since last green checkpoint: ${info.changedFiles.join(", ")}`
-      : "- no files changed since last green checkpoint.",
-  );
-  lines.push("");
-  lines.push("Run the exact gate command yourself after the repair. Stop only when it exits 0.");
-  return lines.join("\n");
-}
-
-function indentBlock(text: string, pad: string): string {
-  return text
-    .split("\n")
-    .map((line) => pad + line)
-    .join("\n");
-}
-
 /**
  * Later nodes often refine a file created by an earlier node. The planner can
  * forget to list that writable file in context_globs, which leaves stronger
@@ -145,8 +96,6 @@ export interface RunMissionOptions {
   harnessMode?: "on" | "off";
   /** Tier-4 human-gate adjudicator (SPEC-v0.2 §4). Absent in unattended contexts. */
   adjudicate?: Adjudicator;
-  /** Fresh targeted repair sessions after a failed gate, before rung escalation. */
-  gateRepairAttempts?: number;
 }
 
 /**
@@ -157,7 +106,6 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
   const { mission, chains, engine, workdir, missionId, tracePath } = opts;
   const log = opts.log ?? (() => {});
   const gateTimeoutMs = opts.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS;
-  const gateRepairAttempts = opts.gateRepairAttempts ?? 2;
   const chainName = opts.chainNameOverride ?? mission.chain;
   const chain = resolveChain(chains, chainName);
 
@@ -397,213 +345,29 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         break;
       }
 
-      let finalGate = gate;
-      let finalRec = rec;
-      let finalChanged = changed;
-      let finalNodeBudgetHit = nodeBudgetHit;
-
-      // Targeted repair is for OBJECTIVE gate failures (a command/metric the
-      // implementation must satisfy). A human rejection or a judge flag must NOT
-      // be "repaired" in-rung: the repair brief is built from gate command/exit
-      // code, which is empty for a human gate, so the reviewer's reason is lost.
-      // Those escalate to the next rung instead, where FAILURE CONTEXT carries the
-      // verdict reason (success contract #4c).
-      const repairableGate = gate.gateType !== "human" && gate.gateType !== "judge";
-      if (!nodeBudgetHit && gateRepairAttempts > 0 && repairableGate) {
-        let repaired = false;
-        let repairGate = gate;
-        let repairRec = rec;
-        let repairChanged = changed;
-        let repairConsumed = consumed;
-        for (let repair = 1; repair <= gateRepairAttempts; repair++) {
-          trace.append("repair_start", {
-            nodeId: node.id,
-            rung: rung.rung,
-            payload: { repair, gateExitCode: repairGate.exitCode, gateCommand: repairGate.command },
-            costUsdSoFar: budget.globalSpent(),
-          });
-          log(`node(${node.id}): repair ${repair}/${gateRepairAttempts} after gate exit ${repairGate.exitCode}`);
-
-          const repairPack = packContext({
-            workdir,
-            globs: effectiveContextGlobs(node),
-            maxTokens: node.max_context_tokens,
-          });
-          trace.append("pack", {
-            nodeId: node.id,
-            rung: rung.rung,
-            payload: {
-              files: repairPack.files.map((f) => f.path),
-              truncated: repairPack.truncated,
-              droppedFiles: repairPack.droppedFiles,
-              estTokens: repairPack.estTokens,
-              repair,
-            },
-            costUsdSoFar: budget.globalSpent(),
-          });
-
-          const repairReq = {
-            systemPrompt: EXECUTOR_SYSTEM_PROMPT,
-            brief: buildGateRepairBrief({
-              node,
-              gateCommand: repairGate.command,
-              gateExitCode: repairGate.exitCode,
-              timedOut: repairGate.timedOut,
-              stdoutTail: repairGate.stdoutTail,
-              stderrTail: repairGate.stderrTail,
-              reconcileViolations: repairRec.violations,
-              changedFiles: repairChanged,
-            }),
-            files: repairPack.files,
-            cwd: workdir,
-            model: { slug: rung.model, apiKey: opts.apiKey, baseUrl: opts.baseUrl },
-            tools: { blastRadius: node.blast_radius },
-            maxTokens: node.max_context_tokens,
-            nodeId: `${node.id}:repair${repair}`,
-            rung: rung.rung,
-            doneCheck: gateCommandOf(node),
-          };
-
-          const repairResult = await consumeAttempt(engine.runAttempt(repairReq), {
-            trace,
-            nodeId: node.id,
-            rungModel: rung.model,
-            rungNumber: rung.rung,
-            budget,
-          });
-          repairConsumed = repairResult;
-          outcome.blastDenied += repairResult.record.blastDeniedCount;
-          outcome.costUsd = budget.nodeSpent();
-
-          if (repairResult.globalBudgetExceeded) {
-            trace.append("budget_stop", {
-              nodeId: node.id,
-              rung: rung.rung,
-              payload: { scope: "global", globalUsd: budget.globalSpent(), capUsd: mission.budget_usd },
-              costUsdSoFar: budget.globalSpent(),
-            });
-            halted = true;
-            haltReason = `global budget cap $${mission.budget_usd} exceeded`;
-            break;
-          }
-
-          repairChanged = await changedFilesSince(workdir, lastGreen);
-          repairRec = reconcile({
-            blastRadius: node.blast_radius,
-            doneCheck: gateCommandOf(node),
-            changedFiles: repairChanged,
-            record: repairResult.record,
-          });
-          trace.append("reconcile", {
-            nodeId: node.id,
-            rung: rung.rung,
-            payload: {
-              violations: repairRec.violations,
-              missingFromDiff: repairRec.missingFromDiff,
-              outOfRadius: repairRec.outOfRadius,
-              repair,
-            },
-            costUsdSoFar: budget.globalSpent(),
-          });
-          if (repairRec.confabulation) {
-            outcome.confabulations += 1;
-            trace.append("confabulation_flag", {
-              nodeId: node.id,
-              rung: rung.rung,
-              payload: { finalMessage: repairResult.record.finalMessage.slice(0, 500), repair },
-              costUsdSoFar: budget.globalSpent(),
-            });
-          }
-
-          repairGate = await executeGate(effectiveGate(node), {
-            cwd: workdir,
-            nodeId: node.id,
-            brief: node.brief,
-            timeoutMs: gateTimeoutMs,
-            adjudicate: opts.adjudicate,
-          });
-          outcome.gateExitCode = repairGate.exitCode;
-          trace.append("gate", {
-            nodeId: node.id,
-            rung: rung.rung,
-            payload: {
-              command: repairGate.command,
-              gateType: repairGate.gateType ?? "command",
-              exitCode: repairGate.exitCode,
-              passed: repairGate.passed,
-              timedOut: repairGate.timedOut,
-              stdoutTail: repairGate.stdoutTail,
-              stderrTail: repairGate.stderrTail,
-              verdict: repairGate.verdict ?? null,
-              repair,
-            },
-            costUsdSoFar: budget.globalSpent(),
-          });
-          if (repairGate.judgeFlag) {
-            trace.append("judge_flag", {
-              nodeId: node.id,
-              rung: rung.rung,
-              payload: { flag: repairGate.judgeFlag, repair },
-              costUsdSoFar: budget.globalSpent(),
-            });
-          }
-
-          const repairPass = repairGate.passed && repairRec.violations.length === 0;
-          if (repairPass) {
-            const sha = await commitNode(workdir, node.id);
-            lastGreen = sha;
-            committed.add(node.id);
-            outcome.passed = true;
-            trace.append("checkpoint", {
-              nodeId: node.id,
-              rung: rung.rung,
-              payload: { sha, repair },
-              costUsdSoFar: budget.globalSpent(),
-            });
-            trace.append("node_pass", {
-              nodeId: node.id,
-              rung: rung.rung,
-              payload: repairResult.nodeBudgetExceeded
-                ? { repair, over_budget_committed: true, nodeUsd: budget.nodeSpent(), capUsd: node.budget_usd * scale }
-                : { repair },
-              costUsdSoFar: budget.globalSpent(),
-            });
-            log(`node(${node.id}): pass (rung ${rung.rung}, repair ${repair})`);
-            repaired = true;
-            break;
-          }
-
-          if (repairResult.nodeBudgetExceeded) break;
-        }
-        if (halted || repaired) break;
-        finalGate = repairGate;
-        finalRec = repairRec;
-        finalChanged = repairChanged;
-        finalNodeBudgetHit = repairConsumed.nodeBudgetExceeded;
-      }
 
       // Failure: capture facts for the next rung's FAILURE CONTEXT, then fail.
       priorDiff = await diffSince(workdir, lastGreen);
       failure = {
-        gateCommand: finalGate.command,
-        exitCode: finalGate.exitCode,
-        timedOut: finalGate.timedOut,
-        stderrTail: finalGate.stderrTail,
-        reconcileViolations: finalRec.violations,
-        confabulation: finalRec.confabulation,
-        changedFiles: finalChanged,
+        gateCommand: gate.command,
+        exitCode: gate.exitCode,
+        timedOut: gate.timedOut,
+        stderrTail: gate.stderrTail,
+        reconcileViolations: rec.violations,
+        confabulation: rec.confabulation,
+        changedFiles: changed,
       };
       trace.append("node_fail", {
         nodeId: node.id,
         rung: rung.rung,
-        payload: { gateExitCode: finalGate.exitCode, reason: finalNodeBudgetHit ? "node_budget" : "gate_or_reconcile" },
+        payload: { gateExitCode: gate.exitCode, reason: nodeBudgetHit ? "node_budget" : "gate_or_reconcile" },
         costUsdSoFar: budget.globalSpent(),
       });
-      log(`node(${node.id}): fail (rung ${rung.rung}, gate exit ${finalGate.exitCode})`);
+      log(`node(${node.id}): fail (rung ${rung.rung}, gate exit ${gate.exitCode})`);
 
       // The node FAILED its gate. If it also burned its per-node budget, stop
       // escalating — the next rung would only spend more without a result.
-      if (finalNodeBudgetHit) {
+      if (nodeBudgetHit) {
         break;
       }
       const isLastRung = rung.rung === rungs[rungs.length - 1]!.rung;
