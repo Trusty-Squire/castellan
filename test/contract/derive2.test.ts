@@ -8,6 +8,7 @@ import {
   affirmsBuildability,
   groundGateRun,
   tractableGateRun,
+  stripCaseFilters,
   isImplementationShapedDecomposition,
   productPlanningContract,
   trimSurveyForDecompose,
@@ -357,6 +358,22 @@ requirements:
     expect(tractableGateRun("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
     expect(tractableGateRun("npm test -- foo")).toBe("npm test -- foo");
     expect(tractableGateRun("python -m pytest tests/x.py")).toContain("python3 -m pytest"); // still grounds tools
+  });
+
+  it("stripCaseFilters drops hallucinated/fragile named-case filters so the gate runs the test file", () => {
+    // the observed halt: `--case` is no runner's flag → exits non-zero before any test runs
+    expect(stripCaseFilters("npm test -- --run tests/odds.test.ts --case='normalizes two books'")).toBe(
+      "npm test -- --run tests/odds.test.ts",
+    );
+    // long-form variants + value forms (=quoted, =bare, space-quoted)
+    expect(stripCaseFilters("vitest run x.test.ts --grep='ranks by size'")).toBe("vitest run x.test.ts");
+    expect(stripCaseFilters("npm test -- --testNamePattern 'edge cases'")).toBe("npm test --");
+    expect(stripCaseFilters("npm test -- --name=foo")).toBe("npm test --");
+    // grounding applies it end-to-end (spec-authored gates flow through groundGateRun)
+    expect(groundGateRun("npm test -- --run a.test.ts --case='x'")).toBe("npm test -- --run a.test.ts");
+    // single-char flags left alone — too collision-prone (this is a typecheck, not a filter)
+    expect(stripCaseFilters("tsc -t es2020 --noEmit")).toBe("tsc -t es2020 --noEmit");
+    expect(stripCaseFilters("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
   });
 
   it("affirmsBuildability flags backwards evidence but not a genuine refutation", () => {

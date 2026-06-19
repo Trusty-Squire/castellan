@@ -269,10 +269,31 @@ export function affirmsBuildability(evidence: string): boolean {
  * negative lookahead) and never substrings inside other words.
  */
 export function groundGateRun(run: string): string {
-  return run
-    .replace(/\bpython\b(?!3)/g, "python3")
-    .replace(/\bpip\b(?!3)/g, "pip3")
-    .replace(/(^|[;&|(\n]\s*)pytest\b/g, "$1python3 -m pytest");
+  return stripCaseFilters(
+    run
+      .replace(/\bpython\b(?!3)/g, "python3")
+      .replace(/\bpip\b(?!3)/g, "pip3")
+      .replace(/(^|[;&|(\n]\s*)pytest\b/g, "$1python3 -m pytest"),
+  );
+}
+
+/**
+ * Long-form "filter to a named test case" flags. A test gate should run the
+ * whole test FILE — the file's assertions ARE the check; filtering to one named
+ * case is fragile (the name must match the author's invented string exactly) and
+ * buys no extra safety. Worse, the cheap authoring layer hallucinates flags that
+ * don't exist in any runner (`--case` is not a vitest/jest/pytest flag — it exits
+ * non-zero on the bad argument before a single test runs, halting the build for
+ * nothing). We strip these long-form filters and their value, keeping the
+ * file-level run. Single-char flags (`-t`, `-g`, `-k`) are left alone: too
+ * collision-prone to strip safely (`tsc -t es2020` is not a test filter).
+ */
+const CASE_FILTER =
+  /\s--(?:case|grep|name|scenario|test-?case|test-?name-?pattern|testNamePattern)(?:=|\s+)(?:'[^']*'|"[^"]*"|\S+)/gi;
+
+/** Drop hallucinated/fragile named-case filter flags so the gate runs the test file. */
+export function stripCaseFilters(run: string): string {
+  return run.replace(CASE_FILTER, "");
 }
 
 /** An end-to-end / browser-harness gate at the NODE level (intractable: a single
