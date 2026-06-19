@@ -229,37 +229,6 @@ requirements:
     expect(llm.calls[1]!.user).toContain("R2");
   });
 
-  it("fast-paths greenfield interactive-app specs directly into mission nodes", async () => {
-    const spec = parseSpec(`
-thesis: mystical fortune app
-stories:
-  - user sees tarot and tea readings
-requirements:
-  - id: R1
-    statement: the first viewport shows the headline value and tarot plus tea readings
-    acceptance: { tier: 1, gate: "npm test -- tarot" }
-  - id: R2
-    statement: tea flow
-    acceptance: { tier: 1, gate: "npm test -- tea" }
-`);
-    const llm = new MockLlm([]);
-    const r = await deriveV2({
-      ...base(llm),
-      goal: undefined,
-      spec,
-    });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.mission.nodes.map((n) => n.id)).toEqual(["r1", "r2"]);
-    expect(r.mission.nodes[1]!.deps).toEqual(["r1"]);
-    expect(r.mission.nodes[0]!.gate!.run).toContain("npm install --no-fund --no-audit");
-    expect(r.mission.nodes[0]!.gate!.run).toContain("npm run build");
-    expect(r.mission.nodes[0]!.gate!.run).toContain("headline-value");
-    expect(r.mission.nodes[0]!.gate!.run).not.toContain("scripts/assert");
-    expect(llm.calls).toHaveLength(0);
-    expect(r.readback).toContain("fast-path");
-  });
-
   it("builds a focused direct mission from raised delta items without LLM planning", () => {
     const mission = buildDirectMission({
       thesis: "mystical fortune app",
@@ -273,7 +242,11 @@ requirements:
     });
     expect(mission.nodes.map((n) => n.id)).toEqual(["d1", "d2"]);
     expect(mission.nodes[1]!.deps).toEqual(["d1"]);
-    expect(mission.nodes[0]!.gate!.run).toContain("headline-value");
+    // a delta item without an explicit gate falls back to a generic bootstrapped
+    // npm test gate — no per-demo grep heuristics
+    expect(mission.nodes[0]!.gate!.run).toContain("npm install --no-fund --no-audit");
+    expect(mission.nodes[0]!.gate!.run).toContain("npm test -- --run");
+    expect(mission.nodes[0]!.gate!.run).not.toContain("headline-value");
     expect(mission.nodes[1]!.gate).toMatchObject({ type: "command", run: expect.stringContaining("npm install --no-fund --no-audit") });
   });
 

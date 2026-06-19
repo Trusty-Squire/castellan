@@ -204,19 +204,6 @@ export function trimSurveyForDecompose(survey: string, text: string): string {
   return survey.length > 4000 ? survey.slice(0, 4000) : survey;
 }
 
-function repoFileCountFromSurvey(survey: string): number | null {
-  const match = survey.match(/FILES \((\d+)\):/);
-  if (!match) return null;
-  const count = Number(match[1]);
-  return Number.isFinite(count) ? count : null;
-}
-
-function shouldUseGreenfieldSpecFastPath(spec: Spec, survey: string): boolean {
-  if (!isInteractiveAppIntent(`${spec.thesis}\n${spec.stories.join("\n")}`)) return false;
-  const files = repoFileCountFromSurvey(survey);
-  return files !== null && files <= 5;
-}
-
 // --- LLM stage helper: one schema-retry, refusal on second failure ---
 
 /** Token + reported-cost accumulator threaded through every pipeline stage. */
@@ -352,19 +339,6 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     ? `${input.spec.thesis}\n${input.spec.stories.join("\n")}\n${input.spec.requirements.map((r) => r.statement).join("\n")}`
     : input.goal!;
   const decomposeSurvey = trimSurveyForDecompose(survey, productText);
-
-  if (input.spec && shouldUseGreenfieldSpecFastPath(input.spec, survey)) {
-    const mission = buildGreenfieldSpecMission(input.spec, input);
-    return {
-      ok: true,
-      mission,
-      claims: [],
-      freeformGates: [],
-      readback: `${renderReadback(mission, [], [])}\n  fast-path: greenfield interactive-app spec compiled directly to mission nodes`,
-      inTokens: usage.in,
-      outTokens: usage.out,
-    };
-  }
 
   // 2. decompose
   const coverageRule = input.spec
@@ -582,31 +556,6 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   };
 }
 
-function buildGreenfieldSpecMission(spec: Spec, input: DeriveV2Input): Mission {
-  const budgetPerNode = Math.max(0.01, Number((input.budgetUsd / spec.requirements.length).toFixed(2)));
-  const nodes = spec.requirements.map((req, index) => {
-    const gate = primitiveGreenfieldGate(req.statement, req.acceptance);
-    const nodeId = req.id.toLowerCase();
-    return {
-      id: nodeId,
-      brief: req.statement,
-      deps: index === 0 ? [] : [spec.requirements[index - 1]!.id.toLowerCase()],
-      context_globs: ["**/*"],
-      blast_radius: ["**/*"],
-      gate,
-      budget_usd: budgetPerNode,
-    };
-  });
-  return MissionSchema.parse({
-    goal: spec.thesis,
-    budget_usd: input.budgetUsd,
-    chain: input.chainName,
-    workdir: ".",
-    max_human_checks: input.maxHumanChecks ?? 3,
-    nodes,
-  });
-}
-
 export function buildDirectMission(input: DirectMissionInput): Mission {
   if (input.items.length === 0) {
     throw new SquireError("SPEC_FAST_PATH_INVALID", "direct mission requires at least one item");
@@ -614,7 +563,7 @@ export function buildDirectMission(input: DirectMissionInput): Mission {
   const budgetPerNode = Math.max(0.01, Number((input.budgetUsd / input.items.length).toFixed(2)));
   const prefix = input.idPrefix ?? "d";
   const nodes = input.items.map((item, index) => {
-    const gate = item.acceptance ? acceptanceToGate(item.acceptance) : primitiveGreenfieldGate(item.statement, { tier: 1, gate: "npm test -- --run" });
+    const gate = acceptanceToGate(item.acceptance ?? { tier: 1, gate: "npm test -- --run" });
     const nodeId = `${prefix}${index + 1}`;
     return {
       id: nodeId,
@@ -634,54 +583,6 @@ export function buildDirectMission(input: DirectMissionInput): Mission {
     max_human_checks: input.maxHumanChecks ?? 3,
     nodes,
   });
-}
-
-function primitiveGreenfieldGate(statement: string, acceptance: Spec["requirements"][number]["acceptance"]): Gate {
-  if (acceptance.tier === 4) return GateSchema.parse({ type: "human", artifact: acceptance.artifact!, soft: false });
-  if (acceptance.tier === 3) {
-    return GateSchema.parse({
-      type: "judge",
-      artifact: acceptance.artifact ?? "build/**",
-      soft: true,
-      judge: { model: "pinned", rubric: acceptance.gate ?? "manual rubric", votes: 3 },
-    });
-  }
-  if (acceptance.tier === 0) {
-    throw new SquireError("SPEC_FAST_PATH_INVALID", "greenfield fast-path requires anchored requirements");
-  }
-  const lower = statement.toLowerCase();
-  const parts: string[] = [];
-  if (/\b(first viewport|headline|visual shell|brand|theme|mobile|layout|selector|routes?|mode|options?|flow|reading result|readingresult|history|persistence|scan strip|data-testid)\b/.test(lower)) {
-    parts.push("npm run build");
-  }
-  if (/\b(tarot|tea|constellation|fortune|reading|state|engine|safety|history|mobile|selector|route)\b/.test(lower)) {
-    parts.push("npm test -- --run");
-  }
-  const grepChecks = primitiveGreenfieldGreps(statement);
-  if (grepChecks.length > 0) parts.push(...grepChecks);
-  if (parts.length === 0) parts.push("npm test -- --run");
-  return GateSchema.parse({ type: "command", run: bootstrapGreenfieldNodeGate(parts.join(" && ")), soft: false });
-}
-
-function primitiveGreenfieldGreps(statement: string): string[] {
-  const lower = statement.toLowerCase();
-  const checks: string[] = [];
-  if (/\bheadline|first viewport|headline-value\b/.test(lower)) {
-    checks.push("grep -R \"data-testid=['\\\"]headline-value\" -n . >/dev/null");
-    checks.push("grep -R -Ei \"tarot\" . >/dev/null");
-    checks.push("grep -R -Ei \"tea[- ]?leaves|tea[- ]?leaf\" . >/dev/null");
-    checks.push("grep -R -Ei \"constellations?\" . >/dev/null");
-  }
-  if (/\bscan strip|reading-key-values|compact scan\b/.test(lower)) {
-    checks.push("grep -R \"data-testid=['\\\"]reading-key-values\" -n . >/dev/null");
-  }
-  if (/\bplaceholder|lorem|fake demo|duplicate-row|fake rows\b/.test(lower)) {
-    checks.push("! grep -R -Ei \"lorem|ipsum|foo|bar|A vs B|sample fortune|placeholder fortune|123\" src app pages public index.html 2>/dev/null");
-  }
-  if (/\bselected symbols|cited symbols|card names|named symbols|selected factors\b/.test(lower)) {
-    checks.push("grep -R -Ei \"card name|selected symbol|cited symbol|selected factor|data-testid=['\\\"]card-name|data-testid=['\\\"]cited-symbol\" . >/dev/null");
-  }
-  return checks;
 }
 
 function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]): Gate {
