@@ -2,16 +2,12 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
 import {
   deriveV2,
   specPreGate,
   affirmsBuildability,
   classifyProductIntent,
   groundGateRun,
-  hardenGeneratedGateForNode,
-  hardenIndexGateForNode,
-  hardenOpportunitiesGateForNode,
   isImplementationShapedDecomposition,
   productPlanningContract,
   trimSurveyForDecompose,
@@ -369,70 +365,6 @@ requirements:
     expect(groundGateRun("pytest -q && rg foo")).toBe("python3 -m pytest -q && rg foo");
     expect(groundGateRun("test -f x && pytest -q tests/test_x.py")).toBe("test -f x && python3 -m pytest -q tests/test_x.py");
     expect(groundGateRun("./mypython.sh")).toBe("./mypython.sh"); // substring untouched
-  });
-
-  it("hardens sports-betting data.js gates to require event object shape", () => {
-    const gate = hardenGeneratedGateForNode(
-      {
-        brief: "Create data.js with sports betting events, outcomes, books, and odds",
-        blast_radius: ["data.js"],
-      },
-      { type: "command", run: "node -e \"const d=require('./data.js');process.exit(Array.isArray(d)?0:1)\"", soft: false },
-    );
-
-    expect(gate.run).toContain("e.books");
-    writeFileSync(join(workdir, "data.js"), "module.exports = ['not an event object'];");
-    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).toThrow();
-
-    writeFileSync(
-      join(workdir, "data.js"),
-      "module.exports = [{id:'a',outcomes:['A','B'],books:[{name:'x',odds:[2.1,2.1]}]},{id:'b',outcomes:['C','D'],books:[{name:'y',odds:[2.5,2.5]}]},{id:'c',outcomes:['E','F'],books:[{name:'z',odds:[1.8,2.4]}]}];",
-    );
-    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).not.toThrow();
-  });
-
-  it("hardens findArbitrage gates to use valid cross-book fixtures", () => {
-    const node = {
-      brief: "Implement opportunities.js with findArbitrage(events) for cross-book arbitrage",
-      blast_radius: ["opportunities.js"],
-    };
-    const gate = hardenOpportunitiesGateForNode(node, {
-      type: "command",
-      run: "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'g1',outcomes:['A','B'],books:[{name:'x',odds:[2.1,2.1]}]}]);process.exit(o.length>=1?0:1)\"",
-      soft: false,
-    });
-
-    expect(gate.run).toContain("{name:'x',odds:[2.1,1.8]}");
-    expect(gate.run).toContain("{name:'y',odds:[1.8,2.1]}");
-    expect(gate.run).not.toContain("odds:[2.1,2.1]}]}]");
-  });
-
-  it("hardens sports-betting index gates to require a browser-populated dashboard", () => {
-    const node = {
-      brief: "Create index.html wired to the generated scripts",
-      blast_radius: ["index.html"],
-    };
-    const gate = hardenIndexGateForNode(node, {
-      type: "command",
-      run: "test -f data.js && grep -q 'id=\"lines\"' index.html && grep -q 'id=\"opportunities\"' index.html && grep -q 'opportunities.js' index.html && grep -q 'render.js' index.html",
-      soft: false,
-    });
-
-    expect(gate.run).toContain("vm.runInContext");
-
-    writeFileSync(join(workdir, "data.js"), "const events=[{id:'g',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]}];module.exports=events;");
-    writeFileSync(join(workdir, "opportunities.js"), "function findArbitrage(){return [{eventId:'g',size:0.05}]};module.exports={findArbitrage};");
-    writeFileSync(join(workdir, "render.js"), "function renderLines(){return '<tr><td>g</td></tr>'};function renderOpportunities(){return '<li>5%</li>'};module.exports={renderLines,renderOpportunities};");
-    writeFileSync(
-      join(workdir, "index.html"),
-      '<div id="lines"></div><div id="opportunities"></div><script src="data.js"></script><script src="opportunities.js"></script><script src="render.js"></script><script>window.addEventListener("DOMContentLoaded",()=>{document.getElementById("lines").innerHTML=renderLines(events);document.getElementById("opportunities").innerHTML=renderOpportunities(findArbitrage(events));});</script>',
-    );
-    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).toThrow();
-
-    writeFileSync(join(workdir, "data.js"), "const events=[{id:'g',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]}];if(typeof module!=='undefined')module.exports=events;if(typeof window!=='undefined')window.events=events;");
-    writeFileSync(join(workdir, "opportunities.js"), "function findArbitrage(){return [{eventId:'g',size:0.05}]};if(typeof module!=='undefined')module.exports={findArbitrage};if(typeof window!=='undefined')window.findArbitrage=findArbitrage;");
-    writeFileSync(join(workdir, "render.js"), "function renderLines(){return '<tr><td>g</td></tr>'};function renderOpportunities(){return '<li>5%</li>'};if(typeof module!=='undefined')module.exports={renderLines,renderOpportunities};if(typeof window!=='undefined'){window.renderLines=renderLines;window.renderOpportunities=renderOpportunities;}");
-    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).not.toThrow();
   });
 
   it("affirmsBuildability flags backwards evidence but not a genuine refutation", () => {

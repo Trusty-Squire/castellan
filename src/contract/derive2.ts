@@ -483,14 +483,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   // 127 and halts the build for a non-reason (the clairvoyance build halt).
   for (const [id, g] of gatesByNode) {
     if ((g.type === "command" || g.type === "metric") && g.run) {
-      const node = decomposed.nodes.find((n) => n.id === id);
-      const grounded = { ...g, run: groundGateRun(g.run) };
-      gatesByNode.set(
-        id,
-        node
-          ? hardenIndexGateForNode(node, hardenOpportunitiesGateForNode(node, hardenGeneratedGateForNode(node, grounded)))
-          : grounded,
-      );
+      gatesByNode.set(id, { ...g, run: groundGateRun(g.run) });
     }
   }
 
@@ -747,91 +740,6 @@ function remediationFor(id: string): { requirement: string; options: [string, st
       `own: insert a tier-4 human checkpoint (counted against max_human_checks)`,
     ],
   };
-}
-
-export function hardenGeneratedGateForNode(
-  node: { brief: string; blast_radius: string[] },
-  gate: Gate,
-): Gate {
-  if ((gate.type !== "command" && gate.type !== "metric") || !gate.run) return gate;
-  if (!isSportsBettingDataNode(node, gate.run)) return gate;
-  return {
-    ...gate,
-    run:
-      "node -e \"const d=require('./data.js');const ev=d.events||d.EVENTS||d;const ok=Array.isArray(ev)&&ev.length>=3&&ev.every(e=>e&&typeof e==='object'&&!Array.isArray(e)&&('id' in e)&&Array.isArray(e.outcomes)&&e.outcomes.length>=2&&Array.isArray(e.books)&&e.books.length>=1&&e.books.every(b=>b&&typeof b.name==='string'&&Array.isArray(b.odds)&&b.odds.length===e.outcomes.length&&b.odds.every(o=>typeof o==='number'&&o>1)));process.exit(ok?0:1)\"",
-  };
-}
-
-export function hardenOpportunitiesGateForNode(
-  node: { brief: string; blast_radius: string[] },
-  gate: Gate,
-): Gate {
-  if ((gate.type !== "command" && gate.type !== "metric") || !gate.run) return gate;
-  if (!isFindArbitrageNode(node, gate.run)) return gate;
-  const positive =
-    "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'g1',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]}]);process.exit(o.length>=1&&typeof o[0].size==='number'&&o[0].size>0?0:1)\"";
-  const negative =
-    "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'g',outcomes:['A','B'],books:[{name:'x',odds:[1.8,1.9]},{name:'y',odds:[1.85,1.85]}]}]);process.exit(o.length===0?0:1)\"";
-  const sorted =
-    "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'a',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]},{id:'b',outcomes:['C','D'],books:[{name:'m',odds:[2.5,1.7]},{name:'n',odds:[1.7,2.5]}]}]);process.exit(o.length>=2&&o[0].size>=o[1].size?0:1)\"";
-  const run = /o\.length===0/.test(gate.run)
-    ? negative
-    : /o\[0\]\.size\s*>=\s*o\[1\]\.size/.test(gate.run)
-      ? sorted
-      : positive;
-  return { ...gate, run };
-}
-
-export function hardenIndexGateForNode(
-  node: { brief: string; blast_radius: string[] },
-  gate: Gate,
-): Gate {
-  if ((gate.type !== "command" && gate.type !== "metric") || !gate.run) return gate;
-  if (!isSportsBettingIndexNode(node, gate.run)) return gate;
-  return {
-    ...gate,
-    run: `node -e ${shellQuoteForCommand(browserSmokeScript())}`,
-  };
-}
-
-function isSportsBettingDataNode(node: { brief: string; blast_radius: string[] }, run: string): boolean {
-  const writesData = node.blast_radius.includes("data.js") || /require\(['"]\.\/data\.js['"]\)/.test(run);
-  if (!writesData) return false;
-  const brief = node.brief.toLowerCase();
-  return brief.includes("event") && brief.includes("book") && brief.includes("odds");
-}
-
-function isFindArbitrageNode(node: { brief: string; blast_radius: string[] }, run: string): boolean {
-  const writesOpportunities = node.blast_radius.includes("opportunities.js") || /require\(['"]\.\/opportunities\.js['"]\)/.test(run);
-  if (!writesOpportunities) return false;
-  return /findArbitrage/.test(node.brief) || /findArbitrage/.test(run);
-}
-
-function isSportsBettingIndexNode(node: { brief: string; blast_radius: string[] }, run: string): boolean {
-  const writesIndex = node.blast_radius.includes("index.html") || /\bindex\.html\b/.test(run);
-  if (!writesIndex) return false;
-  const text = `${node.brief}\n${run}`.toLowerCase();
-  return text.includes("opportunities.js") && text.includes("render.js");
-}
-
-function browserSmokeScript(): string {
-  return [
-    "const fs=require('fs'),vm=require('vm');",
-    "const html=fs.readFileSync('index.html','utf8');",
-    "for(const s of ['id=\"lines\"','id=\"opportunities\"','opportunities.js','render.js']) if(!html.includes(s)) process.exit(1);",
-    "const context={console,elems:{},__ready:null};",
-    "context.window=context;context.globalThis=context;",
-    "context.addEventListener=(name,fn)=>{if(name==='DOMContentLoaded') context.__ready=fn;};",
-    "context.document={getElementById:(id)=>context.elems[id]||(context.elems[id]={innerHTML:''})};",
-    "vm.createContext(context);",
-    "for(const f of ['data.js','opportunities.js','render.js']) vm.runInContext(fs.readFileSync(f,'utf8'),context,{filename:f});",
-    "const inline=[...html.matchAll(/<script(?![^>]*src=)[^>]*>([\\s\\S]*?)<\\/script>/gi)].map(m=>m[1]).join('\\n');",
-    "if(inline.trim()) vm.runInContext(inline,context,{filename:'index-inline.js'});",
-    "if(typeof context.__ready==='function') context.__ready();",
-    "const lines=context.elems.lines&&context.elems.lines.innerHTML||'';",
-    "const opps=context.elems.opportunities&&context.elems.opportunities.innerHTML||'';",
-    "process.exit(/<tr/i.test(lines)&&/<li/i.test(opps)?0:1);",
-  ].join("");
 }
 
 function shellQuoteForCommand(s: string): string {
