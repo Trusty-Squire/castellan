@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as readline from "node:readline/promises";
 import { makeStyler, colorsEnabled, type Styler } from "../style.js";
+import { applyReviewPatches, visualAuditSummary, visualBlockChange } from "../funnel.js";
 import { LAYERS, type Layer, wrapText } from "./paint.js";
 
 type Brief = import("../contract/ingest.js").OutcomesBrief;
@@ -238,13 +239,10 @@ async function specLayer(c: Ctx): Promise<boolean> {
   const spec = withFrontendFloorStories(ideaToSpec(c.sess.prompt, idea, resolutions));
   const review = await spin(c, "running the eng + design review", () => reviewSpec(spec, c.llm, c.premium));
   // ser closes obvious gaps himself — each becomes a new gated requirement.
-  let rn = spec.requirements.length;
-  for (const p of review.patches) {
-    spec.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
-  }
-  if (review.patches.length) {
-    out("\n  " + s.green(`i closed ${review.patches.length} obvious gap${review.patches.length > 1 ? "s" : ""} myself`) + s.gray(" (each is now a check):"));
-    review.patches.forEach((p) => para(s.gray("    + "), p.statement));
+  const { added: addedReqs } = applyReviewPatches(spec, review.patches);
+  if (addedReqs.length) {
+    out("\n  " + s.green(`i closed ${addedReqs.length} obvious gap${addedReqs.length > 1 ? "s" : ""} myself`) + s.gray(" (each is now a check):"));
+    addedReqs.forEach((r) => para(s.gray("    + "), r.statement));
   }
   // The genuine judgment calls are YOURS — so ASK them here (don't bury them as a
   // passive note above the build button). Each answer is recorded as a decision
@@ -400,7 +398,7 @@ async function auditLayer(c: Ctx): Promise<boolean> {
   // story isn't visibly delivered (or a high-severity design finding), fold the
   // fix into the spec and rebuild — the same honest-halt loop the build uses.
   const { makeVisualClient } = await import("../backend.js");
-  const { renderBuild, visualReview, blockingFixes } = await import("../review/visual.js");
+  const { renderBuild, visualReview } = await import("../review/visual.js");
   const shot = await spin(c, "rendering the build for a visual review", () => renderBuild(c.sess.buildDir!));
   if (!shot.ok) {
     if (/not a visual build/i.test(shot.note ?? "")) out(s.dim(`  visual review skipped — ${shot.note}`));
@@ -434,9 +432,8 @@ async function auditLayer(c: Ctx): Promise<boolean> {
           if (msg === "/ship") break;
         }
       } else {
-        verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)
-          .forEach((d) => out("  " + s.yellow(`${d.score}/10`) + " " + s.gray("design ") + d.name));
-        const fixes = blockingFixes(verdict);
+        const { lowDims, fixes } = visualAuditSummary(verdict);
+        lowDims.forEach((d) => out("  " + s.yellow(`${d.score}/10`) + " " + s.gray("design ") + d.name));
         if (fixes.length > 0) {
           out("\n  " + s.yellow("the built UI doesn't deliver the spec yet — i won't ship it:"));
           fixes.forEach((f) => para(s.yellow("  ✗ "), f.fix));
@@ -447,7 +444,7 @@ async function auditLayer(c: Ctx): Promise<boolean> {
             if (msg === "/quit") return false;
             if (msg === "/ship") break; // user overrides the block
             if (msg === "" || msg === "/back") {
-              c.sess.pendingChange = "the built UI failed its visual design review. Apply these fixes: " + fixes.map((f) => f.fix).join("; ");
+              c.sess.pendingChange = visualBlockChange(fixes);
               c.sess.layer = "spec"; c.save(); return true;
             }
           }

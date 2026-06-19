@@ -16,6 +16,7 @@ import type { RenderResult } from "./review/visual.js";
 import type { VisualVerdict } from "./review/types.js";
 import { validateMissionFile } from "./contract/validate.js";
 import { sanitizeInput } from "./term.js";
+import { applyReviewPatches, visualAuditSummary } from "./funnel.js";
 import type { Spec } from "./contract/spec.js";
 import type { Mission } from "./contract/schema.js";
 
@@ -610,16 +611,9 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     process.stdout.write(st.gray("\nrunning the eng + design review lens…") + "\n");
     const review = await reviewSpec(spec, llm, chain.executor);
     // ser closes obvious gaps himself — each becomes a new gated requirement.
-    const { isTestOnlyDelta } = await import("./review/raise.js");
-    let rn = spec.requirements.length;
-    for (const p of review.patches) {
-      if (isTestOnlyDelta(p.statement)) {
-        process.stdout.write(st.gray("  committee rejected coverage-only patch: ") + p.statement + "\n");
-        continue;
-      }
-      spec.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
-      process.stdout.write(st.gray("  + ") + p.statement + "\n");
-    }
+    const { added: addedReqs, skipped: skippedReqs } = applyReviewPatches(spec, review.patches);
+    for (const p of skippedReqs) process.stdout.write(st.gray("  committee rejected coverage-only patch: ") + p.statement + "\n");
+    for (const r of addedReqs) process.stdout.write(st.gray("  + ") + r.statement + "\n");
     let qn = spec.open_questions.length;
     for (const q of review.open_questions) {
       let text = q.text, answered = false;
@@ -750,7 +744,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     // Live visual review with TEETH: render the built UI, judge the screenshot,
     // collect the fixes that must block ship (an unsatisfied story / AI-slop).
       let fixes: { note: string; fix: string }[] = [];
-      const { renderBuild, visualReview, blockingFixes, polishFixes, qualityScore } = await import("./review/visual.js");
+      const { renderBuild, visualReview, polishFixes, qualityScore } = await import("./review/visual.js");
       const shot = await renderBuild(buildDir);
       if (!shot.ok) {
         if (/not a visual build/i.test(shot.note ?? "")) {
@@ -770,10 +764,11 @@ async function cmdPipeline(argv: string[]): Promise<number> {
           process.stdout.write(st.yellow("\nvisual review failed to produce a verdict. ser will not ship a rendered UI without that check.") + "\n");
           return 1;
         }
-        for (const d of verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)) {
+        const summary = visualAuditSummary(verdict);
+        for (const d of summary.lowDims) {
           process.stdout.write(`  ${st.yellow(`${d.score}/10`)} ${st.gray("design ")} ${d.name}\n`);
         }
-        fixes = blockingFixes(verdict);
+        fixes = summary.fixes;
         if (fixes.length === 0) {
           const score = qualityScore(verdict);
           process.stdout.write(st.green(`  feasible UI candidate ${attempt} captured`) + st.gray(` (quality ${score})`) + "\n");
