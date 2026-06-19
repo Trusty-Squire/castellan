@@ -62,7 +62,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     default:
       // No subcommand matched → the whole argv is a product prompt. Run the one
-      // funnel command; idea/spec/plan/build are its stages, selected via --to.
+      // funnel command; spec/build/audit/ship are its stages, selected via --to.
       return cmdPipeline(argv);
   }
 }
@@ -74,12 +74,11 @@ function printUsage(): void {
       "",
       "  ser                               start fresh — talk through an idea, then build it",
       "  ser --continue   (-c)             resume your last session where you left off",
-      '  ser "<what you want to build>"     non-interactive: idea → spec → build → audit → ship',
+      '  ser "<what you want to build>"     non-interactive: spec → build → audit → ship',
       "",
       "Stop at any layer with --to (no separate commands to learn):",
-      "  --to idea     your words → clear user stories",
-      "  --to spec     stories → eng + design spec with eval gates (asks only the",
-      "                forks needing real judgment / no objective check)",
+      "  --to spec     your idea → a buildable, gated spec (idea, review, and the",
+      "                derive compile-check, in one phase; asks only the genuine forks)",
       "  --to build    spec → working code that passes every gate",
       "  --to audit    + an independent reviewer's polish notes (no build memory)",
       "  --to ship     (default) verify the gates are green and hand it over",
@@ -565,12 +564,16 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const prompt = flags.positional[0];
   const fromSpec = flags.value.get("spec");
   if (!prompt && !fromSpec) {
-    throw new SquireError("USAGE", 'ser "<what you want to build>"  [--to idea|spec|build|audit|ship] [--yes] [--workdir <dir>]');
+    throw new SquireError("USAGE", 'ser "<what you want to build>"  [--to spec|build|audit|ship] [--yes] [--workdir <dir>]');
   }
-  const STAGES = ["idea", "spec", "build", "audit", "ship"] as const;
+  // One pre-build gate: "spec" absorbs idea-extraction, review, and the derive
+  // compile-check. The spec is the contract; everything before build produces a
+  // verified-buildable spec.
+  const STAGES = ["spec", "build", "audit", "ship"] as const;
   const to = (flags.value.get("to") ?? "ship") as (typeof STAGES)[number];
   if (!STAGES.includes(to)) throw new SquireError("USAGE", `--to must be one of ${STAGES.join("|")} (got "${to}")`);
   const stopAfter = STAGES.indexOf(to);
+  const stopAfterStage = (stage: (typeof STAGES)[number]): boolean => stopAfter === STAGES.indexOf(stage);
   const yes = flags.bool.has("yes");
 
   const { makeStyler, colorsEnabled } = await import("./style.js");
@@ -590,19 +593,16 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     if (!existsSync(specPath)) throw new SquireError("SPEC_NOT_FOUND", `spec not found: ${specPath}`);
     process.stdout.write(st.gray(`resuming from ${basename(specPath)}`) + "\n");
   } else {
-    const { extractIdea, renderIdea } = await import("./contract/ingest.js");
+    const { extractIdea } = await import("./contract/ingest.js");
     const { resolveBrief, ideaToSpec } = await import("./contract/brief.js");
     const { reviewSpec } = await import("./contract/review.js");
     const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
 
-    layer(1, "idea — your words → user stories");
+    layer(1, "spec — your idea → a buildable, gated spec");
     process.stdout.write(st.gray("mapping your idea to clear user stories…") + "\n");
     const idea = await extractIdea(prompt!, llm, chain.executor);
     process.stdout.write("\n" + st.bold("User stories:") + "\n");
     idea.stories.forEach((s, i) => process.stdout.write(`  ${i + 1}. ${s}\n`));
-    if (stopAfter === 0) { process.stdout.write("\n" + renderIdea(idea).join("\n") + "\n"); return 0; }
-
-    layer(2, "spec — stories → gated eng + design spec");
     const io = { print: (l: string) => process.stdout.write(l + "\n"), ask: yes ? (async () => "") : ask };
     const resolutions = await resolveBrief(idea.decisions, io, st);
     const spec = withFrontendFloorStories(ideaToSpec(prompt!, idea, resolutions));
@@ -629,13 +629,10 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     process.stdout.write("\n" + st.gray(`spec → ${basename(specPath)}`) + "\n");
     process.stdout.write((sc.ready ? st.green : st.yellow)(renderScoreLine(sc)) + "\n");
   }
-  if (stopAfter === 1) return 0;
-
-  // ---- LAYER 3 build + LAYER 4 audit, as a BOUNDED REBUILD LOOP ----
-  // The autonomous path must not stop at the first failed audit: a visual block
-  // folds its blocking fixes back into the spec and rebuilds, the same crank the
-  // TUI turns. We halt honestly only after exhausting cheap iterations — loop
-  // endurance is the product, so a one-shot stop at a red audit is itself a fail.
+  // ---- spec compile-check (still part of the one "spec" phase) ----
+  // The spec is "ready" iff it derives into a buildable mission. We derive HERE
+  // (option 1) so the user only ever sees a spec that already compiled — never
+  // approve-then-fail at build. mission.yaml is internal (derived, regenerated).
   const buildDir = resolve(flags.value.get("workdir") ?? `./${basename(specPath).replace(/\.spec\.yaml$/, "") || "build"}`);
   const { mkdirSync } = await import("node:fs");
   mkdirSync(buildDir, { recursive: true });
@@ -644,6 +641,20 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const { parseSpec } = await import("./contract/spec.js");
   const { auditBuild } = await import("./contract/review.js");
   const { makeVisualClient } = await import("./backend.js");
+  process.stdout.write(st.gray("\ncompiling the spec to a buildable plan…") + "\n");
+  const compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
+  if (compileRc !== 0) {
+    process.stdout.write(st.yellow("\nthis spec can't be built as written (the plan compiler refused above) — revise the spec and re-run. ser won't proceed on an unverified plan.") + "\n");
+    return compileRc;
+  }
+  process.stdout.write(st.green("  spec is buildable — plan compiled.") + "\n");
+  let missionReady = true; // the build loop's first attempt reuses this compiled mission
+
+  if (stopAfterStage("spec")) return 0;
+
+  // ---- LAYER 2 build + LAYER 3 audit, as a BOUNDED REBUILD LOOP ----
+  // A visual block folds its fixes back into the spec and rebuilds; we halt
+  // honestly only after exhausting cheap iterations (loop endurance is the product).
   const slug = basename(specPath).replace(/\.spec\.yaml$/, "");
   const maxRebuilds = Math.max(1, Number(flags.value.get("max-rebuilds") ?? 3));
   const maxOuterLoops = Math.max(1, Number(flags.value.get("outer-loops") ?? 1));
@@ -668,7 +679,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     selectedVerdict = null;
 
     if (outer > 1) {
-      layer(3, `raise spec ${outer}/${maxOuterLoops} — improve the MVP in a tractable slice`);
+      layer(2, `raise spec ${outer}/${maxOuterLoops} — improve the MVP in a tractable slice`);
       process.stdout.write(st.gray("starting a new outer loop from the improved spec…") + "\n");
     }
 
@@ -697,8 +708,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
         pendingChange = undefined;
       }
 
-      layer(3, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — spec → code that passes every gate");
-      process.stdout.write(st.gray("deriving the gated build plan…") + "\n");
+      layer(2, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — run the compiled plan to passing gates");
       if (directRebuildMission) {
         const { stringify } = await import("yaml");
         const { writeFileSync: wf } = await import("node:fs");
@@ -708,7 +718,12 @@ async function cmdPipeline(argv: string[]): Promise<number> {
         }
         process.stdout.write(st.gray(`compiled a focused ${directRebuildMission.nodes.length}-node rebuild mission from the raised delta\n`));
         directRebuildMission = null;
+      } else if (missionReady) {
+        // first build of this run reuses the mission compiled during the spec phase.
+        missionReady = false;
+        process.stdout.write(st.gray("running the plan compiled during the spec phase…\n"));
       } else {
+        process.stdout.write(st.gray("re-deriving the gated build plan…\n"));
         const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
         if (drc !== 0) return drc;
       }
@@ -725,10 +740,10 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     // A build halt is already a loop-exhausted state — the executor's own rung
     // ladder retried before giving up — so it's an honest halt, not a first-fail stop.
       if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red after the executor's retries. ser will not ship unverified work.") + "\n"); return buildRc; }
-      if (stopAfter === 2) return 0;
+      if (stopAfterStage("build")) return 0;
 
     // ---- LAYER 4 audit (independent reviewer, no build memory) ----
-      layer(4, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
+      layer(3, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
       const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
       const builtSpec = withFrontendFloorStories(parseSpec(readFileSync(specPath, "utf8"), specPath));
       const files = collectSourceFiles(buildDir);
@@ -823,7 +838,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       process.stdout.write(st.green("  visual review: the screen delivers every story.") + "\n");
     }
     if (!delivered) return 1;
-    if (stopAfter === 3) return 0;
+    if (stopAfterStage("audit")) return 0;
 
     if (outer >= maxOuterLoops || !selectedVerdict) break;
     const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
@@ -842,7 +857,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   if (!delivered) return 1;
 
   // ---- LAYER 5 ship ----
-  layer(5, "ship");
+  layer(4, "ship");
   const highs = recs.filter((r) => r.severity === "high").length;
   process.stdout.write(st.green(`\n✓ shipped → ${buildDir}`) + "\n");
   process.stdout.write(st.gray(`  every gate green · ${recs.length} audit note(s)${highs ? `, ${highs} high-severity worth a look` : ""}\n`));
