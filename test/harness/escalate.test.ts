@@ -15,8 +15,8 @@ describe("ladder", () => {
     expect(rungs).toHaveLength(MAX_RUNGS);
     expect(rungs.map((r) => r.model)).toEqual([
       "qwen/qwen3-coder",
-      "qwen/qwen3-coder",
       "deepseek/deepseek-chat",
+      "anthropic/claude-opus-4",
       "anthropic/claude-opus-4",
     ]);
     expect(rungs[0]!.addFailureContext).toBe(false);

@@ -32,6 +32,7 @@ export class OpenRouterClient implements LlmClient {
     user: string;
     json?: boolean;
     maxTokens: number;
+    signal?: AbortSignal;
     images?: { dataUrl: string }[];
   }): Promise<{ text: string; inTokens: number; outTokens: number; costUsd?: number }> {
     // With images, the user message becomes OpenAI-style multimodal content parts
@@ -69,6 +70,7 @@ export class OpenRouterClient implements LlmClient {
             "content-type": "application/json",
             authorization: `Bearer ${this.apiKey}`,
           },
+          signal: req.signal,
           body: JSON.stringify(body),
         });
       } catch (err) {

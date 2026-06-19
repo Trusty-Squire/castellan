@@ -39,6 +39,16 @@ describe("packContext", () => {
     expect(r.droppedFiles).toEqual(["src/old.ts"]);
   });
 
+  it("ignores generated junk like node_modules and dist even when globs are broad", () => {
+    mkdirSync(join(dir, "node_modules", "x"), { recursive: true });
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    writeFileSync(join(dir, "node_modules", "x", "index.js"), "ignored");
+    writeFileSync(join(dir, "dist", "bundle.js"), "ignored");
+    writeFileSync(join(dir, "src", "kept.ts"), "export const kept = true;");
+    const r = packContext({ workdir: dir, globs: ["**/*"], maxTokens: 40_000 });
+    expect(r.files.map((f) => f.path)).toEqual(["src/kept.ts"]);
+  });
+
   it("estimateTokens is chars/4 rounded up", () => {
     expect(estimateTokens("")).toBe(0);
     expect(estimateTokens("abcd")).toBe(1);

@@ -1,19 +1,23 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync, cpSync, mkdtempSync, readdirSync, statSync } from "node:fs";
-import { dirname, resolve, join, basename } from "node:path";
+import { readFileSync, existsSync, cpSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { dirname, resolve, join, basename, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { parseMission, resolveChain, type ChainsFile } from "./contract/schema.js";
 import { resolveChains } from "./contract/derive.js";
 import { runMission } from "./harness/runner.js";
 import { summarizeTrace } from "./harness/trace.js";
 import { MockEngine, fileScriptResolver } from "./engine/mock.js";
-import { initRepo, isClean } from "./harness/checkpoint.js";
+import { commitAll, initRepo, isClean } from "./harness/checkpoint.js";
 import { SquireError } from "./errors.js";
 import type { Engine } from "./engine/types.js";
 import type { LlmClient } from "./llm/types.js";
 import type { Audit } from "./contract/review.js";
+import type { RenderResult } from "./review/visual.js";
+import type { VisualVerdict } from "./review/types.js";
 import { validateMissionFile } from "./contract/validate.js";
 import { sanitizeInput } from "./term.js";
+import type { Spec } from "./contract/spec.js";
+import type { Mission } from "./contract/schema.js";
 
 async function main(argv: string[]): Promise<number> {
   const { loadDotEnv } = await import("./env.js");
@@ -80,7 +84,8 @@ function printUsage(): void {
       "  --to ship     (default) verify the gates are green and hand it over",
       "  --yes         accept ser's recommended fork answers, no prompts",
       "  --spec <f>    resume from an existing spec   --workdir <dir>  build here",
-      "  --chain <n>   model chain (default: cheap)   --mock           dry engine",
+      "  --chain <n>   model chain (default: cheap)   --outer-loops <n>  bounded post-MVP raise passes",
+      "  --mock           dry engine",
       "",
       "Utilities:",
       "  ser login · ser talk [spec.yaml] · ser do \"<goal>\" · ser fix \"<bug>\"",
@@ -552,10 +557,10 @@ async function cmdLogin(args: string[]): Promise<number> {
  *   audit  finished code → polish notes from an independent reviewer (no build memory)
  *   ship   verify the gates are green and hand it over
  * Flags: --yes (accept ser's recommended fork answers) · --spec <file> (resume from a
- *   spec) · --workdir <dir> (build here) · --out <file> (spec path) · --chain · --mock.
+ *   spec) · --workdir <dir> (build here) · --out <file> (spec path) · --chain · --mock · --outer-loops <n>.
  */
 async function cmdPipeline(argv: string[]): Promise<number> {
-  const flags = parseFlags(argv, ["chain", "chains", "to", "spec", "out", "workdir", "budget", "harness"]);
+  const flags = parseFlags(argv, ["chain", "chains", "to", "spec", "out", "workdir", "budget", "harness", "max-rebuilds", "outer-loops"]);
   const prompt = flags.positional[0];
   const fromSpec = flags.value.get("spec");
   if (!prompt && !fromSpec) {
@@ -587,6 +592,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     const { extractIdea, renderIdea } = await import("./contract/ingest.js");
     const { resolveBrief, ideaToSpec } = await import("./contract/brief.js");
     const { reviewSpec } = await import("./contract/review.js");
+    const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
 
     layer(1, "idea — your words → user stories");
     process.stdout.write(st.gray("mapping your idea to clear user stories…") + "\n");
@@ -598,14 +604,19 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     layer(2, "spec — stories → gated eng + design spec");
     const io = { print: (l: string) => process.stdout.write(l + "\n"), ask: yes ? (async () => "") : ask };
     const resolutions = await resolveBrief(idea.decisions, io, st);
-    const spec = ideaToSpec(prompt!, idea, resolutions);
+    const spec = withFrontendFloorStories(ideaToSpec(prompt!, idea, resolutions));
     // review lens (gstack eng + design review, borrowed): notes + the forks that
     // genuinely need a human / can't be objectively gated.
     process.stdout.write(st.gray("\nrunning the eng + design review lens…") + "\n");
     const review = await reviewSpec(spec, llm, chain.executor);
     // ser closes obvious gaps himself — each becomes a new gated requirement.
+    const { isTestOnlyDelta } = await import("./review/raise.js");
     let rn = spec.requirements.length;
     for (const p of review.patches) {
+      if (isTestOnlyDelta(p.statement)) {
+        process.stdout.write(st.gray("  committee rejected coverage-only patch: ") + p.statement + "\n");
+        continue;
+      }
       spec.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
       process.stdout.write(st.gray("  + ") + p.statement + "\n");
     }
@@ -641,27 +652,72 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const { makeVisualClient } = await import("./backend.js");
   const slug = basename(specPath).replace(/\.spec\.yaml$/, "");
   const maxRebuilds = Math.max(1, Number(flags.value.get("max-rebuilds") ?? 3));
+  const maxOuterLoops = Math.max(1, Number(flags.value.get("outer-loops") ?? 1));
   const rank: Record<string, number> = { high: 0, med: 1, low: 2 };
 
   let recs: Audit["recommendations"] = [];
-  let pendingChange: { stories: string[] } | undefined;
   let delivered = false;
+  let visualClient: { llm: LlmClient; model: string } | null | undefined;
+  let selectedVerdict: VisualVerdict | null = null;
+  let directRebuildMission: Mission | null = null;
 
-  for (let attempt = 1; attempt <= maxRebuilds; attempt++) {
+  for (let outer = 1; outer <= maxOuterLoops; outer++) {
+    let pendingChange: { stories: string[] } | undefined;
+    const feasibleCandidates: Array<{
+      attempt: number;
+      snapshotDir: string;
+      shot: RenderResult;
+      verdict: VisualVerdict;
+      recs: Audit["recommendations"];
+    }> = [];
+    delivered = false;
+    selectedVerdict = null;
+
+    if (outer > 1) {
+      layer(3, `raise spec ${outer}/${maxOuterLoops} — improve the MVP in a tractable slice`);
+      process.stdout.write(st.gray("starting a new outer loop from the improved spec…") + "\n");
+    }
+
+    for (let attempt = 1; attempt <= maxRebuilds; attempt++) {
     // Fold the previous audit's blocking fixes into the spec before rebuilding:
     // each becomes an explicit story (so the visual judge re-checks it) plus, via
     // ONE design-reviewer pass, objective gates — no full pipeline re-run, no scope
     // creep. This is the autonomous equivalent of the TUI's pendingChange.
-    if (pendingChange) {
-      process.stdout.write(st.yellow(`\n↻ rebuild ${attempt}/${maxRebuilds} — folding the audit's blocking fixes back into the spec…`) + "\n");
-      await refoldSpec(specPath, pendingChange.stories, llm, chain.executor);
-      pendingChange = undefined;
-    }
+      if (pendingChange) {
+        process.stdout.write(st.yellow(`\n↻ rebuild ${attempt}/${maxRebuilds} — folding the audit's blocking fixes back into the spec…`) + "\n");
+        const { reviewOuterDeltaBatch } = await import("./review/raise.js");
+        const currentSpec = parseSpec(readFileSync(specPath, "utf8"), specPath);
+        const committee = reviewOuterDeltaBatch(pendingChange.stories, currentSpec.stories);
+        const acceptedStories = committee.filter((d) => d.accepted).map((d) => d.story);
+        const rejected = committee.filter((d) => !d.accepted);
+        for (const d of rejected) process.stdout.write(st.gray(`  committee rejected: ${d.story} (${d.reason})\n`));
+        if (acceptedStories.length === 0) {
+          process.stdout.write(st.yellow("\nall proposed rebuild deltas were rejected by the product/execution/adversarial committee; halting rather than mutating the spec with bad feedback.") + "\n");
+          return 1;
+        }
+        const delta = await refoldSpec(specPath, acceptedStories, llm, chain.executor);
+        directRebuildMission = await buildDeltaMissionFromRefold(specPath, delta, {
+          chainName,
+          budgetUsd: Number(flags.value.get("budget") ?? "2.5"),
+        });
+        pendingChange = undefined;
+      }
 
-    layer(3, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — spec → code that passes every gate");
-    process.stdout.write(st.gray("deriving the gated build plan…") + "\n");
-    const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
-    if (drc !== 0) return drc;
+      layer(3, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — spec → code that passes every gate");
+      process.stdout.write(st.gray("deriving the gated build plan…") + "\n");
+      if (directRebuildMission) {
+        const { stringify } = await import("yaml");
+        const { writeFileSync: wf } = await import("node:fs");
+        wf(missionPath, stringify(directRebuildMission));
+        if (existsSync(join(buildDir, ".git"))) {
+          await commitAll(buildDir, "pipeline: prepare focused rebuild mission");
+        }
+        process.stdout.write(st.gray(`compiled a focused ${directRebuildMission.nodes.length}-node rebuild mission from the raised delta\n`));
+        directRebuildMission = null;
+      } else {
+        const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
+        if (drc !== 0) return drc;
+      }
     // Keep language/test ephemera out of the git diff so reconcile's blast-radius
     // check never trips on a __pycache__/.pyc/node_modules byproduct.
     const gitignorePath = join(buildDir, ".gitignore");
@@ -669,66 +725,126 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       const { writeFileSync: wfg } = await import("node:fs");
       wfg(gitignorePath, ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "node_modules/", ".venv/", "venv/", "*.egg-info/", ".DS_Store"].join("\n") + "\n");
     }
-    if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
-    const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
-    const buildRc = await executeMissionObject(mission, buildDir, flags, slug);
+      if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
+      const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
+      const buildRc = await executeMissionObject(mission, buildDir, flags, slug);
     // A build halt is already a loop-exhausted state — the executor's own rung
     // ladder retried before giving up — so it's an honest halt, not a first-fail stop.
-    if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red after the executor's retries. ser will not ship unverified work.") + "\n"); return buildRc; }
-    if (stopAfter === 2) return 0;
+      if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red after the executor's retries. ser will not ship unverified work.") + "\n"); return buildRc; }
+      if (stopAfter === 2) return 0;
 
     // ---- LAYER 4 audit (independent reviewer, no build memory) ----
-    layer(4, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
-    const builtSpec = parseSpec(readFileSync(specPath, "utf8"), specPath);
-    const files = collectSourceFiles(buildDir);
-    process.stdout.write(st.gray(`reviewing ${files.length} file(s) against ${builtSpec.stories.length} stories…`) + "\n");
-    const audit = await auditBuild(files, { thesis: builtSpec.thesis, stories: builtSpec.stories }, llm, chain.executor);
-    recs = audit.recommendations.sort((a, b) => (rank[a.severity]! - rank[b.severity]!));
-    if (recs.length === 0) process.stdout.write(st.green("  audit: no polish recommended — the build is clean.") + "\n");
-    for (const r of recs) {
-      const sev = r.severity === "high" ? st.yellow("[high]") : r.severity === "med" ? st.bold("[med] ") : st.gray("[low] ");
-      process.stdout.write(`  ${sev} ${st.gray(r.lens.padEnd(7))} ${r.note}${r.file ? st.gray("  (" + r.file + ")") : ""}\n`);
-    }
+      layer(4, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
+      const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
+      const builtSpec = withFrontendFloorStories(parseSpec(readFileSync(specPath, "utf8"), specPath));
+      const files = collectSourceFiles(buildDir);
+      process.stdout.write(st.gray(`reviewing ${files.length} file(s) against ${builtSpec.stories.length} stories…`) + "\n");
+      const audit = await auditBuild(files, { thesis: builtSpec.thesis, stories: builtSpec.stories }, llm, chain.executor);
+      recs = audit.recommendations.sort((a, b) => (rank[a.severity]! - rank[b.severity]!));
+      if (recs.length === 0) process.stdout.write(st.green("  audit: no polish recommended — the build is clean.") + "\n");
+      for (const r of recs) {
+        const sev = r.severity === "high" ? st.yellow("[high]") : r.severity === "med" ? st.bold("[med] ") : st.gray("[low] ");
+        process.stdout.write(`  ${sev} ${st.gray(r.lens.padEnd(7))} ${r.note}${r.file ? st.gray("  (" + r.file + ")") : ""}\n`);
+      }
 
     // Live visual review with TEETH: render the built UI, judge the screenshot,
     // collect the fixes that must block ship (an unsatisfied story / AI-slop).
-    let fixes: { note: string; fix: string }[] = [];
-    const vc = await makeVisualClient();
-    if (vc) {
-      const { renderBuild, visualReview, blockingFixes } = await import("./review/visual.js");
+      let fixes: { note: string; fix: string }[] = [];
+      const { renderBuild, visualReview, blockingFixes, polishFixes, qualityScore } = await import("./review/visual.js");
       const shot = await renderBuild(buildDir);
       if (!shot.ok) {
-        process.stdout.write(st.gray(`  visual review skipped — ${shot.note}\n`));
+        if (/not a visual build/i.test(shot.note ?? "")) {
+          process.stdout.write(st.gray(`  visual review skipped — ${shot.note}\n`));
+        } else {
+          process.stdout.write(st.yellow(`\nvisual review unavailable — ${shot.note}. ser will not ship a UI it could not render and inspect.`) + "\n");
+          return 1;
+        }
       } else {
-        const verdict = await visualReview(shot, { thesis: builtSpec.thesis, stories: builtSpec.stories }, vc.llm, vc.model);
-        if (verdict) {
-          for (const d of verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)) {
-            process.stdout.write(`  ${st.yellow(`${d.score}/10`)} ${st.gray("design ")} ${d.name}\n`);
+        visualClient ??= await makeVisualClient();
+        if (!visualClient) {
+          process.stdout.write(st.yellow("\nvisual review unavailable — no multimodal reviewer is configured. ser will not ship a rendered UI without that check.") + "\n");
+          return 1;
+        }
+        const verdict = await visualReview(shot, { thesis: builtSpec.thesis, stories: builtSpec.stories }, visualClient.llm, visualClient.model);
+        if (!verdict) {
+          process.stdout.write(st.yellow("\nvisual review failed to produce a verdict. ser will not ship a rendered UI without that check.") + "\n");
+          return 1;
+        }
+        for (const d of verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)) {
+          process.stdout.write(`  ${st.yellow(`${d.score}/10`)} ${st.gray("design ")} ${d.name}\n`);
+        }
+        fixes = blockingFixes(verdict);
+        if (fixes.length === 0) {
+          const score = qualityScore(verdict);
+          process.stdout.write(st.green(`  feasible UI candidate ${attempt} captured`) + st.gray(` (quality ${score})`) + "\n");
+          feasibleCandidates.push({ attempt, snapshotDir: snapshotBuildDir(buildDir), shot, verdict, recs: [...recs] });
+          const polish = polishFixes(verdict);
+          if (polish.length > 0 && attempt < maxRebuilds) {
+            pendingChange = { stories: polish };
+            process.stdout.write(st.gray(`  continuing search with ${polish.length} quality-targeted fix(es)…`) + "\n");
+            continue;
           }
-          fixes = blockingFixes(verdict);
+          if (polish.length === 0) delivered = true;
+          break;
         }
       }
+
+      // The audit blocks ship. LOOP if we have attempts left; halt only when spent.
+      process.stdout.write(st.yellow(`\nvisual review blocks ship — the built UI doesn't deliver the spec yet:\n`));
+      for (const f of fixes) process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
+      if (attempt < maxRebuilds) {
+        pendingChange = { stories: fixes.map((f) => f.fix) };
+        process.stdout.write(st.gray(`\nfolding these into the spec and rebuilding (attempt ${attempt + 1}/${maxRebuilds})…`) + "\n");
+        continue;
+      }
+      process.stdout.write(st.yellow(`\nvisual review still blocks after ${maxRebuilds} rebuilds — halting honestly with the issues above. ser will not ship a UI that fails its own design review.`) + "\n");
+      return 1;
     }
 
-    if (fixes.length === 0) {
-      if (vc) process.stdout.write(st.green("  visual review: the screen delivers every story.") + "\n");
+    if (!feasibleCandidates.length && !delivered) return 1;
+    if (feasibleCandidates.length > 0) {
+      const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
+      const { chooseVisualCandidate } = await import("./review/visual.js");
+      const winnerSpec = withFrontendFloorStories(parseSpec(readFileSync(specPath, "utf8"), specPath));
+      const winner = visualClient
+        ? await chooseVisualCandidate(
+            feasibleCandidates.map((c) => ({ id: `candidate ${c.attempt}`, shot: c.shot, verdict: c.verdict })),
+            { thesis: winnerSpec.thesis, stories: winnerSpec.stories },
+            visualClient.llm,
+            visualClient.model,
+          )
+        : {
+            candidate: { id: `candidate ${feasibleCandidates[0]!.attempt}`, shot: feasibleCandidates[0]!.shot, verdict: feasibleCandidates[0]!.verdict },
+            rationale: "single feasible candidate",
+            mode: "score" as const,
+          };
+      const selectedAttempt = Number(winner.candidate.id.replace(/^candidate /, ""));
+      const selected = feasibleCandidates.find((c) => c.attempt === selectedAttempt) ?? feasibleCandidates[0]!;
+      restoreSnapshot(selected.snapshotDir, buildDir);
+      recs = selected.recs;
+      selectedVerdict = selected.verdict;
       delivered = true;
-      break;
+      process.stdout.write(st.green(`  selected ${winner.candidate.id} for ship`) + st.gray(` (${winner.mode}: ${winner.rationale})`) + "\n");
+      process.stdout.write(st.green("  visual review: the screen delivers every story.") + "\n");
     }
+    if (!delivered) return 1;
+    if (stopAfter === 3) return 0;
 
-    // The audit blocks ship. LOOP if we have attempts left; halt only when spent.
-    process.stdout.write(st.yellow(`\nvisual review blocks ship — the built UI doesn't deliver the spec yet:\n`));
-    for (const f of fixes) process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
-    if (attempt < maxRebuilds) {
-      pendingChange = { stories: fixes.map((f) => f.fix) };
-      process.stdout.write(st.gray(`\nfolding these into the spec and rebuilding (attempt ${attempt + 1}/${maxRebuilds})…`) + "\n");
-      continue;
-    }
-    process.stdout.write(st.yellow(`\nvisual review still blocks after ${maxRebuilds} rebuilds — halting honestly with the issues above. ser will not ship a UI that fails its own design review.`) + "\n");
-    return 1;
+    if (outer >= maxOuterLoops || !selectedVerdict) break;
+    const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
+    const { planOuterDelta } = await import("./review/raise.js");
+    const nextSpec = withFrontendFloorStories(parseSpec(readFileSync(specPath, "utf8"), specPath));
+    const delta = planOuterDelta(nextSpec, recs, selectedVerdict);
+    if (delta.stories.length === 0) break;
+    process.stdout.write(st.gray(`\nraising the spec with ${delta.stories.length} tractable delta(s) for the next outer loop…`) + "\n");
+    delta.stories.forEach((story, i) => process.stdout.write(`  ${i + 1}. ${story}\n`));
+    const raised = await refoldSpec(specPath, delta.stories, llm, chain.executor);
+    directRebuildMission = await buildDeltaMissionFromRefold(specPath, raised, {
+      chainName,
+      budgetUsd: Number(flags.value.get("budget") ?? "2.5"),
+    });
   }
   if (!delivered) return 1;
-  if (stopAfter === 3) return 0;
 
   // ---- LAYER 5 ship ----
   layer(5, "ship");
@@ -744,24 +860,76 @@ async function cmdPipeline(argv: string[]): Promise<number> {
  * reviewer pass, a few objective gates that force the build to deliver it. Bounded
  * and de-duped — no full pipeline re-run, so it can't re-trigger scope creep.
  */
-async function refoldSpec(specPath: string, fixes: string[], llm: LlmClient, model: string): Promise<void> {
+interface RefoldDelta {
+  stories: string[];
+  requirements: Spec["requirements"];
+}
+
+async function refoldSpec(specPath: string, fixes: string[], llm: LlmClient, model: string): Promise<RefoldDelta> {
   const { parseSpec } = await import("./contract/spec.js");
   const { designReview } = await import("./review/reviewers.js");
+  const { isTestOnlyDelta } = await import("./review/raise.js");
   const { stringify } = await import("yaml");
   const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
   const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const spec = parseSpec(rf(specPath, "utf8"), specPath);
-  for (const f of fixes) if (!spec.stories.includes(f)) spec.stories.push(f);
+  const addedStories: string[] = [];
+  const addedRequirements: Spec["requirements"] = [];
+  for (const f of fixes) {
+    if (!spec.stories.includes(f)) {
+      spec.stories.push(f);
+      addedStories.push(f);
+    }
+  }
   const dr = await designReview(spec, llm, model);
   const seen = new Set(spec.requirements.map((r) => norm(r.statement)));
   let rn = spec.requirements.length;
   for (const p of dr.patches.filter((p) => p.kind === "objective").slice(0, 4)) {
+    if (isTestOnlyDelta(p.statement)) continue;
     const key = norm(p.statement);
     if (seen.has(key)) continue;
     seen.add(key);
-    spec.requirements.push({ id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } });
+    const req = { id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } as const };
+    spec.requirements.push(req);
+    addedRequirements.push(req);
   }
   wf(specPath, stringify(spec));
+  return { stories: addedStories, requirements: addedRequirements };
+}
+
+async function buildDeltaMissionFromRefold(
+  specPath: string,
+  delta: RefoldDelta,
+  opts: { chainName: string; budgetUsd: number },
+): Promise<Mission | null> {
+  const { parseSpec } = await import("./contract/spec.js");
+  const { buildDirectMission } = await import("./contract/derive2.js");
+  const { readFileSync: rf } = await import("node:fs");
+  const spec = parseSpec(rf(specPath, "utf8"), specPath);
+  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const seen = new Set<string>();
+  const items: Array<{ statement: string; acceptance?: Spec["requirements"][number]["acceptance"] }> = [];
+  const push = (statement: string, acceptance?: Spec["requirements"][number]["acceptance"]): void => {
+    const key = norm(statement);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    items.push({ statement, acceptance });
+  };
+
+  // Outer-loop delta requirements come from reviewer patches and often carry
+  // overfit gate strings (for example, assuming a `tests/` directory when the
+  // app keeps tests in `src/`). Compile them back through the primitive
+  // interactive-app gate builder instead of replaying those brittle literals.
+  for (const req of delta.requirements) push(req.statement, req.acceptance?.tier === 4 ? req.acceptance : undefined);
+  for (const story of delta.stories) push(story);
+  if (items.length === 0) return null;
+  return buildDirectMission({
+    thesis: spec.thesis,
+    items,
+    chainName: opts.chainName,
+    budgetUsd: opts.budgetUsd,
+    idPrefix: "d",
+  });
 }
 
 /** Walk a build dir for reviewable source (skips git/node_modules/harness files). */
@@ -779,6 +947,23 @@ function collectSourceFiles(dir: string): { path: string; src: string }[] {
   };
   walk(dir, "");
   return out;
+}
+
+function snapshotBuildDir(buildDir: string): string {
+  const snapshotDir = mkdtempSync(join(tmpdir(), "ser-ui-candidate-"));
+  cpSync(buildDir, snapshotDir, {
+    recursive: true,
+    filter: (src) => !src.includes(`${sep}.git${sep}`) && !src.endsWith(`${sep}.git`) && !src.includes(`${sep}node_modules${sep}`),
+  });
+  return snapshotDir;
+}
+
+function restoreSnapshot(snapshotDir: string, buildDir: string): void {
+  for (const name of readdirSync(buildDir)) {
+    if (name === ".git") continue;
+    rmSync(join(buildDir, name), { recursive: true, force: true });
+  }
+  cpSync(snapshotDir, buildDir, { recursive: true });
 }
 
 async function cmdTrace(args: string[]): Promise<number> {

@@ -109,11 +109,12 @@ export class ToolExecutor {
     if ("error" in located) return located.error;
     const denial = this.checkRadius(located.rel, "write");
     if (denial) return denial;
+    const content = normalizeWriteContent(located.rel, args.content ?? "");
     try {
       mkdirSync(dirname(located.abs), { recursive: true });
-      writeFileSync(located.abs, args.content ?? "");
+      writeFileSync(located.abs, content);
       this.recordWrite(located.rel);
-      return { ok: true, denied: false, path: located.rel, output: `wrote ${located.rel} (${(args.content ?? "").length} bytes)` };
+      return { ok: true, denied: false, path: located.rel, output: `wrote ${located.rel} (${content.length} bytes)` };
     } catch (err) {
       return { ok: false, denied: false, path: located.rel, output: `write failed: ${(err as Error).message}` };
     }
@@ -190,4 +191,20 @@ export class ToolExecutor {
     }
     return { abs, rel: rel.replace(/\\/g, "/") };
   }
+}
+
+export function normalizeWriteContent(rel: string, content: string): string {
+  if (!/\.(?:c?js|mjs)$/.test(rel)) return content;
+  const trimmed = content.trim();
+  if (!trimmed) return content;
+  if (!looksLikeTopLevelJsLiteral(trimmed)) return content;
+  return `module.exports = ${trimmed};\n`;
+}
+
+function looksLikeTopLevelJsLiteral(content: string): boolean {
+  if (!content.startsWith("[") && !content.startsWith("{")) return false;
+  if (/^\{\s*(?:module\.)?exports\b/.test(content)) return false;
+  if (/\b(?:module\.)?exports\s*=/.test(content)) return false;
+  if (/\b(?:function|const|let|var|class|import|export)\b/.test(content)) return false;
+  return true;
 }

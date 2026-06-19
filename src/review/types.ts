@@ -101,3 +101,9 @@ export const VisualVerdictSchema = z.object({
     .default([]),
 });
 export type VisualVerdict = z.infer<typeof VisualVerdictSchema>;
+
+export const VisualChoiceSchema = z.object({
+  winner: z.number().int().min(1),
+  rationale: z.string().default(""),
+});
+export type VisualChoice = z.infer<typeof VisualChoiceSchema>;

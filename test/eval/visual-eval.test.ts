@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { VisualVerdictSchema, SeveritySchema } from "../../src/review/types.js";
-import { blockingFixes } from "../../src/review/visual.js";
+import { blockingFixes, polishFixes, qualityScore, chooseVisualCandidate, resolveRenderTarget } from "../../src/review/visual.js";
 import { scoreVisualVerdict, gateVisualEval, type LabeledVisualFixture } from "../../src/eval/visual-eval.js";
+import { MockLlm } from "../../src/llm/mock.js";
 
 // A representative verdict the live judge actually returned for clairvoyance.
 const CLAIR_VERDICT = VisualVerdictSchema.parse({
@@ -82,6 +86,70 @@ describe("blockingFixes (the teeth)", () => {
     });
     expect(blockingFixes(v).length).toBe(0);
   });
+  it("a catastrophically low core dimension blocks even without story failures", () => {
+    const v = VisualVerdictSchema.parse({
+      dimensions: [{ name: "AI slop is the enemy", score: 2, whatMakesIt10: "replace the bare shell with a real dashboard layout" }],
+      findings: [],
+      storyChecks: [{ story: "shows the size", satisfied: true, note: "" }],
+    });
+    expect(blockingFixes(v)).toEqual([
+      {
+        note: "core design dimension is failing: AI slop is the enemy (2/10)",
+        fix: "replace the bare shell with a real dashboard layout",
+      },
+    ]);
+  });
+});
+
+describe("quality search helpers", () => {
+  it("extracts capped non-blocking polish prompts from a feasible verdict", () => {
+    const v = VisualVerdictSchema.parse({
+      dimensions: [
+        { name: "Every screen has a hierarchy", score: 6, whatMakesIt10: "make the primary result dominate the first viewport" },
+        { name: "Responsive", score: 7, whatMakesIt10: "tighten the mobile stack" },
+      ],
+      findings: [{ principle: "Hierarchy", severity: "med", note: "primary value is buried", fix: "bring the primary value above the comparison table" }],
+      storyChecks: [{ story: "shows ranked opportunities", satisfied: true, note: "" }],
+    });
+    expect(polishFixes(v)).toEqual([
+      "make the primary result dominate the first viewport",
+      "bring the primary value above the comparison table",
+    ]);
+  });
+
+  it("ranks the stronger feasible verdict higher", () => {
+    expect(qualityScore(CLEAN_VERDICT)).toBeGreaterThan(qualityScore(CLAIR_VERDICT));
+  });
+
+  it("uses the visual selector when multiple feasible candidates exist", async () => {
+    const llm = new MockLlm([{ text: JSON.stringify({ winner: 2, rationale: "clearer hierarchy and stronger first viewport" }) }]);
+    const pick = await chooseVisualCandidate(
+      [
+        { id: "candidate 1", shot: { ok: true, dataUrl: "data:image/png;base64,aGVsbG8=" }, verdict: CLEAN_VERDICT },
+        { id: "candidate 2", shot: { ok: true, dataUrl: "data:image/png;base64,d29ybGQ=" }, verdict: CLEAN_VERDICT },
+      ],
+      { thesis: "a dashboard", stories: ["show ranked opportunities"] },
+      llm,
+      "m",
+    );
+    expect(pick.mode).toBe("model");
+    expect(pick.candidate.id).toBe("candidate 2");
+  });
+
+  it("falls back to deterministic scoring when selector output is invalid", async () => {
+    const llm = new MockLlm([{ text: "not-json" }]);
+    const pick = await chooseVisualCandidate(
+      [
+        { id: "weak", shot: { ok: true, dataUrl: "data:image/png;base64,aGVsbG8=" }, verdict: CLAIR_VERDICT },
+        { id: "strong", shot: { ok: true, dataUrl: "data:image/png;base64,d29ybGQ=" }, verdict: CLEAN_VERDICT },
+      ],
+      { thesis: "a dashboard", stories: ["show ranked opportunities"] },
+      llm,
+      "m",
+    );
+    expect(pick.mode).toBe("score");
+    expect(pick.candidate.id).toBe("strong");
+  });
 });
 
 describe("scoreVisualVerdict catches clairvoyance defects", () => {
@@ -106,5 +174,45 @@ describe("gateVisualEval", () => {
     expect(g.passed).toBe(true);
     expect(g.defectRecall).toBe(1);
     expect(g.falsePositives).toBe(0);
+  });
+});
+
+describe("resolveRenderTarget", () => {
+  it("prefers root index.html when present", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ser-visual-root-"));
+    try {
+      writeFileSync(join(dir, "index.html"), "<html></html>");
+      mkdirSync(join(dir, "dist"));
+      writeFileSync(join(dir, "dist", "index.html"), "<html>dist</html>");
+      expect(resolveRenderTarget(dir)).toEqual({ serveDir: dir, entry: "index.html" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers dist when root index is a source entry shell", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ser-visual-src-shell-"));
+    try {
+      writeFileSync(
+        join(dir, "index.html"),
+        '<!doctype html><html><body><div id="app"></div><script type="module" src="/src/main.js"></script></body></html>',
+      );
+      mkdirSync(join(dir, "dist"));
+      writeFileSync(join(dir, "dist", "index.html"), "<html>dist</html>");
+      expect(resolveRenderTarget(dir)).toEqual({ serveDir: join(dir, "dist"), entry: "index.html" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to dist/index.html for bundled apps", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ser-visual-dist-"));
+    try {
+      mkdirSync(join(dir, "dist"));
+      writeFileSync(join(dir, "dist", "index.html"), "<html>dist</html>");
+      expect(resolveRenderTarget(dir)).toEqual({ serveDir: join(dir, "dist"), entry: "index.html" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

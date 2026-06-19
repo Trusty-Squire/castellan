@@ -65,6 +65,17 @@ describe("reviewers (one premium call each, safeParse fallback)", () => {
 });
 
 describe("reviewPlan fold + auto-decide", () => {
+  it("adds frontend floor stories before the design reviewer sees a dashboard spec", async () => {
+    let designSawFloorStory = false;
+    const designCheck = (call: { user: string }) => {
+      designSawFloorStory = call.user.includes("phone-sized viewport") && call.user.includes("headline value in the first viewport");
+      return { text: DESIGN };
+    };
+    const llm = new MockLlm([{ text: CEO }, designCheck, { text: ENG }, { text: DX_EMPTY }]);
+    await reviewPlan(spec, llm, "m");
+    expect(designSawFloorStory).toBe(true);
+  });
+
   it("folds design's objective patch into the spec the eng reviewer sees", async () => {
     // eng responder asserts the design patch statement reached its user prompt.
     let engSawDesignPatch = false;

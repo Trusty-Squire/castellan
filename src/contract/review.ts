@@ -4,6 +4,7 @@ import type { Spec } from "./spec.js";
 import { tryParseJson } from "./derive.js";
 import { reviewPlan } from "../review/orchestrate.js";
 import type { ReviewDecision } from "../review/types.js";
+import { withFrontendFloorStories } from "../review/frontend-floor.js";
 
 /**
  * The funnel's review lenses, borrowed from gstack's plan-* reviews. Two uses:
@@ -50,7 +51,7 @@ export type SpecReview = z.infer<typeof SpecReviewSchema>;
  * audit-layer judge, not the spec-stage adapter. Degrades to empty on any failure.
  */
 export async function reviewSpec(spec: Spec, llm: LlmClient, model: string): Promise<SpecReview> {
-  const pipeline = await reviewPlan(spec, llm, model);
+  const pipeline = await reviewPlan(withFrontendFloorStories(spec), llm, model);
   const patches = pipeline.patches
     .filter((p) => p.kind === "objective")
     .map((p) => ({ statement: p.statement, gate: p.gate }));
@@ -94,13 +95,17 @@ DOGFOOD: actually trace a user doing each story end to end — where would a rea
 
 Report only things that are real and worth fixing. For each, give the lens, a severity (high/med/low), a one-sentence concrete note, and the file if applicable. Do NOT restate what works. Output ONLY JSON: {"recommendations":[{"lens":"eng","severity":"med","note":"…","file":"app.js"}]}.`;
 
+const DEFAULT_AUDIT_TIMEOUT_MS = 45_000;
+
 export async function auditBuild(
   files: { path: string; src: string }[],
   spec: { thesis: string; stories: string[] },
   llm: LlmClient,
   model: string,
   maxBytes = 60000,
+  timeoutMs = DEFAULT_AUDIT_TIMEOUT_MS,
 ): Promise<Audit> {
+  spec = withFrontendFloorStories(spec);
   // pack the code, capped, so the reviewer sees the whole product cheaply.
   let budget = maxBytes;
   const packed: string[] = [];
@@ -115,7 +120,17 @@ export async function auditBuild(
     `STORIES (each should work end to end):\n${spec.stories.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}`,
     `CODE:\n${packed.join("\n")}`,
   ].join("\n\n");
-  const res = await llm.complete({ model, system: AUDIT_SYSTEM, user, json: true, maxTokens: 3500 });
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  timer.unref?.();
+  let res: Awaited<ReturnType<LlmClient["complete"]>>;
+  try {
+    res = await llm.complete({ model, system: AUDIT_SYSTEM, user, json: true, maxTokens: 3500, signal: ac.signal });
+  } catch {
+    return { recommendations: [] };
+  } finally {
+    clearTimeout(timer);
+  }
   const parsed = tryParseJson(res.text);
   if (!parsed.ok) return { recommendations: [] };
   const checked = AuditSchema.safeParse(parsed.value);

@@ -40,6 +40,13 @@ export async function commitNode(cwd: string, nodeId: string): Promise<string> {
   return head(cwd);
 }
 
+/** Stage everything and commit an arbitrary harness checkpoint. */
+export async function commitAll(cwd: string, message: string): Promise<string> {
+  await git(cwd, ["add", "-A"]);
+  await git(cwd, ["commit", "-q", "-m", message, "--allow-empty"]);
+  return head(cwd);
+}
+
 /**
  * Reset hard to a known-green sha and drop untracked files/dirs from the
  * failed attempt, so the next rung starts from a clean checkpoint.

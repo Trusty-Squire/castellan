@@ -2,7 +2,21 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveV2, specPreGate, affirmsBuildability, groundGateRun } from "../../src/contract/derive2.js";
+import { execSync } from "node:child_process";
+import {
+  deriveV2,
+  specPreGate,
+  affirmsBuildability,
+  classifyProductIntent,
+  groundGateRun,
+  hardenGeneratedGateForNode,
+  hardenIndexGateForNode,
+  hardenOpportunitiesGateForNode,
+  isImplementationShapedDecomposition,
+  productPlanningContract,
+  trimSurveyForDecompose,
+  buildDirectMission,
+} from "../../src/contract/derive2.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { MockLlm } from "../../src/llm/mock.js";
 import { SquireError } from "../../src/errors.js";
@@ -59,6 +73,212 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(llm.calls).toHaveLength(5);
     // no provider-reported cost in this script → estimation territory
     expect(r.costUsd).toBeUndefined();
+  });
+
+  it("adds an interactive-app planning contract for dashboard/game/fortune requests", () => {
+    expect(classifyProductIntent("a casino webapp with blackjack and texas holdem poker")).toBe("game");
+    expect(classifyProductIntent("a mystical app that reads tarot and tea leaves")).toBe("fortune");
+    expect(classifyProductIntent("a dashboard that ranks arbitrage opportunities by size")).toBe("dashboard");
+    expect(productPlanningContract("a dashboard that ranks arbitrage opportunities by size")).toContain("headline value in the first viewport");
+    expect(productPlanningContract("a casino webapp with blackjack and texas holdem poker")).toContain("opponent behavior or AI");
+    expect(productPlanningContract("a mystical app that reads tarot and tea leaves")).toContain("reading flow");
+  });
+
+  it("detects file-shaped decomposition for interactive apps", () => {
+    expect(
+      isImplementationShapedDecomposition(
+        [
+          { brief: "create index.html", blast_radius: ["index.html"] },
+          { brief: "write render.js", blast_radius: ["render.js"] },
+          { brief: "fill data.js", blast_radius: ["data.js"] },
+        ],
+        "a dashboard app for ranked arbitrage opportunities",
+      ),
+    ).toBe(true);
+    expect(
+      isImplementationShapedDecomposition(
+        [
+          { brief: "build the ranked opportunities panel and first-viewport hierarchy", blast_radius: ["index.html", "render.js"] },
+          { brief: "make the comparison table readable on mobile", blast_radius: ["index.html", "render.js"] },
+        ],
+        "a dashboard app for ranked arbitrage opportunities",
+      ),
+    ).toBe(false);
+  });
+
+  it("trims greenfield interactive-app surveys for the decompose stage", () => {
+    const survey = [
+      "FILES (0):",
+      "",
+      "DETECTED CHECK COMMANDS:",
+      "  npm run test",
+      "",
+      "AVAILABLE TOOLS (gates MUST use only these interpreters/runners — present=yes):",
+      "  python3: yes",
+      "  node: yes",
+      "  npm: yes",
+      "  bash: yes",
+      "  rg: yes",
+      "  cargo: MISSING — do not use",
+      "Prefer the present ones. Use `python3` (not `python`) unless `python` shows present.",
+    ].join("\n");
+    const trimmed = trimSurveyForDecompose(survey, "a fortune reading app with tarot and tea leaves");
+    expect(trimmed).toContain("FILES (0):");
+    expect(trimmed).toContain("npm run test");
+    expect(trimmed).toContain("python3: yes");
+    expect(trimmed).not.toContain("Prefer the present ones.");
+  });
+
+  it("retries decomposition when an interactive app plan comes back file-shaped", async () => {
+    const first = JSON.stringify({
+      nodes: [
+        { id: "html", brief: "create index.html", deps: [], context_globs: [], blast_radius: ["index.html"], budget_usd: 0.3 },
+        { id: "render", brief: "write render.js", deps: ["html"], context_globs: [], blast_radius: ["render.js"], budget_usd: 0.3 },
+        { id: "data", brief: "fill data.js", deps: ["render"], context_globs: [], blast_radius: ["data.js"], budget_usd: 0.4 },
+      ],
+    });
+    const second = JSON.stringify({
+      nodes: [
+        { id: "hero", brief: "build the top opportunity viewport and ranked opportunity panel", deps: [], context_globs: [], blast_radius: ["index.html", "render.js"], budget_usd: 0.5 },
+        { id: "comparison", brief: "render the cross-book comparison surface with readable mobile layout", deps: ["hero"], context_globs: [], blast_radius: ["index.html", "render.js"], budget_usd: 0.5 },
+      ],
+    });
+    const llm = new MockLlm([
+      { text: first },
+      { text: second },
+      { text: JSON.stringify({ gates: [{ node: "hero", freeform: "true" }, { node: "comparison", freeform: "true" }] }) },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+    const r = await deriveV2({
+      ...base(llm),
+      goal: "build a dashboard app that ranks arbitrage opportunities and compares sportsbook lines",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes.map((n) => n.id)).toEqual(["hero", "comparison"]);
+    expect(llm.calls[1]!.user).toContain("previous decomposition was too implementation-shaped");
+  });
+
+  it("repairs infer-gates when a selected pattern has invalid params", async () => {
+    const decompose = JSON.stringify({
+      nodes: [
+        { id: "reading", brief: "build the tarot reading flow", deps: [], context_globs: [], blast_radius: ["index.html", "app.js"], budget_usd: 1.0 },
+      ],
+    });
+    const badGates = JSON.stringify({
+      gates: [
+        { node: "reading", pattern: "output-content-smoke", params: { runCmd: "node app.js", mustMatch: "" } },
+      ],
+    });
+    const fixedGates = JSON.stringify({
+      gates: [
+        { node: "reading", pattern: "output-content-smoke", params: { runCmd: "node app.js", mustMatch: "fortune" } },
+      ],
+    });
+    const llm = new MockLlm([
+      { text: decompose },
+      { text: badGates },
+      { text: fixedGates },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+    const r = await deriveV2({
+      ...base(llm),
+      goal: "a mystical fortune app that reads tarot cards and tea leaves",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes[0]!.gate!.run).toContain("fortune");
+    expect(llm.calls[2]!.user).toContain("could not be rendered");
+    expect(llm.calls[2]!.user).toContain("pattern param");
+  });
+
+  it("retries decomposition when spec-mode leaves requirement ids uncovered", async () => {
+    const spec = parseSpec(`
+thesis: parser library
+stories:
+  - developer parses tarot and tea tokens
+requirements:
+  - id: R1
+    statement: tarot flow
+    acceptance: { tier: 1, gate: "true" }
+  - id: R2
+    statement: tea flow
+    acceptance: { tier: 1, gate: "true" }
+`);
+    const first = JSON.stringify({
+      nodes: [
+        { id: "fortune", brief: "build the shared fortune experience", deps: [], context_globs: [], blast_radius: ["src/**"], budget_usd: 1, requirement: "R1" },
+      ],
+    });
+    const second = JSON.stringify({
+      nodes: [
+        { id: "tarot", brief: "build the tarot flow", deps: [], context_globs: [], blast_radius: ["src/**"], budget_usd: 0.5, requirement: "R1" },
+        { id: "tea", brief: "build the tea flow", deps: ["tarot"], context_globs: [], blast_radius: ["src/**"], budget_usd: 0.5, requirement: "R2" },
+      ],
+    });
+    const llm = new MockLlm([
+      { text: first },
+      { text: second },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+    const r = await deriveV2({
+      ...base(llm),
+      goal: undefined,
+      spec,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes.map((n) => n.id)).toEqual(["tarot", "tea"]);
+    expect(llm.calls[1]!.user).toContain("left these requirement ids uncovered");
+    expect(llm.calls[1]!.user).toContain("R2");
+  });
+
+  it("fast-paths greenfield interactive-app specs directly into mission nodes", async () => {
+    const spec = parseSpec(`
+thesis: mystical fortune app
+stories:
+  - user sees tarot and tea readings
+requirements:
+  - id: R1
+    statement: the first viewport shows the headline value and tarot plus tea readings
+    acceptance: { tier: 1, gate: "npm test -- tarot" }
+  - id: R2
+    statement: tea flow
+    acceptance: { tier: 1, gate: "npm test -- tea" }
+`);
+    const llm = new MockLlm([]);
+    const r = await deriveV2({
+      ...base(llm),
+      goal: undefined,
+      spec,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes.map((n) => n.id)).toEqual(["r1", "r2"]);
+    expect(r.mission.nodes[1]!.deps).toEqual(["r1"]);
+    expect(r.mission.nodes[0]!.gate!.run).toContain("npm install --no-fund --no-audit");
+    expect(r.mission.nodes[0]!.gate!.run).toContain("npm run build");
+    expect(r.mission.nodes[0]!.gate!.run).toContain("headline-value");
+    expect(r.mission.nodes[0]!.gate!.run).not.toContain("scripts/assert");
+    expect(llm.calls).toHaveLength(0);
+    expect(r.readback).toContain("fast-path");
+  });
+
+  it("builds a focused direct mission from raised delta items without LLM planning", () => {
+    const mission = buildDirectMission({
+      thesis: "mystical fortune app",
+      items: [
+        { statement: "The first viewport must show Gypsy, Tarot, Tea Leaves, and a concise fortune preview." },
+        { statement: "Completed readings must render a compact result summary before the prose interpretation.", acceptance: { tier: 1, gate: "npm test -- --run" } },
+      ],
+      chainName: "cheap",
+      budgetUsd: 2.5,
+      idPrefix: "d",
+    });
+    expect(mission.nodes.map((n) => n.id)).toEqual(["d1", "d2"]);
+    expect(mission.nodes[1]!.deps).toEqual(["d1"]);
+    expect(mission.nodes[0]!.gate!.run).toContain("headline-value");
+    expect(mission.nodes[1]!.gate).toMatchObject({ type: "command", run: expect.stringContaining("npm install --no-fund --no-audit") });
   });
 
   it("sums provider-reported cost across stages into result.costUsd (A36)", async () => {
@@ -146,14 +366,80 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(groundGateRun("python - <<'PY'\nprint(1)\nPY")).toContain("python3 - <<'PY'");
     expect(groundGateRun("pip install x")).toBe("pip3 install x");
     expect(groundGateRun("python3 -m pytest")).toBe("python3 -m pytest"); // already grounded
-    expect(groundGateRun("pytest -q && rg foo")).toBe("pytest -q && rg foo"); // other tools untouched
+    expect(groundGateRun("pytest -q && rg foo")).toBe("python3 -m pytest -q && rg foo");
+    expect(groundGateRun("test -f x && pytest -q tests/test_x.py")).toBe("test -f x && python3 -m pytest -q tests/test_x.py");
     expect(groundGateRun("./mypython.sh")).toBe("./mypython.sh"); // substring untouched
+  });
+
+  it("hardens sports-betting data.js gates to require event object shape", () => {
+    const gate = hardenGeneratedGateForNode(
+      {
+        brief: "Create data.js with sports betting events, outcomes, books, and odds",
+        blast_radius: ["data.js"],
+      },
+      { type: "command", run: "node -e \"const d=require('./data.js');process.exit(Array.isArray(d)?0:1)\"", soft: false },
+    );
+
+    expect(gate.run).toContain("e.books");
+    writeFileSync(join(workdir, "data.js"), "module.exports = ['not an event object'];");
+    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).toThrow();
+
+    writeFileSync(
+      join(workdir, "data.js"),
+      "module.exports = [{id:'a',outcomes:['A','B'],books:[{name:'x',odds:[2.1,2.1]}]},{id:'b',outcomes:['C','D'],books:[{name:'y',odds:[2.5,2.5]}]},{id:'c',outcomes:['E','F'],books:[{name:'z',odds:[1.8,2.4]}]}];",
+    );
+    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).not.toThrow();
+  });
+
+  it("hardens findArbitrage gates to use valid cross-book fixtures", () => {
+    const node = {
+      brief: "Implement opportunities.js with findArbitrage(events) for cross-book arbitrage",
+      blast_radius: ["opportunities.js"],
+    };
+    const gate = hardenOpportunitiesGateForNode(node, {
+      type: "command",
+      run: "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'g1',outcomes:['A','B'],books:[{name:'x',odds:[2.1,2.1]}]}]);process.exit(o.length>=1?0:1)\"",
+      soft: false,
+    });
+
+    expect(gate.run).toContain("{name:'x',odds:[2.1,1.8]}");
+    expect(gate.run).toContain("{name:'y',odds:[1.8,2.1]}");
+    expect(gate.run).not.toContain("odds:[2.1,2.1]}]}]");
+  });
+
+  it("hardens sports-betting index gates to require a browser-populated dashboard", () => {
+    const node = {
+      brief: "Create index.html wired to the generated scripts",
+      blast_radius: ["index.html"],
+    };
+    const gate = hardenIndexGateForNode(node, {
+      type: "command",
+      run: "test -f data.js && grep -q 'id=\"lines\"' index.html && grep -q 'id=\"opportunities\"' index.html && grep -q 'opportunities.js' index.html && grep -q 'render.js' index.html",
+      soft: false,
+    });
+
+    expect(gate.run).toContain("vm.runInContext");
+
+    writeFileSync(join(workdir, "data.js"), "const events=[{id:'g',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]}];module.exports=events;");
+    writeFileSync(join(workdir, "opportunities.js"), "function findArbitrage(){return [{eventId:'g',size:0.05}]};module.exports={findArbitrage};");
+    writeFileSync(join(workdir, "render.js"), "function renderLines(){return '<tr><td>g</td></tr>'};function renderOpportunities(){return '<li>5%</li>'};module.exports={renderLines,renderOpportunities};");
+    writeFileSync(
+      join(workdir, "index.html"),
+      '<div id="lines"></div><div id="opportunities"></div><script src="data.js"></script><script src="opportunities.js"></script><script src="render.js"></script><script>window.addEventListener("DOMContentLoaded",()=>{document.getElementById("lines").innerHTML=renderLines(events);document.getElementById("opportunities").innerHTML=renderOpportunities(findArbitrage(events));});</script>',
+    );
+    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).toThrow();
+
+    writeFileSync(join(workdir, "data.js"), "const events=[{id:'g',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]}];if(typeof module!=='undefined')module.exports=events;if(typeof window!=='undefined')window.events=events;");
+    writeFileSync(join(workdir, "opportunities.js"), "function findArbitrage(){return [{eventId:'g',size:0.05}]};if(typeof module!=='undefined')module.exports={findArbitrage};if(typeof window!=='undefined')window.findArbitrage=findArbitrage;");
+    writeFileSync(join(workdir, "render.js"), "function renderLines(){return '<tr><td>g</td></tr>'};function renderOpportunities(){return '<li>5%</li>'};if(typeof module!=='undefined')module.exports={renderLines,renderOpportunities};if(typeof window!=='undefined'){window.renderLines=renderLines;window.renderOpportunities=renderOpportunities;}");
+    expect(() => execSync(gate.run!, { cwd: workdir, stdio: "pipe", shell: "/bin/bash" })).not.toThrow();
   });
 
   it("affirmsBuildability flags backwards evidence but not a genuine refutation", () => {
     expect(affirmsBuildability("Prior art demonstrates this is buildable")).toBe(true);
     expect(affirmsBuildability("a practical build path exists, existing systems already do this")).toBe(true);
     expect(affirmsBuildability("matching the claim's acceptance gate logic")).toBe(true);
+    expect(affirmsBuildability("Financial systems use decimal arithmetic libraries such as decimal.js and big.js")).toBe(true);
     // the real poker refutation must NOT be mistaken for an affirmation
     expect(
       affirmsBuildability("10^160 game states x 1ns/state >> age of the universe; real solvers (PioSOLVER, Pluribus) use abstraction + subgame solving"),

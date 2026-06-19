@@ -20,6 +20,28 @@ describe("ToolExecutor", () => {
     expect(exec.executedWrites).toEqual(["src/a.ts"]);
   });
 
+  it("wraps top-level JavaScript data literals as CommonJS modules", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
+    const r = await exec.execute("write", {
+      path: "src/data.js",
+      content: "[{'id': 1, 'outcomes': ['A', 'B'], 'books': []}]",
+    });
+
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(cwd, "src", "data.js"), "utf8")).toBe(
+      "module.exports = [{'id': 1, 'outcomes': ['A', 'B'], 'books': []}];\n",
+    );
+  });
+
+  it("leaves normal JavaScript source unchanged", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
+    const source = "function findArbitrage() { return []; }\nmodule.exports = { findArbitrage };\n";
+    const r = await exec.execute("write", { path: "src/opportunities.js", content: source });
+
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(cwd, "src", "opportunities.js"), "utf8")).toBe(source);
+  });
+
   it("DENIES a write outside blast radius before touching disk", async () => {
     const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
     const r = await exec.execute("write", { path: "secrets/key.ts", content: "leak" });

@@ -18,8 +18,8 @@ export interface Rung {
 export function ladder(chain: Chain): Rung[] {
   return [
     { rung: 1, model: chain.executor, addFailureContext: false, addPriorDiff: false },
-    { rung: 2, model: chain.executor, addFailureContext: true, addPriorDiff: false },
-    { rung: 3, model: chain.fallback, addFailureContext: true, addPriorDiff: false },
+    { rung: 2, model: chain.fallback, addFailureContext: true, addPriorDiff: false },
+    { rung: 3, model: chain.knight, addFailureContext: true, addPriorDiff: false },
     { rung: 4, model: chain.knight, addFailureContext: true, addPriorDiff: true },
   ];
 }

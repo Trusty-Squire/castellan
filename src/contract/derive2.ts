@@ -62,6 +62,8 @@ const LensSchema = z.object({
   evidence: z.string().default(""),
 });
 
+type ProductIntent = "generic" | "dashboard" | "game" | "fortune";
+
 // --- result types ---
 
 export interface ClaimVerdict {
@@ -113,6 +115,106 @@ export interface DeriveV2Input {
   chainName: string;
   budgetUsd: number;
   maxHumanChecks?: number;
+}
+
+export interface DirectMissionItem {
+  statement: string;
+  acceptance?: Spec["requirements"][number]["acceptance"];
+}
+
+export interface DirectMissionInput {
+  thesis: string;
+  items: DirectMissionItem[];
+  chainName: string;
+  budgetUsd: number;
+  maxHumanChecks?: number;
+  idPrefix?: string;
+}
+
+export function classifyProductIntent(text: string): ProductIntent {
+  const lower = text.toLowerCase();
+  if (/\b(tarot|tea leaves|constellation|fortune|mystic|mystical|oracle|divination)\b/.test(lower)) return "fortune";
+  if (/\b(blackjack|poker|casino|hold.?em|texas hold.?em|bot opponents?|mc equity|monte carlo)\b/.test(lower)) return "game";
+  if (/\b(dashboard|ranked|table of lines|opportunit|compare key values|first viewport)\b/.test(lower)) return "dashboard";
+  return "generic";
+}
+
+export function isInteractiveAppIntent(text: string): boolean {
+  return /\b(app|web app|dashboard|game|site|website|ui|interface|fortune|casino|poker|blackjack)\b/i.test(text);
+}
+
+export function productPlanningContract(text: string): string {
+  if (!isInteractiveAppIntent(text)) return "";
+  const base = [
+    "INTERACTIVE APP MODE:",
+    "Decompose the work around user-visible capabilities and workflows, not around filenames or source modules.",
+    "Do NOT emit a plan that is mostly 'create index.html', 'write render.js', 'fill data.js', or similar file-shaped trivia.",
+    "Prefer nodes that correspond to product outcomes such as primary viewport hierarchy, core interaction loop, domain logic, responsive/mobile behavior, opponent behavior, comparison surfaces, and final polish.",
+    "It is acceptable for one node to touch multiple files when that is what the user-facing capability requires.",
+    "At most one thin wiring/integration node; the rest should be product-shaped.",
+  ];
+  switch (classifyProductIntent(text)) {
+    case "dashboard":
+      return [
+        ...base,
+        "For dashboards, explicitly plan for: headline value in the first viewport, readable comparison surfaces, ranked/high-signal panels, and mobile scanability.",
+      ].join(" ");
+    case "game":
+      return [
+        ...base,
+        "For games, explicitly plan for: rules/game loop, opponent behavior or AI, betting/turn controls, table presentation, and responsive play ergonomics.",
+      ].join(" ");
+    case "fortune":
+      return [
+        ...base,
+        "For fortune or ritual apps, explicitly plan for: the reading flow, content generation/selection logic, mystical presentation, and the reveal/result experience across desktop and mobile.",
+      ].join(" ");
+    default:
+      return base.join(" ");
+  }
+}
+
+export function isImplementationShapedDecomposition(
+  nodes: Array<{ brief: string; blast_radius: string[] }>,
+  text: string,
+): boolean {
+  if (!isInteractiveAppIntent(text) || nodes.length === 0) return false;
+  const fileMention = /\b([a-z0-9_-]+\.(html|css|js|ts|tsx|jsx)|index\.html|render\.[jt]s|data\.[jt]s)\b/i;
+  const productLanguage =
+    /\b(viewport|hierarchy|responsive|mobile|player|dealer|opponent|game loop|bet|table|dashboard|panel|ranked|compare|reading|tarot|fortune|ritual|result|flow|experience)\b/i;
+  const implementationNodes = nodes.filter((node) => {
+    const singleFileRadius = node.blast_radius.length === 1 && /\.[a-z0-9]+$/i.test(node.blast_radius[0] ?? "");
+    const fileShapedBrief = fileMention.test(node.brief) && !productLanguage.test(node.brief);
+    return singleFileRadius || fileShapedBrief;
+  }).length;
+  const productNodes = nodes.filter((node) => productLanguage.test(node.brief)).length;
+  return implementationNodes >= Math.ceil(nodes.length * 0.75) && productNodes === 0;
+}
+
+export function trimSurveyForDecompose(survey: string, text: string): string {
+  if (!isInteractiveAppIntent(text)) return survey;
+  const filesMatch = survey.match(/FILES \((\d+)\):/);
+  const fileCount = filesMatch ? Number(filesMatch[1]) : Number.NaN;
+  if (Number.isFinite(fileCount) && fileCount <= 5) {
+    const kept = survey
+      .split("\n")
+      .filter((line) => /^FILES \(/.test(line) || /^DETECTED CHECK COMMANDS:/.test(line) || /^AVAILABLE TOOLS/.test(line) || /^\s{2}(python3|node|npm|bash|rg|pytest|go|cargo):/.test(line) || /^\s{2}(npm run|make )/.test(line));
+    return kept.join("\n");
+  }
+  return survey.length > 4000 ? survey.slice(0, 4000) : survey;
+}
+
+function repoFileCountFromSurvey(survey: string): number | null {
+  const match = survey.match(/FILES \((\d+)\):/);
+  if (!match) return null;
+  const count = Number(match[1]);
+  return Number.isFinite(count) ? count : null;
+}
+
+function shouldUseGreenfieldSpecFastPath(spec: Spec, survey: string): boolean {
+  if (!isInteractiveAppIntent(`${spec.thesis}\n${spec.stories.join("\n")}`)) return false;
+  const files = repoFileCountFromSurvey(survey);
+  return files !== null && files <= 5;
 }
 
 // --- LLM stage helper: one schema-retry, refusal on second failure ---
@@ -185,6 +287,9 @@ const BUILDABILITY_AFFIRMATIONS: RegExp[] = [
   /(already|routinely) (do|does|implement|perform)/i,
   /\bis (clearly )?(buildable|feasible|doable)\b/i,
   /existing (systems|practice|tooling) (already )?(do|implement|show)/i,
+  /use decimal arithmetic librar(?:y|ies)/i,
+  /\b(decimal\.js|big\.js)\b/i,
+  /standard (mitigation|workaround|library)/i,
 ];
 
 export function affirmsBuildability(evidence: string): boolean {
@@ -200,7 +305,10 @@ export function affirmsBuildability(evidence: string): boolean {
  * negative lookahead) and never substrings inside other words.
  */
 export function groundGateRun(run: string): string {
-  return run.replace(/\bpython\b(?!3)/g, "python3").replace(/\bpip\b(?!3)/g, "pip3");
+  return run
+    .replace(/\bpython\b(?!3)/g, "python3")
+    .replace(/\bpip\b(?!3)/g, "pip3")
+    .replace(/(^|[;&|(\n]\s*)pytest\b/g, "$1python3 -m pytest");
 }
 
 export const LENSES: { id: string; instruction: string }[] = [
@@ -240,6 +348,23 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         .map((r) => `${r.id}: ${r.statement} [acceptance tier ${r.acceptance.tier}${r.acceptance.gate ? `: ${r.acceptance.gate}` : ""}${r.acceptance.artifact ? `: ${r.acceptance.artifact}` : ""}]`)
         .join("\n")}\n\nSCOPE FENCE:\n${input.spec.scope_fence.join("\n") || "(none)"}`
     : `GOAL:\n${input.goal}`;
+  const productText = input.spec
+    ? `${input.spec.thesis}\n${input.spec.stories.join("\n")}\n${input.spec.requirements.map((r) => r.statement).join("\n")}`
+    : input.goal!;
+  const decomposeSurvey = trimSurveyForDecompose(survey, productText);
+
+  if (input.spec && shouldUseGreenfieldSpecFastPath(input.spec, survey)) {
+    const mission = buildGreenfieldSpecMission(input.spec, input);
+    return {
+      ok: true,
+      mission,
+      claims: [],
+      freeformGates: [],
+      readback: `${renderReadback(mission, [], [])}\n  fast-path: greenfield interactive-app spec compiled directly to mission nodes`,
+      inTokens: usage.in,
+      outTokens: usage.out,
+    };
+  }
 
   // 2. decompose
   const coverageRule = input.spec
@@ -247,20 +372,39 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         .map((r) => r.id)
         .join(", ")}). EVERY node MUST set "requirement" to the id of the requirement it implements, and EVERY one of those requirement ids MUST be covered by at least one node. Do not emit a node without a "requirement"; do not leave any requirement uncovered.`
     : "";
-  const decomposed = await jsonStage(
-    llm,
-    model,
-    "decompose",
-    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} Output ONLY JSON: {"nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`,
-    `${intent}\n\nREPOSITORY SURVEY:\n${survey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`,
-    DecomposeSchema,
-    usage,
-  );
+  const decomposeSystem =
+    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${productPlanningContract(productText)} Output ONLY JSON: {"nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
+  const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
+  let decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
+  if (isImplementationShapedDecomposition(decomposed.nodes, productText)) {
+    decomposed = await jsonStage(
+      llm,
+      model,
+      "decompose:product-shape-retry",
+      decomposeSystem,
+      `${decomposeUser}\n\nYour previous decomposition was too implementation-shaped for an interactive app. Re-plan around user-visible capabilities and product workflows instead of source files.`,
+      DecomposeSchema,
+      usage,
+    );
+  }
 
   // spec-mode coverage gate: every requirement maps to >=1 node
   if (input.spec) {
-    const covered = new Set(decomposed.nodes.map((n) => n.requirement).filter(Boolean));
-    const missing = input.spec.requirements.filter((r) => !covered.has(r.id)).map((r) => r.id);
+    let covered = new Set(decomposed.nodes.map((n) => n.requirement).filter(Boolean));
+    let missing = input.spec.requirements.filter((r) => !covered.has(r.id)).map((r) => r.id);
+    if (missing.length > 0) {
+      decomposed = await jsonStage(
+        llm,
+        model,
+        "decompose:coverage-retry",
+        decomposeSystem,
+        `${decomposeUser}\n\nYour previous decomposition left these requirement ids uncovered: ${missing.join(", ")}.\nRe-emit the SAME plan shape if you want, but every requirement id must be assigned to at least one node via the "requirement" field. If one node satisfies multiple requirements, duplicate that capability into additional nodes or split the node so that each listed requirement id is explicitly covered.`,
+        DecomposeSchema,
+        usage,
+      );
+      covered = new Set(decomposed.nodes.map((n) => n.requirement).filter(Boolean));
+      missing = input.spec.requirements.filter((r) => !covered.has(r.id)).map((r) => r.id);
+    }
     if (missing.length > 0) {
       return { ok: false, reasons: [`decomposition covers no node for requirement(s): ${missing.join(", ")}`], remediations: [] };
     }
@@ -285,22 +429,43 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   });
 
   if (needsInference.length > 0) {
-    const inferred = await jsonStage(
-      llm,
-      model,
-      "infer-gates",
-      `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`,
-      `NODES:\n${needsInference.map((n) => `${n.id}: ${n.brief}`).join("\n")}\n\nREPOSITORY SURVEY (use REAL commands found here):\n${survey}`,
-      InferGatesSchema,
-      usage,
-    );
-    for (const g of inferred.gates) {
-      if (!needsInference.some((n) => n.id === g.node)) continue;
-      if (g.pattern) {
-        gatesByNode.set(g.node, renderGate(g.pattern, g.params));
-      } else if (g.freeform) {
-        gatesByNode.set(g.node, GateSchema.parse({ type: "command", run: g.freeform, soft: false }));
-        freeformGates.push({ node: g.node, run: g.freeform });
+    const inferSystem = `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`;
+    const inferUser = `NODES:\n${needsInference.map((n) => `${n.id}: ${n.brief}`).join("\n")}\n\nREPOSITORY SURVEY (use REAL commands found here):\n${survey}`;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const inferred = await jsonStage(
+        llm,
+        model,
+        attempt === 0 ? "infer-gates" : "infer-gates:repair",
+        inferSystem,
+        attempt === 0
+          ? inferUser
+          : `${inferUser}\n\nYour previous gate selection could not be rendered. Fix the issues below and return corrected gates only.\n${freeformGates.map((f) => `- ${f.node}: ${f.run}`).join("\n")}`,
+        InferGatesSchema,
+        usage,
+      );
+      freeformGates.length = 0;
+      for (const node of needsInference) gatesByNode.delete(node.id);
+      for (const g of inferred.gates) {
+        if (!needsInference.some((n) => n.id === g.node)) continue;
+        if (g.pattern) {
+          try {
+            gatesByNode.set(g.node, renderGate(g.pattern, g.params));
+          } catch (err) {
+            freeformGates.push({ node: g.node, run: (err as Error).message });
+          }
+        } else if (g.freeform) {
+          gatesByNode.set(g.node, GateSchema.parse({ type: "command", run: g.freeform, soft: false }));
+          freeformGates.push({ node: g.node, run: g.freeform });
+        }
+      }
+      const ungated = needsInference.filter((n) => !gatesByNode.has(n.id)).map((n) => n.id);
+      if (ungated.length === 0 && freeformGates.every((f) => !/^pattern /.test(f.run))) break;
+      if (attempt === 1) {
+        return {
+          ok: false,
+          reasons: [`no objective gate could be inferred for node(s): ${ungated.join(", ") || needsInference.map((n) => n.id).join(", ")}`],
+          remediations: ungated.length > 0 ? ungated.map((node) => remediationFor(node)) : needsInference.map((n) => remediationFor(n.id)),
+        };
       }
     }
     const ungated = needsInference.filter((n) => !gatesByNode.has(n.id)).map((n) => n.id);
@@ -318,7 +483,14 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   // 127 and halts the build for a non-reason (the clairvoyance build halt).
   for (const [id, g] of gatesByNode) {
     if ((g.type === "command" || g.type === "metric") && g.run) {
-      gatesByNode.set(id, { ...g, run: groundGateRun(g.run) });
+      const node = decomposed.nodes.find((n) => n.id === id);
+      const grounded = { ...g, run: groundGateRun(g.run) };
+      gatesByNode.set(
+        id,
+        node
+          ? hardenIndexGateForNode(node, hardenOpportunitiesGateForNode(node, hardenGeneratedGateForNode(node, grounded)))
+          : grounded,
+      );
     }
   }
 
@@ -417,6 +589,138 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   };
 }
 
+function buildGreenfieldSpecMission(spec: Spec, input: DeriveV2Input): Mission {
+  const budgetPerNode = Math.max(0.01, Number((input.budgetUsd / spec.requirements.length).toFixed(2)));
+  const nodes = spec.requirements.map((req, index) => {
+    const gate = primitiveGreenfieldGate(req.statement, req.acceptance);
+    const nodeId = req.id.toLowerCase();
+    return {
+      id: nodeId,
+      brief: req.statement,
+      deps: index === 0 ? [] : [spec.requirements[index - 1]!.id.toLowerCase()],
+      context_globs: ["**/*"],
+      blast_radius: ["**/*"],
+      gate,
+      budget_usd: budgetPerNode,
+    };
+  });
+  return MissionSchema.parse({
+    goal: spec.thesis,
+    budget_usd: input.budgetUsd,
+    chain: input.chainName,
+    workdir: ".",
+    max_human_checks: input.maxHumanChecks ?? 3,
+    nodes,
+  });
+}
+
+export function buildDirectMission(input: DirectMissionInput): Mission {
+  if (input.items.length === 0) {
+    throw new SquireError("SPEC_FAST_PATH_INVALID", "direct mission requires at least one item");
+  }
+  const budgetPerNode = Math.max(0.01, Number((input.budgetUsd / input.items.length).toFixed(2)));
+  const prefix = input.idPrefix ?? "d";
+  const nodes = input.items.map((item, index) => {
+    const gate = item.acceptance ? acceptanceToGate(item.acceptance) : primitiveGreenfieldGate(item.statement, { tier: 1, gate: "npm test -- --run" });
+    const nodeId = `${prefix}${index + 1}`;
+    return {
+      id: nodeId,
+      brief: item.statement,
+      deps: index === 0 ? [] : [`${prefix}${index}`],
+      context_globs: ["**/*"],
+      blast_radius: ["**/*"],
+      gate,
+      budget_usd: budgetPerNode,
+    };
+  });
+  return MissionSchema.parse({
+    goal: input.thesis,
+    budget_usd: input.budgetUsd,
+    chain: input.chainName,
+    workdir: ".",
+    max_human_checks: input.maxHumanChecks ?? 3,
+    nodes,
+  });
+}
+
+function primitiveGreenfieldGate(statement: string, acceptance: Spec["requirements"][number]["acceptance"]): Gate {
+  if (acceptance.tier === 4) return GateSchema.parse({ type: "human", artifact: acceptance.artifact!, soft: false });
+  if (acceptance.tier === 3) {
+    return GateSchema.parse({
+      type: "judge",
+      artifact: acceptance.artifact ?? "build/**",
+      soft: true,
+      judge: { model: "pinned", rubric: acceptance.gate ?? "manual rubric", votes: 3 },
+    });
+  }
+  if (acceptance.tier === 0) {
+    throw new SquireError("SPEC_FAST_PATH_INVALID", "greenfield fast-path requires anchored requirements");
+  }
+  const lower = statement.toLowerCase();
+  const parts: string[] = [];
+  if (/\b(first viewport|headline|visual shell|brand|theme|mobile|layout|selector|routes?|mode|options?|flow|reading result|readingresult|history|persistence|scan strip|data-testid)\b/.test(lower)) {
+    parts.push("npm run build");
+  }
+  if (/\b(tarot|tea|constellation|fortune|reading|state|engine|safety|history|mobile|selector|route)\b/.test(lower)) {
+    parts.push("npm test -- --run");
+  }
+  const grepChecks = primitiveGreenfieldGreps(statement);
+  if (grepChecks.length > 0) parts.push(...grepChecks);
+  if (parts.length === 0) parts.push("npm test -- --run");
+  return GateSchema.parse({ type: "command", run: bootstrapGreenfieldNodeGate(parts.join(" && ")), soft: false });
+}
+
+function primitiveGreenfieldGreps(statement: string): string[] {
+  const lower = statement.toLowerCase();
+  const checks: string[] = [];
+  if (/\bheadline|first viewport|headline-value\b/.test(lower)) {
+    checks.push("grep -R \"data-testid=['\\\"]headline-value\" -n . >/dev/null");
+    checks.push("grep -R -Ei \"tarot\" . >/dev/null");
+    checks.push("grep -R -Ei \"tea[- ]?leaves|tea[- ]?leaf\" . >/dev/null");
+    checks.push("grep -R -Ei \"constellations?\" . >/dev/null");
+  }
+  if (/\bscan strip|reading-key-values|compact scan\b/.test(lower)) {
+    checks.push("grep -R \"data-testid=['\\\"]reading-key-values\" -n . >/dev/null");
+  }
+  if (/\bplaceholder|lorem|fake demo|duplicate-row|fake rows\b/.test(lower)) {
+    checks.push("! grep -R -Ei \"lorem|ipsum|foo|bar|A vs B|sample fortune|placeholder fortune|123\" src app pages public index.html 2>/dev/null");
+  }
+  if (/\bselected symbols|cited symbols|card names|named symbols|selected factors\b/.test(lower)) {
+    checks.push("grep -R -Ei \"card name|selected symbol|cited symbol|selected factor|data-testid=['\\\"]card-name|data-testid=['\\\"]cited-symbol\" . >/dev/null");
+  }
+  return checks;
+}
+
+function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]): Gate {
+  if (acceptance.tier === 4) return GateSchema.parse({ type: "human", artifact: acceptance.artifact!, soft: false });
+  if (acceptance.tier >= 1 && acceptance.tier <= 2) {
+    return GateSchema.parse({
+      type: acceptance.tier === 1 ? "command" : "metric",
+      run: bootstrapGreenfieldNodeGate(groundGateRun(acceptance.gate!)),
+      soft: false,
+    });
+  }
+  if (acceptance.tier === 3) {
+    return GateSchema.parse({
+      type: "judge",
+      artifact: acceptance.artifact ?? "build/**",
+      soft: true,
+      judge: { model: "pinned", rubric: acceptance.gate ?? "manual rubric", votes: 3 },
+    });
+  }
+  throw new SquireError("SPEC_FAST_PATH_INVALID", `cannot fast-path unanchored acceptance tier ${acceptance.tier}`);
+}
+
+function bootstrapGreenfieldNodeGate(run: string): string {
+  if (!/\bnpm (test|run)\b/.test(run)) return run;
+  const bootstrap = [
+    "if [ ! -d node_modules ]; then npm install --no-fund --no-audit; fi",
+    `if printf '%s' ${shellQuoteForCommand(run)} | grep -Eq 'playwright|test:e2e'; then npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1; fi`,
+    run,
+  ].join(" && ");
+  return `sh -c ${shellQuoteForCommand(bootstrap)}`;
+}
+
 /** Judge mode: can this spec compile? Diagnostics, no mission emitted (SPEC-v0.2 §6.2). */
 export function specPreGate(spec: Spec): DeriveRefusal | null {
   const reasons: string[] = [];
@@ -443,6 +747,95 @@ function remediationFor(id: string): { requirement: string; options: [string, st
       `own: insert a tier-4 human checkpoint (counted against max_human_checks)`,
     ],
   };
+}
+
+export function hardenGeneratedGateForNode(
+  node: { brief: string; blast_radius: string[] },
+  gate: Gate,
+): Gate {
+  if ((gate.type !== "command" && gate.type !== "metric") || !gate.run) return gate;
+  if (!isSportsBettingDataNode(node, gate.run)) return gate;
+  return {
+    ...gate,
+    run:
+      "node -e \"const d=require('./data.js');const ev=d.events||d.EVENTS||d;const ok=Array.isArray(ev)&&ev.length>=3&&ev.every(e=>e&&typeof e==='object'&&!Array.isArray(e)&&('id' in e)&&Array.isArray(e.outcomes)&&e.outcomes.length>=2&&Array.isArray(e.books)&&e.books.length>=1&&e.books.every(b=>b&&typeof b.name==='string'&&Array.isArray(b.odds)&&b.odds.length===e.outcomes.length&&b.odds.every(o=>typeof o==='number'&&o>1)));process.exit(ok?0:1)\"",
+  };
+}
+
+export function hardenOpportunitiesGateForNode(
+  node: { brief: string; blast_radius: string[] },
+  gate: Gate,
+): Gate {
+  if ((gate.type !== "command" && gate.type !== "metric") || !gate.run) return gate;
+  if (!isFindArbitrageNode(node, gate.run)) return gate;
+  const positive =
+    "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'g1',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]}]);process.exit(o.length>=1&&typeof o[0].size==='number'&&o[0].size>0?0:1)\"";
+  const negative =
+    "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'g',outcomes:['A','B'],books:[{name:'x',odds:[1.8,1.9]},{name:'y',odds:[1.85,1.85]}]}]);process.exit(o.length===0?0:1)\"";
+  const sorted =
+    "node -e \"const{findArbitrage}=require('./opportunities.js');const o=findArbitrage([{id:'a',outcomes:['A','B'],books:[{name:'x',odds:[2.1,1.8]},{name:'y',odds:[1.8,2.1]}]},{id:'b',outcomes:['C','D'],books:[{name:'m',odds:[2.5,1.7]},{name:'n',odds:[1.7,2.5]}]}]);process.exit(o.length>=2&&o[0].size>=o[1].size?0:1)\"";
+  const run = /o\.length===0/.test(gate.run)
+    ? negative
+    : /o\[0\]\.size\s*>=\s*o\[1\]\.size/.test(gate.run)
+      ? sorted
+      : positive;
+  return { ...gate, run };
+}
+
+export function hardenIndexGateForNode(
+  node: { brief: string; blast_radius: string[] },
+  gate: Gate,
+): Gate {
+  if ((gate.type !== "command" && gate.type !== "metric") || !gate.run) return gate;
+  if (!isSportsBettingIndexNode(node, gate.run)) return gate;
+  return {
+    ...gate,
+    run: `node -e ${shellQuoteForCommand(browserSmokeScript())}`,
+  };
+}
+
+function isSportsBettingDataNode(node: { brief: string; blast_radius: string[] }, run: string): boolean {
+  const writesData = node.blast_radius.includes("data.js") || /require\(['"]\.\/data\.js['"]\)/.test(run);
+  if (!writesData) return false;
+  const brief = node.brief.toLowerCase();
+  return brief.includes("event") && brief.includes("book") && brief.includes("odds");
+}
+
+function isFindArbitrageNode(node: { brief: string; blast_radius: string[] }, run: string): boolean {
+  const writesOpportunities = node.blast_radius.includes("opportunities.js") || /require\(['"]\.\/opportunities\.js['"]\)/.test(run);
+  if (!writesOpportunities) return false;
+  return /findArbitrage/.test(node.brief) || /findArbitrage/.test(run);
+}
+
+function isSportsBettingIndexNode(node: { brief: string; blast_radius: string[] }, run: string): boolean {
+  const writesIndex = node.blast_radius.includes("index.html") || /\bindex\.html\b/.test(run);
+  if (!writesIndex) return false;
+  const text = `${node.brief}\n${run}`.toLowerCase();
+  return text.includes("opportunities.js") && text.includes("render.js");
+}
+
+function browserSmokeScript(): string {
+  return [
+    "const fs=require('fs'),vm=require('vm');",
+    "const html=fs.readFileSync('index.html','utf8');",
+    "for(const s of ['id=\"lines\"','id=\"opportunities\"','opportunities.js','render.js']) if(!html.includes(s)) process.exit(1);",
+    "const context={console,elems:{},__ready:null};",
+    "context.window=context;context.globalThis=context;",
+    "context.addEventListener=(name,fn)=>{if(name==='DOMContentLoaded') context.__ready=fn;};",
+    "context.document={getElementById:(id)=>context.elems[id]||(context.elems[id]={innerHTML:''})};",
+    "vm.createContext(context);",
+    "for(const f of ['data.js','opportunities.js','render.js']) vm.runInContext(fs.readFileSync(f,'utf8'),context,{filename:f});",
+    "const inline=[...html.matchAll(/<script(?![^>]*src=)[^>]*>([\\s\\S]*?)<\\/script>/gi)].map(m=>m[1]).join('\\n');",
+    "if(inline.trim()) vm.runInContext(inline,context,{filename:'index-inline.js'});",
+    "if(typeof context.__ready==='function') context.__ready();",
+    "const lines=context.elems.lines&&context.elems.lines.innerHTML||'';",
+    "const opps=context.elems.opportunities&&context.elems.opportunities.innerHTML||'';",
+    "process.exit(/<tr/i.test(lines)&&/<li/i.test(opps)?0:1);",
+  ].join("");
+}
+
+function shellQuoteForCommand(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function renderReadback(mission: Mission, claims: ClaimVerdict[], freeform: { node: string; run: string }[]): string {

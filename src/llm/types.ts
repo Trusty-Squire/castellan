@@ -6,6 +6,8 @@ export interface LlmClient {
     user: string;
     json?: boolean;
     maxTokens: number;
+    /** Optional caller-owned cancellation signal for bounded review/planning calls. */
+    signal?: AbortSignal;
     /**
      * Optional image inputs for multimodal review (the visual design judge sends
      * a screenshot of the built UI). Each is a data URL ("data:image/png;base64,…").

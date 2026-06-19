@@ -146,6 +146,178 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     expect(events.some((e) => e.kind === "error")).toBe(true);
   });
 
+  it("aborts an attempt when the provider/agent loop never returns", async () => {
+    const hangingStream: StreamFn = (() => createAssistantMessageEventStream()) as unknown as StreamFn;
+    const engine = new PiEngine({ streamFn: hangingStream, attemptTimeoutMs: 50 });
+
+    const events = await collect(engine, req());
+
+    expect(events).toContainEqual({ kind: "error", message: "attempt timed out after 50ms" });
+  });
+
+  it("aborts an attempt that keeps rewriting the same path", async () => {
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: Array.from({ length: 6 }, (_, i) => ({
+            id: `w${i}`,
+            name: "write",
+            arguments: { path: "src/repeat.ts", content: `export const n = ${i};` },
+          })),
+          in: 100,
+          out: 20,
+        },
+        { text: "should not finish", in: 10, out: 5 },
+      ]),
+    });
+
+    const events = await collect(engine, req());
+
+    expect(events).toContainEqual({
+      kind: "error",
+      message: "attempt aborted after 5 write/edit attempts to src/repeat.ts without finishing",
+    });
+  });
+
+  it("aborts a noisy attempt after the default tool-call ceiling", async () => {
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: Array.from({ length: 13 }, (_, i) => ({
+            id: `r${i}`,
+            name: "read",
+            arguments: { path: "src/missing.ts" },
+          })),
+          in: 100,
+          out: 20,
+        },
+        { text: "should not finish", in: 10, out: 5 },
+      ]),
+    });
+
+    const events = await collect(engine, req());
+
+    expect(events).toContainEqual({
+      kind: "error",
+      message: "attempt aborted after 12 tool calls without finishing",
+    });
+  });
+
+  it("aborts an attempt immediately when it repeats identical file content", async () => {
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: [
+            { id: "w1", name: "write", arguments: { path: "src/repeat.ts", content: "export const n = 1;" } },
+            { id: "w2", name: "write", arguments: { path: "src/repeat.ts", content: "export const n = 1;" } },
+            { id: "w3", name: "write", arguments: { path: "src/repeat.ts", content: "export const n = 1;" } },
+          ],
+          in: 100,
+          out: 20,
+        },
+        { text: "should not finish", in: 10, out: 5 },
+      ]),
+    });
+
+    const events = await collect(engine, req());
+
+    expect(events).toContainEqual({
+      kind: "error",
+      message: "attempt aborted after duplicate write/edit content for src/repeat.ts",
+    });
+  });
+
+  it("aborts a JavaScript write that imports cleanly but misses gate-required exports", async () => {
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: [
+            { id: "w1", name: "write", arguments: { path: "src/opportunities.js", content: "module.exports = [];" } },
+          ],
+          in: 100,
+          out: 20,
+        },
+        { text: "should not finish", in: 10, out: 5 },
+      ]),
+    });
+
+    const events = await collect(
+      engine,
+      req({
+        tools: { blastRadius: ["src/**"] },
+        doneCheck:
+          "node -e \"const{findArbitrage}=require('./src/opportunities.js');process.exit(typeof findArbitrage==='function'?0:1)\"",
+      }),
+    );
+
+    expect(events).toContainEqual({
+      kind: "error",
+      message: "attempt aborted because src/opportunities.js does not export required symbol(s): findArbitrage",
+    });
+  });
+
+  it("aborts a malformed JavaScript write when the gate requires CommonJS exports", async () => {
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: [
+            {
+              id: "w1",
+              name: "write",
+              arguments: { path: "src/opportunities.js", content: "{'broken': \"module.exports = { findArbitrage };\"}" },
+            },
+          ],
+          in: 100,
+          out: 20,
+        },
+        { text: "should not finish", in: 10, out: 5 },
+      ]),
+    });
+
+    const events = await collect(
+      engine,
+      req({
+        tools: { blastRadius: ["src/**"] },
+        doneCheck:
+          "node -e \"const{findArbitrage}=require('./src/opportunities.js');process.exit(typeof findArbitrage==='function'?0:1)\"",
+      }),
+    );
+
+    expect(events).toContainEqual({
+      kind: "error",
+      message: "attempt aborted because src/opportunities.js cannot be required for gate export validation",
+    });
+  });
+
+  it("aborts an attempt that keeps failing edits on the same path", async () => {
+    writeFileSync(join(cwd, "src", "repeat.ts"), "export const n = 0;");
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: Array.from({ length: 6 }, (_, i) => ({
+            id: `e${i}`,
+            name: "edit",
+            arguments: {
+              path: "src/repeat.ts",
+              oldString: `missing ${i}`,
+              newString: `export const n = ${i};`,
+            },
+          })),
+          in: 100,
+          out: 20,
+        },
+        { text: "should not finish", in: 10, out: 5 },
+      ]),
+    });
+
+    const events = await collect(engine, req());
+
+    expect(events).toContainEqual({
+      kind: "error",
+      message: "attempt aborted after 5 write/edit attempts to src/repeat.ts without finishing",
+    });
+  });
+
   it("bounds output max_tokens on every call (avoids provider over-pre-authorization)", async () => {
     const seen: (number | undefined)[] = [];
     const recordingStream: StreamFn = ((model: unknown, context: unknown, options: { maxTokens?: number }) => {
@@ -197,7 +369,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
       return (inner as unknown as (...a: unknown[]) => unknown)(model, context, options);
     }) as unknown as StreamFn;
 
-    const engine = new PiEngine({ streamFn: capturing });
+    const engine = new PiEngine({ streamFn: capturing, maxToolCallsPerAttempt: 64 });
     await collect(engine, req({ maxTokens: 4000 }));
 
     expect(contextTokens.length).toBeGreaterThanOrEqual(20);

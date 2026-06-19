@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMission } from "../../src/harness/runner.js";
+import { EXECUTOR_SYSTEM_PROMPT, runMission } from "../../src/harness/runner.js";
 import { MockEngine, type ScriptResolver } from "../../src/engine/mock.js";
 import { initRepo } from "../../src/harness/checkpoint.js";
 import { parseMission, parseChains } from "../../src/contract/schema.js";
@@ -58,6 +58,11 @@ nodes:
 `;
 
 describe("runMission", () => {
+  it("tells executors to write literal CommonJS source for JS files", () => {
+    expect(EXECUTOR_SYSTEM_PROMPT).toContain("content argument is the exact file body");
+    expect(EXECUTOR_SYSTEM_PROMPT).toContain("module.exports");
+  });
+
   it("completes a node on rung 1, commits, and writes a trace", async () => {
     const result = await run(oneNode, () => ({
       steps: [
@@ -99,6 +104,49 @@ describe("runMission", () => {
     expect(kinds).toContain("node_fail");
     expect(kinds).toContain("escalate");
     expect(kinds).toContain("reset");
+  });
+
+  it("runs a fresh targeted repair agent before escalating a failed gate", async () => {
+    const result = await run(oneNode, (id) => {
+      if (id === "fix:repair1") {
+        return {
+          steps: [
+            { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
+            { tool: "bash", args: { command: "bash check.sh" } },
+            { done: "small repair passed the gate" },
+          ],
+        };
+      }
+      return {
+        steps: [
+          { text: "missed the exact assertion" },
+          { done: "looks okay" },
+        ],
+      };
+    });
+    expect(result.completed).toBe(true);
+    expect(result.nodes[0]!.maxRung).toBe(1);
+    const kinds = readTrace(result.tracePath).map((e) => e.kind);
+    expect(kinds).toContain("repair_start");
+    expect(kinds).not.toContain("escalate");
+    expect(readFileSync(join(repo, "src", "target.ts"), "utf8")).toContain("v = 1");
+  });
+
+  it("escalates after targeted repairs are exhausted", async () => {
+    const result = await run(oneNode, (_id, rung) => {
+      if (rung === 1) return { steps: [{ done: "still wrong" }] };
+      return {
+        steps: [
+          { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
+          { done: "fixed on rung 2" },
+        ],
+      };
+    });
+    expect(result.completed).toBe(true);
+    expect(result.nodes[0]!.maxRung).toBe(2);
+    const kinds = readTrace(result.tracePath).map((e) => e.kind);
+    expect(kinds.filter((kind) => kind === "repair_start")).toHaveLength(2);
+    expect(kinds).toContain("escalate");
   });
 
   it("resets after a failed attempt so a bad edit does not persist", async () => {
@@ -196,6 +244,45 @@ describe("runMission", () => {
     // It did NOT escalate (the work was done on the first attempt) and never node-failed.
     expect(events.some((e) => e.kind === "node_fail")).toBe(false);
     expect(result.nodes[0]!.maxRung).toBe(1);
+  });
+
+  it("commits verified work when the gate passes even if the engine reports an error afterward", async () => {
+    const result = await run(oneNode, () => ({
+      steps: [
+        { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
+        { error: "provider ended after tool call" },
+      ],
+    }));
+
+    expect(result.completed).toBe(true);
+    expect(result.committedNodeIds).toEqual(["fix"]);
+    expect(readFileSync(join(repo, "src", "target.ts"), "utf8")).toContain("v = 1");
+    const kinds = readTrace(result.tracePath).map((e) => e.kind);
+    expect(kinds).toContain("engine_error");
+    expect(kinds).toContain("node_pass");
+    expect(kinds).not.toContain("node_fail");
+  });
+
+  it("packs existing literal blast-radius files even when context_globs omits them", async () => {
+    const omittedContext = `
+goal: "inspect existing target"
+budget_usd: 5
+chain: cheap
+nodes:
+  - id: inspect
+    brief: "inspect src/target.ts"
+    context_globs: []
+    blast_radius: ["src/target.ts"]
+    done_check: "true"
+    budget_usd: 1
+`;
+    const result = await run(omittedContext, () => ({
+      steps: [{ done: "no change needed" }],
+    }));
+
+    expect(result.completed).toBe(true);
+    const pack = readTrace(result.tracePath).find((e) => e.kind === "pack");
+    expect((pack!.payload as { files: string[] }).files).toContain("src/target.ts");
   });
 
   it("budget_scale multiplies the effective caps (frontier baseline sizing)", async () => {

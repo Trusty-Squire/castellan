@@ -29,6 +29,8 @@ export interface AttemptRequest {
   nodeId: string;
   /** Current escalation rung (1-based). */
   rung: number;
+  /** Command gate for this node, used by engines for cheap local sanity checks. */
+  doneCheck?: string;
 }
 
 export type EngineEvent =

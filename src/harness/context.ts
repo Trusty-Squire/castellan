@@ -2,6 +2,17 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import fg from "fast-glob";
 
+const PACK_IGNORE = [
+  "**/.git/**",
+  "**/.squire/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/coverage/**",
+  "**/test-results/**",
+  "**/playwright-report/**",
+];
+
 export interface PackedFile {
   path: string;
   contents: string;
@@ -45,6 +56,7 @@ export function packContext(opts: {
     absolute: false,
     followSymbolicLinks: false,
     unique: true,
+    ignore: PACK_IGNORE,
   });
 
   // Sort newest-first by mtime so the freshest context survives truncation.

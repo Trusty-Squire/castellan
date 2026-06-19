@@ -16,6 +16,9 @@ import type { AttemptRequest, Engine, EngineEvent, ModelRef, ToolName } from "./
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 const MAX_BLAST_VIOLATIONS = 3;
+const DEFAULT_MAX_TOOL_CALLS_PER_ATTEMPT = 12;
+const DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT = 5;
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 45_000;
 /**
  * Bound the agent loop's conversation history. Every turn re-sends the full
  * transcript; without a cap a confused model that runs many tool calls (or one
@@ -68,6 +71,12 @@ const OUTPUT_MAX_TOKENS = 8_192;
 export interface PiEngineOptions {
   /** Inject a fake stream function for tests (no network). Default: pi-ai streamSimple. */
   streamFn?: StreamFn;
+  /** Hard stop for confused agents that keep using tools and never finish. */
+  maxToolCallsPerAttempt?: number;
+  /** Hard stop for agents repeatedly write/editing one file without finishing. */
+  maxMutationsPerPathPerAttempt?: number;
+  /** Hard wall-clock stop for one agent attempt. */
+  attemptTimeoutMs?: number;
 }
 
 /**
@@ -80,9 +89,16 @@ export interface PiEngineOptions {
  */
 export class PiEngine implements Engine {
   private readonly streamFn?: StreamFn;
+  private readonly maxToolCallsPerAttempt: number;
+  private readonly maxMutationsPerPathPerAttempt: number;
+  private readonly attemptTimeoutMs: number;
 
   constructor(opts: PiEngineOptions = {}) {
     this.streamFn = opts.streamFn;
+    this.maxToolCallsPerAttempt = opts.maxToolCallsPerAttempt ?? DEFAULT_MAX_TOOL_CALLS_PER_ATTEMPT;
+    this.maxMutationsPerPathPerAttempt =
+      opts.maxMutationsPerPathPerAttempt ?? DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT;
+    this.attemptTimeoutMs = opts.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
   }
 
   async *runAttempt(req: AttemptRequest): AsyncIterable<EngineEvent> {
@@ -92,7 +108,37 @@ export class PiEngine implements Engine {
       () => false,
       () => null,
     );
-    const state: { denied: number; agent?: Agent; aborted: boolean } = { denied: 0, aborted: false };
+    const state: {
+      denied: number;
+      toolCalls: number;
+      mutationsByPath: Map<string, number>;
+      lastMutationContentByPath: Map<string, string>;
+      agent?: Agent;
+      aborted: boolean;
+      abortReason?: string;
+    } = {
+      denied: 0,
+      toolCalls: 0,
+      mutationsByPath: new Map(),
+      lastMutationContentByPath: new Map(),
+      aborted: false,
+    };
+    let resolveAbort: (() => void) | undefined;
+    const aborted = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+    const abortAttempt = (reason: string): void => {
+      if (state.aborted) return;
+      state.aborted = true;
+      state.abortReason = reason;
+      resolveAbort?.();
+      try {
+        state.agent?.abort();
+      } catch {
+        // The abort promise above is the harness's source of truth; provider
+        // abort support is best-effort.
+      }
+    };
     let finalText = "";
     let providerError: string | undefined;
 
@@ -103,15 +149,59 @@ export class PiEngine implements Engine {
     const base = this.streamFn ?? (streamSimple as StreamFn);
     const streamFn: StreamFn = ((model, context, options) =>
       base(model, context, { ...(options ?? {}), maxTokens: options?.maxTokens ?? outputCap })) as StreamFn;
+    const requiredExportsByPath = requiredCommonJsExportsByPath(req.doneCheck ?? "");
 
-    const tools = makeTools(exec, (id, name, path, reason) => {
-      state.denied += 1;
-      out.push({ kind: "blast_denied", id, name, path, reason });
-      if (state.denied >= MAX_BLAST_VIOLATIONS) {
-        state.aborted = true;
-        state.agent?.abort();
+    const enforceToolLimit = (): void => {
+      state.toolCalls += 1;
+      if (state.toolCalls > this.maxToolCallsPerAttempt) {
+        const reason = `attempt aborted after ${this.maxToolCallsPerAttempt} tool calls without finishing`;
+        abortAttempt(reason);
+        throw new Error(reason);
       }
-    });
+    };
+
+    const recordMutation = (path: string, content?: string): void => {
+      if (!path) return;
+      if (content !== undefined && state.lastMutationContentByPath.get(path) === content) {
+        const reason = `attempt aborted after duplicate write/edit content for ${path}`;
+        abortAttempt(reason);
+        throw new Error(reason);
+      }
+      if (content !== undefined) state.lastMutationContentByPath.set(path, content);
+      const count = (state.mutationsByPath.get(path) ?? 0) + 1;
+      state.mutationsByPath.set(path, count);
+      if (count > this.maxMutationsPerPathPerAttempt) {
+        const reason = `attempt aborted after ${this.maxMutationsPerPathPerAttempt} write/edit attempts to ${path} without finishing`;
+        abortAttempt(reason);
+        throw new Error(reason);
+      }
+    };
+
+    const tools = makeTools(
+      exec,
+      enforceToolLimit,
+      recordMutation,
+      async (path) => {
+        const validation = await validateRequiredCommonJsExports(exec, path, requiredExportsByPath.get(path) ?? []);
+        if (validation.importError) {
+          const reason = `attempt aborted because ${path} cannot be required for gate export validation`;
+          abortAttempt(reason);
+          throw new Error(reason);
+        }
+        if (validation.missing.length > 0) {
+          const reason = `attempt aborted because ${path} does not export required symbol(s): ${validation.missing.join(", ")}`;
+          abortAttempt(reason);
+          throw new Error(reason);
+        }
+      },
+      (id, name, path, reason) => {
+        state.denied += 1;
+        out.push({ kind: "blast_denied", id, name, path, reason });
+        if (state.denied >= MAX_BLAST_VIOLATIONS) {
+          abortAttempt(`attempt aborted after ${MAX_BLAST_VIOLATIONS} blast-radius violations`);
+        }
+      },
+    );
 
     const agent = new Agent({
       initialState: { systemPrompt: req.systemPrompt, model, tools },
@@ -164,10 +254,16 @@ export class PiEngine implements Engine {
         : req.brief;
 
     const run = (async () => {
+      const timer = setTimeout(() => {
+        abortAttempt(`attempt timed out after ${this.attemptTimeoutMs}ms`);
+      }, this.attemptTimeoutMs);
+      timer.unref?.();
       try {
-        await agent.prompt(userPrompt);
+        const prompt = agent.prompt(userPrompt);
+        await Promise.race([prompt, aborted]);
         if (state.aborted) {
-          out.push({ kind: "error", message: `attempt aborted after ${MAX_BLAST_VIOLATIONS} blast-radius violations` });
+          void prompt.catch(() => undefined);
+          out.push({ kind: "error", message: state.abortReason ?? "attempt aborted" });
         } else if (providerError) {
           out.push({ kind: "error", message: providerError });
         } else {
@@ -176,6 +272,7 @@ export class PiEngine implements Engine {
       } catch (err) {
         out.push({ kind: "error", message: (err as Error).message });
       } finally {
+        clearTimeout(timer);
         out.end(null);
       }
     })();
@@ -211,8 +308,17 @@ function buildModel(ref: ModelRef): Model<"openai-completions"> {
 }
 
 type DenyHook = (id: string, name: ToolName, path: string, reason: string) => void;
+type ToolLimitHook = () => void;
+type MutationHook = (path: string, content?: string) => void;
+type ExportValidationHook = (path: string) => Promise<void>;
 
-function makeTools(exec: ToolExecutor, onDeny: DenyHook): AgentTool<any>[] {
+function makeTools(
+  exec: ToolExecutor,
+  onToolStart: ToolLimitHook,
+  onMutation: MutationHook,
+  validateExports: ExportValidationHook,
+  onDeny: DenyHook,
+): AgentTool<any>[] {
   const text = (s: string): { content: TextContent[]; details: unknown } => ({
     content: [{ type: "text", text: s || "(no output)" }],
     details: null,
@@ -223,7 +329,10 @@ function makeTools(exec: ToolExecutor, onDeny: DenyHook): AgentTool<any>[] {
     label: "Read",
     description: "Read a UTF-8 file's contents, relative to the working directory.",
     parameters: Type.Object({ path: Type.String({ description: "File path relative to workdir" }) }),
-    execute: async (_id, params) => text((await exec.execute("read", params)).output),
+    execute: async (_id, params) => {
+      onToolStart();
+      return text((await exec.execute("read", params)).output);
+    },
   };
 
   const write: AgentTool<any> = {
@@ -235,8 +344,16 @@ function makeTools(exec: ToolExecutor, onDeny: DenyHook): AgentTool<any>[] {
       content: Type.String(),
     }),
     execute: async (id, params) => {
+      onToolStart();
       const r = await exec.execute("write", params);
       if (r.denied) onDeny(id, "write", r.path ?? readPath(params), r.deniedReason ?? "denied");
+      else {
+        const path = r.path ?? readPath(params);
+        onMutation(path, readContent(params));
+        if (r.ok) {
+          await validateExports(path);
+        }
+      }
       return text(r.output);
     },
   };
@@ -252,8 +369,10 @@ function makeTools(exec: ToolExecutor, onDeny: DenyHook): AgentTool<any>[] {
       replaceAll: Type.Optional(Type.Boolean()),
     }),
     execute: async (id, params) => {
+      onToolStart();
       const r = await exec.execute("edit", params);
       if (r.denied) onDeny(id, "edit", r.path ?? readPath(params), r.deniedReason ?? "denied");
+      else onMutation(r.path ?? readPath(params), readEditContent(params));
       return text(r.output);
     },
   };
@@ -263,7 +382,10 @@ function makeTools(exec: ToolExecutor, onDeny: DenyHook): AgentTool<any>[] {
     label: "Bash",
     description: "Run a shell command in the working directory (e.g. the check command).",
     parameters: Type.Object({ command: Type.String() }),
-    execute: async (_id, params) => text((await exec.execute("bash", params)).output),
+    execute: async (_id, params) => {
+      onToolStart();
+      return text((await exec.execute("bash", params)).output);
+    },
   };
 
   return [read, write, edit, bash];
@@ -275,6 +397,64 @@ function readPath(params: unknown): string {
     if (typeof p === "string") return p;
   }
   return "";
+}
+
+function readContent(params: unknown): string | undefined {
+  if (typeof params === "object" && params !== null && "content" in params) {
+    const p = (params as { content: unknown }).content;
+    if (typeof p === "string") return p;
+  }
+  return undefined;
+}
+
+function readEditContent(params: unknown): string | undefined {
+  if (typeof params === "object" && params !== null && "newString" in params) {
+    const p = (params as { newString: unknown }).newString;
+    if (typeof p === "string") return p;
+  }
+  return undefined;
+}
+
+function requiredCommonJsExportsByPath(doneCheck: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const re = /const\s*\{\s*([^}]+?)\s*\}\s*=\s*require\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
+  for (const match of doneCheck.matchAll(re)) {
+    const names = match[1]!
+      .split(",")
+      .map((s) => s.trim().split(":")[0]!.trim())
+      .filter((s) => /^[A-Za-z_$][\w$]*$/.test(s));
+    const path = match[2]!;
+    out.set(path, [...new Set([...(out.get(path) ?? []), ...names])]);
+  }
+  return out;
+}
+
+async function validateRequiredCommonJsExports(
+  exec: ToolExecutor,
+  path: string,
+  symbols: string[],
+): Promise<{ importError: boolean; missing: string[] }> {
+  if (symbols.length === 0 || !/\.(?:c?js|mjs)$/.test(path)) return { importError: false, missing: [] };
+  const script = [
+    "try {",
+    `  const m = require(${JSON.stringify("./" + path)});`,
+    `  const missing = ${JSON.stringify(symbols)}.filter((s) => m == null || typeof m[s] === "undefined");`,
+    "  if (missing.length > 0) { console.log(missing.join(',')); process.exit(2); }",
+    "  process.exit(0);",
+    "} catch (err) {",
+    "  console.log('__IMPORT_ERROR__');",
+    "  process.exit(3);",
+    "}",
+  ].join("\n");
+  const r = await exec.execute("bash", { command: `node -e ${shellQuote(script)}` });
+  const output = r.output.trim();
+  if (r.ok || !output) return { importError: false, missing: [] };
+  if (output.includes("__IMPORT_ERROR__")) return { importError: true, missing: [] };
+  return { importError: false, missing: output.split(",").map((s) => s.trim()).filter(Boolean) };
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function isAssistant(m: unknown): m is AssistantMessage {

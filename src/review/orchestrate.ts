@@ -14,6 +14,7 @@ import type { LlmClient } from "../llm/types.js";
 import type { Spec } from "../contract/spec.js";
 import { ceoReview, designReview, engReview, dxReview, type ReviewerName, type ReviewSpecInput } from "./reviewers.js";
 import type { PipelineResult, ReviewPatch, ReviewDecision, ReviewerResult } from "./types.js";
+import { withFrontendFloorStories } from "./frontend-floor.js";
 
 export interface ReviewPlanOpts {
   /** Called with each reviewer's name just before its call — for CLI/TUI progress. */
@@ -43,12 +44,13 @@ export async function reviewPlan(
   model: string,
   opts: ReviewPlanOpts = {},
 ): Promise<PipelineResult> {
+  const enriched = withFrontendFloorStories(spec);
   // A working copy of the review-relevant spec. Objective patches fold in as new
   // requirements between reviewers; the original `spec` is never mutated.
   const working: ReviewSpecInput = {
-    thesis: spec.thesis,
-    stories: [...spec.stories],
-    requirements: spec.requirements.map((r) => ({
+    thesis: enriched.thesis,
+    stories: [...enriched.stories],
+    requirements: enriched.requirements.map((r) => ({
       id: r.id,
       statement: r.statement,
       acceptance: { ...r.acceptance },

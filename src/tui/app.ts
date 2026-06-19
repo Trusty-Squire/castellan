@@ -213,6 +213,7 @@ async function specLayer(c: Ctx): Promise<boolean> {
   const { extractIdea, briefToText, converseIdea } = await import("../contract/ingest.js");
   const { ideaToSpec, applyChoice } = await import("../contract/brief.js");
   const { reviewSpec } = await import("../contract/review.js");
+  const { withFrontendFloorStories } = await import("../review/frontend-floor.js");
   const { stringify } = await import("yaml");
   railFull(c, "spec");
   const input = c.sess.brief && (c.sess.brief.intent || c.sess.brief.outcomes.length) ? briefToText(c.sess.brief) : c.sess.prompt;
@@ -234,7 +235,7 @@ async function specLayer(c: Ctx): Promise<boolean> {
     if (raw === null) return false;
     resolutions.push(applyChoice(d, raw));
   }
-  const spec = ideaToSpec(c.sess.prompt, idea, resolutions);
+  const spec = withFrontendFloorStories(ideaToSpec(c.sess.prompt, idea, resolutions));
   const review = await spin(c, "running the eng + design review", () => reviewSpec(spec, c.llm, c.premium));
   // ser closes obvious gaps himself — each becomes a new gated requirement.
   let rn = spec.requirements.length;
@@ -386,8 +387,9 @@ async function auditLayer(c: Ctx): Promise<boolean> {
   const { s } = c;
   const { auditBuild } = await import("../contract/review.js");
   const { parseSpec } = await import("../contract/spec.js");
+  const { withFrontendFloorStories } = await import("../review/frontend-floor.js");
   railFull(c, "audit");
-  const spec = parseSpec(readFileSync(c.sess.specPath!, "utf8"), c.sess.specPath!);
+  const spec = withFrontendFloorStories(parseSpec(readFileSync(c.sess.specPath!, "utf8"), c.sess.specPath!));
   const audit = await spin(c, "fresh eyes on the finished build", () => auditBuild(collect(c.sess.buildDir!), { thesis: spec.thesis, stories: spec.stories }, c.llm, c.premium));
   const rank: Record<string, number> = { high: 0, med: 1, low: 2 };
   const recs = audit.recommendations.sort((a, b) => rank[a.severity]! - rank[b.severity]!);
@@ -398,14 +400,40 @@ async function auditLayer(c: Ctx): Promise<boolean> {
   // story isn't visibly delivered (or a high-severity design finding), fold the
   // fix into the spec and rebuild — the same honest-halt loop the build uses.
   const { makeVisualClient } = await import("../backend.js");
-  const vc = await makeVisualClient();
-  if (vc) {
-    const { renderBuild, visualReview, blockingFixes } = await import("../review/visual.js");
-    const shot = await spin(c, "rendering the build for a visual review", () => renderBuild(c.sess.buildDir!));
-    if (!shot.ok) out(s.dim(`  visual review skipped — ${shot.note}`));
+  const { renderBuild, visualReview, blockingFixes } = await import("../review/visual.js");
+  const shot = await spin(c, "rendering the build for a visual review", () => renderBuild(c.sess.buildDir!));
+  if (!shot.ok) {
+    if (/not a visual build/i.test(shot.note ?? "")) out(s.dim(`  visual review skipped — ${shot.note}`));
     else {
+      out("\n  " + s.yellow(`visual review unavailable — ${shot.note}`));
+      out(s.dim("  /ship anyway · /quit"));
+      for (;;) {
+        const msg = await ask(c);
+        if (msg === "/quit") return false;
+        if (msg === "/ship") break;
+      }
+    }
+  } else {
+    const vc = await makeVisualClient();
+    if (!vc) {
+      out("\n  " + s.yellow("visual review unavailable — no multimodal reviewer is configured for a rendered UI."));
+      out(s.dim("  /ship anyway · /quit"));
+      for (;;) {
+        const msg = await ask(c);
+        if (msg === "/quit") return false;
+        if (msg === "/ship") break;
+      }
+    } else {
       const verdict = await spin(c, "design review — fresh eyes on the screen", () => visualReview(shot, { thesis: spec.thesis, stories: spec.stories }, vc.llm, vc.model));
-      if (verdict) {
+      if (!verdict) {
+        out("\n  " + s.yellow("visual review failed to produce a verdict for this rendered UI."));
+        out(s.dim("  /ship anyway · /quit"));
+        for (;;) {
+          const msg = await ask(c);
+          if (msg === "/quit") return false;
+          if (msg === "/ship") break;
+        }
+      } else {
         verdict.dimensions.filter((d) => d.score <= 5).sort((a, b) => a.score - b.score)
           .forEach((d) => out("  " + s.yellow(`${d.score}/10`) + " " + s.gray("design ") + d.name));
         const fixes = blockingFixes(verdict);

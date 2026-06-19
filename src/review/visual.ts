@@ -14,15 +14,37 @@ import { tmpdir } from "node:os";
 import { execa } from "execa";
 import type { LlmClient } from "../llm/types.js";
 import { tryParseJson } from "../contract/derive.js";
-import { VisualVerdictSchema, type VisualVerdict } from "./types.js";
-import { VISUAL_JUDGE_SYSTEM } from "./prompts.js";
+import { VisualChoiceSchema, VisualVerdictSchema, type VisualVerdict } from "./types.js";
+import { VISUAL_COMPARISON_SYSTEM, VISUAL_JUDGE_SYSTEM } from "./prompts.js";
 
 export interface RenderResult {
   ok: boolean;
   screenshotPath?: string;
   /** PNG as a data URL, ready for a multimodal LlmClient call. */
   dataUrl?: string;
+  images?: { kind: "desktop" | "mobile"; screenshotPath: string; dataUrl: string }[];
   note?: string;
+}
+
+export interface VisualCandidate {
+  id: string;
+  shot: RenderResult;
+  verdict: VisualVerdict;
+}
+
+export interface RenderTarget {
+  serveDir: string;
+  entry: string;
+}
+
+function looksLikeSourceEntry(file: string): boolean {
+  if (!existsSync(file)) return false;
+  try {
+    const html = readFileSync(file, "utf8");
+    return /<script[^>]+src=["']\/src\//i.test(html);
+  } catch {
+    return false;
+  }
 }
 
 const MIME: Record<string, string> = {
@@ -36,6 +58,11 @@ const MIME: Record<string, string> = {
 };
 
 const CHROME_BINS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
+const DEFAULT_VISUAL_REVIEW_TIMEOUT_MS = 45_000;
+const MOBILE_WIDTH = 430;
+const MOBILE_HEIGHT = 932;
+const DESKTOP_WIDTH = 1100;
+const DESKTOP_HEIGHT = 1400;
 
 /** First Chrome/Chromium binary on PATH, or null. */
 async function findChrome(): Promise<string | null> {
@@ -75,47 +102,78 @@ function serve(dir: string): Promise<{ port: number; close: () => void }> {
 }
 
 /** Render the built UI to a screenshot. Degrades to { ok:false } if no browser. */
+export function resolveRenderTarget(buildDir: string, entry = "index.html"): RenderTarget | null {
+  const directEntry = join(buildDir, entry);
+  const distEntry = join(buildDir, "dist", entry);
+  if (existsSync(directEntry) && existsSync(distEntry) && looksLikeSourceEntry(directEntry)) {
+    return { serveDir: join(buildDir, "dist"), entry };
+  }
+  if (existsSync(directEntry)) return { serveDir: buildDir, entry };
+  if (existsSync(distEntry)) return { serveDir: join(buildDir, "dist"), entry };
+  return null;
+}
+
+/** Render the built UI to a screenshot. Degrades to { ok:false } if no browser. */
 export async function renderBuild(
   buildDir: string,
   opts: { entry?: string; width?: number; height?: number } = {},
 ): Promise<RenderResult> {
-  const entry = opts.entry ?? "index.html";
-  if (!existsSync(join(buildDir, entry))) {
-    return { ok: false, note: `no ${entry} to render (not a visual build)` };
+  const target = resolveRenderTarget(buildDir, opts.entry ?? "index.html");
+  if (!target) {
+    return { ok: false, note: `no ${opts.entry ?? "index.html"} to render (not a visual build)` };
   }
   const chrome = await findChrome();
   if (!chrome) return { ok: false, note: "no Chrome/Chromium found — visual review skipped" };
 
   const dir = mkdtempSync(join(tmpdir(), "ser-shot-"));
-  const shot = join(dir, "shot.png");
-  const w = opts.width ?? 1100;
-  const h = opts.height ?? 1400;
+  const desktopShot = join(dir, "desktop.png");
+  const mobileShot = join(dir, "mobile.png");
+  const w = opts.width ?? DESKTOP_WIDTH;
+  const h = opts.height ?? DESKTOP_HEIGHT;
   let server: { port: number; close: () => void } | null = null;
   try {
-    server = await serve(buildDir);
-    const url = `http://127.0.0.1:${server.port}/${entry}`;
-    await execa(
-      chrome,
-      [
-        "--headless=new",
-        "--disable-gpu",
-        "--no-sandbox",
-        "--hide-scrollbars",
-        `--screenshot=${shot}`,
-        `--window-size=${w},${h}`,
-        "--virtual-time-budget=4000", // let the page's JS build the DOM before the shot
-        url,
-      ],
-      { timeout: 60_000 },
-    );
-    if (!existsSync(shot)) return { ok: false, note: "browser produced no screenshot" };
-    const dataUrl = `data:image/png;base64,${readFileSync(shot).toString("base64")}`;
-    return { ok: true, screenshotPath: shot, dataUrl };
+    server = await serve(target.serveDir);
+    const url = `http://127.0.0.1:${server.port}/${target.entry}`;
+    await capture(chrome, url, desktopShot, w, h);
+    await capture(chrome, url, mobileShot, MOBILE_WIDTH, MOBILE_HEIGHT);
+    if (!existsSync(desktopShot)) return { ok: false, note: "browser produced no screenshot" };
+    const images: NonNullable<RenderResult["images"]> = [
+      {
+        kind: "desktop" as const,
+        screenshotPath: desktopShot,
+        dataUrl: `data:image/png;base64,${readFileSync(desktopShot).toString("base64")}`,
+      },
+    ];
+    if (existsSync(mobileShot)) {
+      images.push({
+        kind: "mobile",
+        screenshotPath: mobileShot,
+        dataUrl: `data:image/png;base64,${readFileSync(mobileShot).toString("base64")}`,
+      });
+    }
+    return { ok: true, screenshotPath: images[0]!.screenshotPath, dataUrl: images[0]!.dataUrl, images };
   } catch (err) {
     return { ok: false, note: `render failed: ${(err as Error).message.split("\n")[0]}` };
   } finally {
     server?.close();
   }
+}
+
+async function capture(chrome: string, url: string, shot: string, width: number, height: number): Promise<void> {
+  await execa(
+    chrome,
+    [
+      "--headless=new",
+      "--disable-gpu",
+      "--no-sandbox",
+      "--hide-scrollbars",
+      `--screenshot=${shot}`,
+      `--window-size=${width},${height}`,
+      "--virtual-time-budget=4000",
+      url,
+    ],
+    { timeout: 60_000 },
+  );
 }
 
 /** Multimodal judge of a rendered screenshot against the spec stories. null on failure. */
@@ -124,15 +182,21 @@ export async function visualReview(
   spec: { thesis: string; stories: string[] },
   llm: LlmClient,
   model: string,
+  timeoutMs = DEFAULT_VISUAL_REVIEW_TIMEOUT_MS,
 ): Promise<VisualVerdict | null> {
-  if (!shot.ok || !shot.dataUrl) return null;
+  if (!shot.ok || (!shot.images?.length && !shot.dataUrl)) return null;
+  const images = shot.images?.length ? shot.images : [{ kind: "desktop" as const, screenshotPath: shot.screenshotPath ?? "", dataUrl: shot.dataUrl! }];
   const user = [
     `THESIS: ${spec.thesis}`,
     `USER STORIES (judge each against what is VISIBLE in the screenshot):\n${spec.stories
       .map((s, i) => `  ${i + 1}. ${s}`)
       .join("\n")}`,
-    "The attached image is a screenshot of the built UI.",
+    `SCREENSHOTS: ${images.map((img, i) => `${i + 1}. ${img.kind} viewport`).join("  ")}`,
+    "The attached images are screenshots of the built UI.",
   ].join("\n\n");
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  timer.unref?.();
   let res: { text: string };
   try {
     res = await llm.complete({
@@ -141,10 +205,13 @@ export async function visualReview(
       user,
       json: true,
       maxTokens: 3500,
-      images: [{ dataUrl: shot.dataUrl }],
+      signal: ac.signal,
+      images: images.map((img) => ({ dataUrl: img.dataUrl })),
     });
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
   const parsed = tryParseJson(res.text);
   if (!parsed.ok) return null;
@@ -161,12 +228,109 @@ export async function visualReview(
  */
 export function blockingFixes(v: VisualVerdict): { note: string; fix: string }[] {
   const out: { note: string; fix: string }[] = [];
+  const seen = new Set<string>();
+  const push = (note: string, fix: string): void => {
+    const key = `${note}\n${fix}`.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ note, fix });
+  };
   for (const s of v.storyChecks) {
-    if (!s.satisfied) out.push({ note: `story not visibly delivered: ${s.story}`, fix: s.note || `make the UI visibly deliver: ${s.story}` });
+    if (!s.satisfied) push(`story not visibly delivered: ${s.story}`, s.note || `make the UI visibly deliver: ${s.story}`);
+  }
+  for (const d of v.dimensions) {
+    if (d.score > 3) continue;
+    if (!/(hierarchy|ai slop|trust|headline|responsive)/i.test(d.name)) continue;
+    push(`core design dimension is failing: ${d.name} (${d.score}/10)`, d.whatMakesIt10 || `raise ${d.name.toLowerCase()} to a credible product bar`);
   }
   const highs = v.findings.filter((f) => f.severity === "high");
   if (highs.length >= 2) {
-    for (const f of highs) out.push({ note: f.note, fix: f.fix || f.note });
+    for (const f of highs) push(f.note, f.fix || f.note);
   }
   return out;
+}
+
+/** Non-blocking polish prompts: enough friction to keep searching, capped to stay cheap. */
+export function polishFixes(v: VisualVerdict, cap = 3): string[] {
+  const blocked = new Set(blockingFixes(v).map((f) => f.fix.toLowerCase()));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (text: string): void => {
+    const value = text.trim();
+    if (!value) return;
+    const key = value.toLowerCase();
+    if (blocked.has(key) || seen.has(key)) return;
+    seen.add(key);
+    out.push(value);
+  };
+  for (const d of [...v.dimensions].sort((a, b) => a.score - b.score)) {
+    if (d.score <= 6) push(d.whatMakesIt10 || `improve ${d.name.toLowerCase()}`);
+    if (out.length >= cap) return out;
+  }
+  for (const f of v.findings) {
+    if (f.severity === "low") continue;
+    push(f.fix || f.note);
+    if (out.length >= cap) return out;
+  }
+  return out;
+}
+
+/** Deterministic quality score used for ranking and fallback selection. Higher is better. */
+export function qualityScore(v: VisualVerdict): number {
+  const dims = v.dimensions.length ? v.dimensions.reduce((sum, d) => sum + d.score, 0) / v.dimensions.length : 0;
+  const unsatisfied = v.storyChecks.filter((s) => !s.satisfied).length;
+  const penalties = v.findings.reduce((sum, f) => sum + (f.severity === "high" ? 12 : f.severity === "med" ? 5 : 1), 0);
+  return Math.round(dims * 10 - penalties - unsatisfied * 25);
+}
+
+/** Among feasible candidates, ask a visual selector to choose the best survivor. */
+export async function chooseVisualCandidate(
+  candidates: VisualCandidate[],
+  spec: { thesis: string; stories: string[] },
+  llm: LlmClient,
+  model: string,
+  timeoutMs = DEFAULT_VISUAL_REVIEW_TIMEOUT_MS,
+): Promise<{ candidate: VisualCandidate; rationale: string; mode: "model" | "score" }> {
+  const byScore = [...candidates].sort((a, b) => qualityScore(b.verdict) - qualityScore(a.verdict));
+  if (candidates.length === 1) return { candidate: candidates[0]!, rationale: "only feasible candidate", mode: "score" };
+
+  const images = candidates.flatMap((candidate) => {
+    const shots = candidate.shot.images?.length ? candidate.shot.images : candidate.shot.dataUrl ? [{ kind: "desktop" as const, dataUrl: candidate.shot.dataUrl }] : [];
+    return shots.map((img) => ({ dataUrl: img.dataUrl }));
+  });
+  const user = [
+    `THESIS: ${spec.thesis}`,
+    `USER STORIES:\n${spec.stories.map((s, i) => `  ${i + 1}. ${s}`).join("\n")}`,
+    "CANDIDATES:",
+    ...candidates.map((candidate, i) => {
+      const labels = (candidate.shot.images?.length ? candidate.shot.images : [{ kind: "desktop" as const }]).map((img) => img.kind).join(", ");
+      return `  ${i + 1}. ${candidate.id} (${labels})`;
+    }),
+    "The attached images are ordered by candidate number, with each candidate's desktop viewport first and mobile viewport second when present.",
+  ].join("\n\n");
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    const res = await llm.complete({
+      model,
+      system: VISUAL_COMPARISON_SYSTEM,
+      user,
+      json: true,
+      maxTokens: 1200,
+      signal: ac.signal,
+      images,
+    });
+    const parsed = tryParseJson(res.text);
+    if (!parsed.ok) throw new Error("bad JSON");
+    const checked = VisualChoiceSchema.safeParse(parsed.value);
+    if (!checked.success) throw new Error("bad schema");
+    const idx = checked.data.winner - 1;
+    if (idx < 0 || idx >= candidates.length) throw new Error("winner out of range");
+    return { candidate: candidates[idx]!, rationale: checked.data.rationale, mode: "model" };
+  } catch {
+    return { candidate: byScore[0]!, rationale: `highest quality score (${qualityScore(byScore[0]!.verdict)})`, mode: "score" };
+  } finally {
+    clearTimeout(timer);
+  }
 }
