@@ -144,18 +144,18 @@ A fork these principles SETTLE is "mechanical" (auto-apply the principled option
 /**
  * SCOPE DISCIPLINE — the Castellan governor. The gstack principle blocks above are
  * written for an ambitious founder with a human cherry-picking every scope
- * expansion via AskUserQuestion. Castellan is the opposite: an AUTONOMOUS
- * floor-raiser for a non-expert building a SMALL product, where every patch
- * auto-applies as a gated requirement. Without this governor the reviewers pile
- * enterprise scaffolding (runbooks, error budgets, compliance, CI infra) onto a
- * weekend dashboard until the spec is un-buildable. This block OVERRIDES the
- * expansion/"boil the ocean"/10-star posture in the principles above.
+ * expansion via AskUserQuestion. Castellan is AUTONOMOUS, where every patch
+ * auto-applies as a gated requirement — so the calibration is ASYMMETRIC: aim at
+ * the MVP a senior builder would ship (require the affordances any usable version
+ * needs), while hard-capping enterprise scaffolding. An earlier version of this
+ * block over-corrected into "minimize / zero patches is success", which made ser
+ * build the literal minimum — worse than a one-shot. It does NOT do that anymore.
  */
-export const CASTELLAN_SCOPE = `CASTELLAN SCOPE GOVERNOR (this OVERRIDES any "expand scope / 10-star / boil the ocean" posture in the principles above):
-- Your job is to RAISE THE FLOOR of the user's STATED stories, not to expand the product. The user is a non-expert building something small; respect their vision even if it's modest. Garbage-vision-in is fine — you make the EXECUTION solid, you do not redesign the product.
-- DEFAULT POSTURE: hold or REDUCE scope. Make the stated stories actually work and not embarrass the user — the headline value VISIBLY delivered, an empty/error state, real (not placeholder) substance, no silent failure.
-- DO NOT add operational/platform scope unless a STATED story explicitly requires it: no observability dashboards, on-call runbooks, error budgets, SLOs, compliance/jurisdiction filtering, CI pipelines, API contract lockchecks, secret-rotation policy, DLQ monitors, load testing, multi-region. For a hobby project these are scope creep, not floor-raising.
-- Emit AT MOST 3 patches — only the highest-value gaps that stop a STATED story from being delivered well. Every patch must trace to a stated story. If a gap doesn't, it is not your patch: drop it, or raise it as ONE taste decision, never as a requirement. If the stories are already well-covered, emit ZERO patches — that is a success, not a failure.`;
+export const CASTELLAN_SCOPE = `CASTELLAN SCOPE CALIBRATION (this OVERRIDES any "10-star / boil the ocean" posture in the principles above — AND any instinct to minimize):
+- TARGET: the MVP a SENIOR BUILDER would ship from this prompt — the reasonable product a competent one-shot would INFER. NOT the literal minimum that technically satisfies the words, and NOT an enterprise build. "An arb dashboard" implies filtering, sorting, realistic multi-row data, a readable layout, and empty/loading/error states, because that is what the words MEAN. Spec THAT.
+- ASYMMETRIC by surface. REQUIRE the user-facing affordances any usable version needs: the headline value visibly delivered and prominent, the core flow working end to end, real (not placeholder) content, the standard states (empty/loading/error), basic input handling. Under-delivering these is the failure to avoid — a spec that builds nothing usable is worse than no spec.
+- HARD-CAP operational/platform scope unless a STATED story requires it: no observability dashboards, on-call runbooks, error budgets, SLOs, compliance/jurisdiction filtering, CI pipelines, API contract lockchecks, secret-rotation, DLQ monitors, load testing, multi-region. For a small product these are gold-plating, not the MVP.
+- Patch the gap between the draft spec and that MVP — as many patches as the gap needs (typically 2-6); each must trace to making a STATED story actually USABLE. Emitting ZERO patches is correct ONLY when the spec already specifies a usable product; a thin spec with zero patches is a FAILURE, not a success. Minimization belongs in the implementation (lean code), never in the scope.`;
 
 /**
  * Shared output contract for the four spec reviewers. Each scores its dimensions
@@ -170,7 +170,7 @@ ${DECISION_PRINCIPLES}
 HOW TO RESPOND:
 1. Score each dimension of your lens 0-10. For each, give one concrete sentence on what would make it a 10 for THIS product. A low score is a signal — the gap is where your patches/decisions come from.
 2. PREFER PATCHING. For every gap, missing requirement, unhandled edge case, or obvious improvement a competent reviewer would just fix, emit a "patch": a new requirement "statement" plus a runnable shell "gate" (exit 0 = pass). Set "kind":"objective" with a REAL shell command whenever a shell assertion can fairly verify it; set "kind":"visual" ONLY for qualities no shell command can fairly capture (aesthetic balance, spacing rhythm), which the live screenshot judge will check instead.
-3. For a fork you can't settle by patching, emit a "decision": the "text" (a direct question), 2-4 concrete "options" (recommended/sane-default FIRST), a "classification" (mechanical | taste | user_challenge per the 6 principles), a one-line "recommendation", "why", and "ifWrongCost". Set "blocking":true only if building the wrong way is costly to undo. Most reviews are AT MOST 3 patches (often fewer, sometimes zero) and zero or one non-mechanical decision.
+3. For a fork you can't settle by patching, emit a "decision": the "text" (a direct question), 2-4 concrete "options" (recommended/sane-default FIRST), a "classification" (mechanical | taste | user_challenge per the 6 principles), a one-line "recommendation", "why", and "ifWrongCost". Set "blocking":true only if building the wrong way is costly to undo. Emit as many patches as the gap to a usable MVP needs (typically 2-6) and zero or one non-mechanical decision; do not pad with infra, do not starve the user-facing affordances.
 
 Each gate is a real shell command that exits 0 on success (e.g. "grep -q 'aria-label' index.html", "test -f tests/empty.test.js && npm test -- empty"). Output ONLY JSON: {"overall":0,"dimensions":[{"name":"…","score":0,"whatMakesIt10":"…"}],"patches":[{"statement":"…","gate":"…","kind":"objective"}],"decisions":[{"text":"…","options":["recommended","alt"],"classification":"taste","recommendation":"…","why":"…","ifWrongCost":"…","blocking":false}]}. Empty lists are fine.`;
 

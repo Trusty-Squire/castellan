@@ -57,8 +57,12 @@ export async function reviewPlan(
     })),
   };
   let rn = working.requirements.length;
-  const maxObjective = opts.maxObjectivePatches ?? 8;
-  const perReviewer = opts.maxPatchesPerReviewer ?? 3;
+  // Caps are a safety net against a runaway reviewer, not a minimizer — they must
+  // leave room for the MVP-closing patches the calibration asks for (typically
+  // 2-6 per reviewer). The asymmetric prompt + the infra hard-cap, not a tiny cap,
+  // are what prevent the enterprise-scope explosion.
+  const maxObjective = opts.maxObjectivePatches ?? 16;
+  const perReviewer = opts.maxPatchesPerReviewer ?? 6;
 
   const reviewers: ReviewerResult[] = [];
   const patches: ReviewPatch[] = [];
@@ -73,7 +77,7 @@ export async function reviewPlan(
     reviewers.push(result);
     scores[name] = result.overall;
 
-    // Scope governor: take at most `perReviewer` patches, and fold objective ones
+    // Safety cap: take at most `perReviewer` patches, and fold objective ones
     // only up to the global cap, de-duped. `patches` holds exactly what was KEPT so
     // the reviewSpec adapter maps requirements 1:1. Visual patches (rare) pass
     // through to the audit judge.
