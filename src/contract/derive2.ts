@@ -62,8 +62,6 @@ const LensSchema = z.object({
   evidence: z.string().default(""),
 });
 
-type ProductIntent = "generic" | "dashboard" | "game" | "fortune";
-
 // --- result types ---
 
 export interface ClaimVerdict {
@@ -131,47 +129,26 @@ export interface DirectMissionInput {
   idPrefix?: string;
 }
 
-export function classifyProductIntent(text: string): ProductIntent {
-  const lower = text.toLowerCase();
-  if (/\b(tarot|tea leaves|constellation|fortune|mystic|mystical|oracle|divination)\b/.test(lower)) return "fortune";
-  if (/\b(blackjack|poker|casino|hold.?em|texas hold.?em|bot opponents?|mc equity|monte carlo)\b/.test(lower)) return "game";
-  if (/\b(dashboard|ranked|table of lines|opportunit|compare key values|first viewport)\b/.test(lower)) return "dashboard";
-  return "generic";
-}
-
 export function isInteractiveAppIntent(text: string): boolean {
   return /\b(app|web app|dashboard|game|site|website|ui|interface|fortune|casino|poker|blackjack)\b/i.test(text);
 }
 
+/**
+ * One general planning rule for any user-facing app: decompose around capabilities,
+ * not files, and plan for the affordances a usable version needs. Deliberately NOT
+ * per-category (dashboard/game/fortune) — that was overfit to a few demos; this is
+ * the inference a senior builder applies to any product.
+ */
 export function productPlanningContract(text: string): string {
   if (!isInteractiveAppIntent(text)) return "";
-  const base = [
+  return [
     "INTERACTIVE APP MODE:",
     "Decompose the work around user-visible capabilities and workflows, not around filenames or source modules.",
     "Do NOT emit a plan that is mostly 'create index.html', 'write render.js', 'fill data.js', or similar file-shaped trivia.",
-    "Prefer nodes that correspond to product outcomes such as primary viewport hierarchy, core interaction loop, domain logic, responsive/mobile behavior, opponent behavior, comparison surfaces, and final polish.",
-    "It is acceptable for one node to touch multiple files when that is what the user-facing capability requires.",
-    "At most one thin wiring/integration node; the rest should be product-shaped.",
-  ];
-  switch (classifyProductIntent(text)) {
-    case "dashboard":
-      return [
-        ...base,
-        "For dashboards, explicitly plan for: headline value in the first viewport, readable comparison surfaces, ranked/high-signal panels, and mobile scanability.",
-      ].join(" ");
-    case "game":
-      return [
-        ...base,
-        "For games, explicitly plan for: rules/game loop, opponent behavior or AI, betting/turn controls, table presentation, and responsive play ergonomics.",
-      ].join(" ");
-    case "fortune":
-      return [
-        ...base,
-        "For fortune or ritual apps, explicitly plan for: the reading flow, content generation/selection logic, mystical presentation, and the reveal/result experience across desktop and mobile.",
-      ].join(" ");
-    default:
-      return base.join(" ");
-  }
+    "Prefer nodes that correspond to product outcomes such as the primary viewport hierarchy, the core interaction/result flow end to end, domain logic, and final polish.",
+    "It is acceptable for one node to touch multiple files when that is what the user-facing capability requires; at most one thin wiring/integration node, the rest should be product-shaped.",
+    "Plan explicitly for the affordances any usable version of THIS product needs: the headline value visible in the first viewport, the core flow working end to end, real (not placeholder) content, empty/loading/error states, and mobile scanability.",
+  ].join(" ");
 }
 
 export function isImplementationShapedDecomposition(

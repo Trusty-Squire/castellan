@@ -6,7 +6,6 @@ import {
   deriveV2,
   specPreGate,
   affirmsBuildability,
-  classifyProductIntent,
   groundGateRun,
   isImplementationShapedDecomposition,
   productPlanningContract,
@@ -71,13 +70,15 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(r.costUsd).toBeUndefined();
   });
 
-  it("adds an interactive-app planning contract for dashboard/game/fortune requests", () => {
-    expect(classifyProductIntent("a casino webapp with blackjack and texas holdem poker")).toBe("game");
-    expect(classifyProductIntent("a mystical app that reads tarot and tea leaves")).toBe("fortune");
-    expect(classifyProductIntent("a dashboard that ranks arbitrage opportunities by size")).toBe("dashboard");
-    expect(productPlanningContract("a dashboard that ranks arbitrage opportunities by size")).toContain("headline value in the first viewport");
-    expect(productPlanningContract("a casino webapp with blackjack and texas holdem poker")).toContain("opponent behavior or AI");
-    expect(productPlanningContract("a mystical app that reads tarot and tea leaves")).toContain("reading flow");
+  it("adds one general interactive-app planning contract (no per-demo categories)", () => {
+    // any user-facing app gets the same general 'capabilities not files' rule
+    for (const p of ["a dashboard that ranks arbitrage opportunities", "a casino webapp with poker", "a mystical app that reads tarot"]) {
+      const c = productPlanningContract(p);
+      expect(c).toContain("user-visible capabilities");
+      expect(c).toContain("headline value visible in the first viewport");
+    }
+    // non-interactive intent gets nothing
+    expect(productPlanningContract("a CLI that parses CSV files into JSON")).toBe("");
   });
 
   it("detects file-shaped decomposition for interactive apps", () => {
