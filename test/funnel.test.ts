@@ -26,6 +26,19 @@ describe("applyReviewPatches (shared funnel core)", () => {
     expect(added[0]!.statement).toBe("each opportunity prominently shows its edge size");
   });
 
+  it("rejects process-doc and coverage-only patches (gold-plating, not the MVP)", () => {
+    const spec = parseSpec(baseSpec);
+    const { added, skipped } = applyReviewPatches(spec, [
+      { statement: "render each opportunity's edge size prominently", gate: "grep -q data-edge index.html" },
+      { statement: "Add an architecture/data-flow document with a Mermaid diagram covering ingestion", gate: "test -f docs/arch.md" },
+      { statement: "Add a lightweight threat model documenting untrusted odds ingestion", gate: "test -f docs/threat.md" },
+      { statement: "Add unit tests covering the arbitrage edge cases", gate: "npm test" },
+    ]);
+    expect(added.map((r) => r.statement)).toEqual(["render each opportunity's edge size prominently"]);
+    expect(skipped).toHaveLength(3); // arch doc, threat model, coverage-only
+    expect(spec.requirements).toHaveLength(2);
+  });
+
   it("is a no-op for an empty patch list", () => {
     const spec = parseSpec(baseSpec);
     expect(applyReviewPatches(spec, []).added).toEqual([]);

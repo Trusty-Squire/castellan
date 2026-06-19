@@ -32,6 +32,14 @@ export function isTestOnlyDelta(text: string): boolean {
   return TEST_ONLY.test(text);
 }
 
+/** Process-doc gold-plating for a small product (architecture docs, data-flow
+ *  diagrams, threat models, ADRs, runbooks) — not the MVP; rejected from the spec. */
+const PROCESS_DOC =
+  /\b(threat model|architecture (document|doc|diagram)|data[- ]?flow (document|diagram)|design document|\bADR\b|runbook|mermaid)\b|\badd (an? )?(architecture|design|threat|data[- ]?flow)[^.]*\b(document|doc|diagram|model)\b/i;
+export function isProcessDocPatch(text: string): boolean {
+  return PROCESS_DOC.test(text);
+}
+
 function isLikelyToolArtifact(text: string): boolean {
   return TOOL_ARTIFACT.test(text);
 }

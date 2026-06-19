@@ -1,7 +1,7 @@
 import type { Spec } from "./contract/spec.js";
 import type { VisualVerdict, ReviewDimension } from "./review/types.js";
 import { blockingFixes } from "./review/visual.js";
-import { isTestOnlyDelta } from "./review/raise.js";
+import { isTestOnlyDelta, isProcessDocPatch } from "./review/raise.js";
 
 /**
  * Shared funnel core — the spec-review and visual-audit LOGIC the CLI
@@ -28,9 +28,10 @@ export function applyReviewPatches(
   const added: Requirement[] = [];
   const skipped: { statement: string; gate: string }[] = [];
   for (const p of patches) {
-    // A coverage-only patch ("add a test for X") raises no product floor — reject
-    // it so the spec doesn't fill with test-for-test's-sake requirements.
-    if (isTestOnlyDelta(p.statement)) {
+    // Reject patches that aren't the load-bearing MVP: a coverage-only patch
+    // ("add a test for X") raises no product floor, and process docs (architecture
+    // docs, diagrams, threat models) are gold-plating for a small product.
+    if (isTestOnlyDelta(p.statement) || isProcessDocPatch(p.statement)) {
       skipped.push(p);
       continue;
     }
