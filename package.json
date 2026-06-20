@@ -25,7 +25,6 @@
     "gate-attack": "tsx scripts/gate-attack.ts",
     "talk-eval": "tsx scripts/talk-eval.ts",
     "visual-eval": "tsx scripts/visual-eval.ts",
-    "review-eval": "tsx scripts/review-eval.ts",
     "gate-strength": "tsx scripts/gate-strength.ts"
   },
   "dependencies": {

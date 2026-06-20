@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as readline from "node:readline/promises";
 import { makeStyler, colorsEnabled, type Styler } from "../style.js";
-import { applyReviewPatches, visualAuditSummary, visualBlockChange } from "../funnel.js";
+import { visualAuditSummary, visualBlockChange } from "../funnel.js";
 import { LAYERS, type Layer, wrapText } from "./paint.js";
 
 type Brief = import("../contract/ingest.js").OutcomesBrief;
@@ -213,7 +213,6 @@ async function specLayer(c: Ctx): Promise<boolean> {
   const { s } = c;
   const { extractIdea, briefToText, converseIdea } = await import("../contract/ingest.js");
   const { ideaToSpec, applyChoice } = await import("../contract/brief.js");
-  const { reviewSpec } = await import("../contract/review.js");
   const { withFrontendFloorStories } = await import("../review/frontend-floor.js");
   const { stringify } = await import("yaml");
   railFull(c, "spec");
@@ -236,31 +235,11 @@ async function specLayer(c: Ctx): Promise<boolean> {
     if (raw === null) return false;
     resolutions.push(applyChoice(d, raw));
   }
+  // The spec goes straight from authoring to the build's derive compile-check — the
+  // multi-reviewer (ceo/design/eng/dx) spec review was deleted in the streamline.
+  // The judgment calls were already ARROW-PICKED above (idea.decisions); the live
+  // visual audit carries the product teeth.
   const spec = withFrontendFloorStories(ideaToSpec(c.sess.prompt, idea, resolutions));
-  const review = await spin(c, "running the eng + design review", () => reviewSpec(spec, c.llm, c.premium));
-  // ser closes obvious gaps himself — each becomes a new gated requirement.
-  const { added: addedReqs } = applyReviewPatches(spec, review.patches);
-  if (addedReqs.length) {
-    out("\n  " + s.green(`i closed ${addedReqs.length} obvious gap${addedReqs.length > 1 ? "s" : ""} myself`) + s.gray(" (each is now a check):"));
-    addedReqs.forEach((r) => para(s.gray("    + "), r.statement));
-  }
-  // The genuine judgment calls are YOURS — so ASK them here (don't bury them as a
-  // passive note above the build button). Each answer is recorded as a decision
-  // before anything is built; pressing Enter on a pick takes the recommendation.
-  let dn = spec.decisions.length, qn = spec.open_questions.length;
-  for (const q of review.open_questions) {
-    if (q.options.length) {
-      const raw = await pick(c, q.text, "this one's genuinely yours to call", q.options[0]!, q.options.slice(1));
-      if (raw === null) return false;
-      const decided = raw === "" ? q.options[0]! : /^[a-z]$/.test(raw) ? (q.options[raw.charCodeAt(0) - 96] ?? raw) : raw;
-      spec.decisions.push({ id: `D${++dn}`, statement: `${q.text} → ${decided}`, rationale: "decided by you at spec review", claims: [] });
-    } else {
-      const ans = (await ask(c, "\n  " + s.cyan("? ") + q.text + "\n  your call › ")).trim();
-      if (ans === "/quit") return false;
-      if (ans) spec.decisions.push({ id: `D${++dn}`, statement: `${q.text} → ${ans}`, rationale: "decided by you at spec review", claims: [] });
-      else spec.open_questions.push({ id: `Q${++qn}`, text: q.text, blocking: q.blocking });
-    }
-  }
   const specPath = join(c.cwd, ".ser", "spec.yaml");
   mkdirSync(join(c.cwd, ".ser"), { recursive: true });
   writeFileSync(specPath, stringify(spec)); c.sess.specPath = specPath; c.save();

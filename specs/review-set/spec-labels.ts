@@ -2,7 +2,24 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseSpec } from "../../src/contract/spec.js";
-import type { LabeledSpecFixture, LabeledDefect } from "../../src/eval/review-eval.js";
+import type { ReviewSpecInput, ReviewerName } from "../../src/review/reviewers.js";
+
+/** A labeled defect: a tag + the keywords that signal a reviewer caught it. */
+export interface LabeledDefect {
+  tag: string;
+  keywords: string[];
+}
+/** A labeled spec fixture for the gate-strength eval (formerly shared with the
+ *  deleted review-eval). Defects a reviewer SHOULD catch; probes a clean impl
+ *  must NOT trigger; isControl flips any probe match into a false positive. */
+export interface LabeledSpecFixture {
+  id: string;
+  spec: ReviewSpecInput;
+  reviewer: ReviewerName;
+  isControl: boolean;
+  defects: LabeledDefect[];
+  probes: LabeledDefect[];
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const spec = (name: string) => parseSpec(readFileSync(join(HERE, name), "utf8"), name);

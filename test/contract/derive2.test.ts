@@ -11,8 +11,6 @@ import {
   stripCaseFilters,
   canonicalizeTestGate,
   bootstrapGreenfieldNodeGate,
-  isImplementationShapedDecomposition,
-  productPlanningContract,
   trimSurveyForDecompose,
   buildDirectMission,
 } from "../../src/contract/derive2.js";
@@ -74,90 +72,11 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(r.costUsd).toBeUndefined();
   });
 
-  it("adds one general interactive-app planning contract (no per-demo categories)", () => {
-    // any user-facing app gets the same general 'capabilities not files' rule
-    for (const p of ["a dashboard that ranks arbitrage opportunities", "a casino webapp with poker", "a mystical app that reads tarot"]) {
-      const c = productPlanningContract(p);
-      expect(c).toContain("user-visible capabilities");
-      expect(c).toContain("headline value visible in the first viewport");
-    }
-    // non-interactive intent gets nothing
-    expect(productPlanningContract("a CLI that parses CSV files into JSON")).toBe("");
-  });
-
-  it("detects file-shaped decomposition for interactive apps", () => {
-    expect(
-      isImplementationShapedDecomposition(
-        [
-          { brief: "create index.html", blast_radius: ["index.html"] },
-          { brief: "write render.js", blast_radius: ["render.js"] },
-          { brief: "fill data.js", blast_radius: ["data.js"] },
-        ],
-        "a dashboard app for ranked arbitrage opportunities",
-      ),
-    ).toBe(true);
-    expect(
-      isImplementationShapedDecomposition(
-        [
-          { brief: "build the ranked opportunities panel and first-viewport hierarchy", blast_radius: ["index.html", "render.js"] },
-          { brief: "make the comparison table readable on mobile", blast_radius: ["index.html", "render.js"] },
-        ],
-        "a dashboard app for ranked arbitrage opportunities",
-      ),
-    ).toBe(false);
-  });
-
-  it("trims greenfield interactive-app surveys for the decompose stage", () => {
-    const survey = [
-      "FILES (0):",
-      "",
-      "DETECTED CHECK COMMANDS:",
-      "  npm run test",
-      "",
-      "AVAILABLE TOOLS (gates MUST use only these interpreters/runners — present=yes):",
-      "  python3: yes",
-      "  node: yes",
-      "  npm: yes",
-      "  bash: yes",
-      "  rg: yes",
-      "  cargo: MISSING — do not use",
-      "Prefer the present ones. Use `python3` (not `python`) unless `python` shows present.",
-    ].join("\n");
-    const trimmed = trimSurveyForDecompose(survey, "a fortune reading app with tarot and tea leaves");
-    expect(trimmed).toContain("FILES (0):");
-    expect(trimmed).toContain("npm run test");
-    expect(trimmed).toContain("python3: yes");
-    expect(trimmed).not.toContain("Prefer the present ones.");
-  });
-
-  it("retries decomposition when an interactive app plan comes back file-shaped", async () => {
-    const first = JSON.stringify({
-      nodes: [
-        { id: "html", brief: "create index.html", deps: [], context_globs: [], blast_radius: ["index.html"], budget_usd: 0.3 },
-        { id: "render", brief: "write render.js", deps: ["html"], context_globs: [], blast_radius: ["render.js"], budget_usd: 0.3 },
-        { id: "data", brief: "fill data.js", deps: ["render"], context_globs: [], blast_radius: ["data.js"], budget_usd: 0.4 },
-      ],
-    });
-    const second = JSON.stringify({
-      nodes: [
-        { id: "hero", brief: "build the top opportunity viewport and ranked opportunity panel", deps: [], context_globs: [], blast_radius: ["index.html", "render.js"], budget_usd: 0.5 },
-        { id: "comparison", brief: "render the cross-book comparison surface with readable mobile layout", deps: ["hero"], context_globs: [], blast_radius: ["index.html", "render.js"], budget_usd: 0.5 },
-      ],
-    });
-    const llm = new MockLlm([
-      { text: first },
-      { text: second },
-      { text: JSON.stringify({ gates: [{ node: "hero", freeform: "true" }, { node: "comparison", freeform: "true" }] }) },
-      { text: JSON.stringify({ claims: [] }) },
-    ]);
-    const r = await deriveV2({
-      ...base(llm),
-      goal: "build a dashboard app that ranks arbitrage opportunities and compares sportsbook lines",
-    });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.mission.nodes.map((n) => n.id)).toEqual(["hero", "comparison"]);
-    expect(llm.calls[1]!.user).toContain("previous decomposition was too implementation-shaped");
+  it("trimSurveyForDecompose caps an oversized survey, passes a small one through (domain-agnostic)", () => {
+    const small = "FILES (0):\nDETECTED CHECK COMMANDS:\n  npm run test\n";
+    expect(trimSurveyForDecompose(small)).toBe(small); // under the cap → untouched, no app-type heuristic
+    const big = "x".repeat(5000);
+    expect(trimSurveyForDecompose(big).length).toBe(4000); // size cap only
   });
 
   it("repairs infer-gates when a selected pattern has invalid params", async () => {

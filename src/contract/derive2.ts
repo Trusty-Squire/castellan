@@ -150,67 +150,23 @@ export interface DirectMissionInput {
   idPrefix?: string;
 }
 
-export function isInteractiveAppIntent(text: string): boolean {
-  return /\b(app|web app|dashboard|game|site|website|ui|interface|fortune|casino|poker|blackjack)\b/i.test(text);
-}
-
 /**
- * One general planning rule for any user-facing app: decompose around capabilities,
- * not files, and plan for the affordances a usable version needs. Deliberately NOT
- * per-category (dashboard/game/fortune) — that was overfit to a few demos; this is
- * the inference a senior builder applies to any product.
- */
-/**
- * The decompose stage's anti-drift rule. A strong cheap model fails a node not
+ * The decompose stage's anti-drift rule, and the ONLY product-shaping guidance the
+ * planner gets — deliberately domain-agnostic (no dashboard/game/tarot/poker keyword
+ * lists; those were overfit to a few demos). A strong cheap model fails a node not
  * because the task is hard but because the brief is abstract product-prose ("harden
  * normalization around untrusted payloads") that never pins the data shape, the
  * exports, or the upstream it builds on — so it invents an incompatible schema and
- * trips over it. Briefs must stay product-shaped in INTENT but be concrete about the
+ * trips over it. Briefs must stay concise about intent but concrete about the
  * INTERFACE, all referencing one shared contract. This is what keeps the build on
  * the cheap rung — escalation is a rare backstop, not the mechanism.
  */
 export const CONTRACT_FIRST =
   "CONTRACT-FIRST (so the cheap executor succeeds first try, not via escalation): emit a concise shared `contract` — the canonical data shapes (named types with their fields and value types) and the module interfaces (the exact exports and their signatures) that nodes share. Then make each brief CONCRETE ABOUT THE INTERFACE and concise about intent: name the contract types it consumes and produces, the functions/exports it must create with their signatures, and which prior node's output it builds on. A brief that only gestures at intent ('harden normalization', 'validate payloads') WITHOUT naming the data shape, the exports, and the upstream contract is REJECTED — the executor sees only its brief and will invent an incompatible schema. Keep the contract concise: the shared interface, not a design doc.";
 
-export function productPlanningContract(text: string): string {
-  if (!isInteractiveAppIntent(text)) return "";
-  return [
-    "INTERACTIVE APP MODE:",
-    "Decompose the work around user-visible capabilities and workflows, not around filenames or source modules.",
-    "Do NOT emit a plan that is mostly 'create index.html', 'write render.js', 'fill data.js', or similar file-shaped trivia.",
-    "Prefer nodes that correspond to product outcomes such as the primary viewport hierarchy, the core interaction/result flow end to end, domain logic, and final polish.",
-    "It is acceptable for one node to touch multiple files when that is what the user-facing capability requires; at most one thin wiring/integration node, the rest should be product-shaped.",
-    "Plan explicitly for the affordances any usable version of THIS product needs: the headline value visible in the first viewport, the core flow working end to end, real (not placeholder) content, empty/loading/error states, and mobile scanability.",
-  ].join(" ");
-}
-
-export function isImplementationShapedDecomposition(
-  nodes: Array<{ brief: string; blast_radius: string[] }>,
-  text: string,
-): boolean {
-  if (!isInteractiveAppIntent(text) || nodes.length === 0) return false;
-  const fileMention = /\b([a-z0-9_-]+\.(html|css|js|ts|tsx|jsx)|index\.html|render\.[jt]s|data\.[jt]s)\b/i;
-  const productLanguage =
-    /\b(viewport|hierarchy|responsive|mobile|player|dealer|opponent|game loop|bet|table|dashboard|panel|ranked|compare|reading|tarot|fortune|ritual|result|flow|experience)\b/i;
-  const implementationNodes = nodes.filter((node) => {
-    const singleFileRadius = node.blast_radius.length === 1 && /\.[a-z0-9]+$/i.test(node.blast_radius[0] ?? "");
-    const fileShapedBrief = fileMention.test(node.brief) && !productLanguage.test(node.brief);
-    return singleFileRadius || fileShapedBrief;
-  }).length;
-  const productNodes = nodes.filter((node) => productLanguage.test(node.brief)).length;
-  return implementationNodes >= Math.ceil(nodes.length * 0.75) && productNodes === 0;
-}
-
-export function trimSurveyForDecompose(survey: string, text: string): string {
-  if (!isInteractiveAppIntent(text)) return survey;
-  const filesMatch = survey.match(/FILES \((\d+)\):/);
-  const fileCount = filesMatch ? Number(filesMatch[1]) : Number.NaN;
-  if (Number.isFinite(fileCount) && fileCount <= 5) {
-    const kept = survey
-      .split("\n")
-      .filter((line) => /^FILES \(/.test(line) || /^DETECTED CHECK COMMANDS:/.test(line) || /^AVAILABLE TOOLS/.test(line) || /^\s{2}(python3|node|npm|bash|rg|pytest|go|cargo):/.test(line) || /^\s{2}(npm run|make )/.test(line));
-    return kept.join("\n");
-  }
+/** Trim the repository survey before it goes into the decompose prompt — keeps the
+ *  stage within token budget. Domain-agnostic: a flat size cap, no app-type heuristic. */
+export function trimSurveyForDecompose(survey: string): string {
   return survey.length > 4000 ? survey.slice(0, 4000) : survey;
 }
 
@@ -412,10 +368,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         .map((r) => `${r.id}: ${r.statement} [acceptance tier ${r.acceptance.tier}${r.acceptance.gate ? `: ${r.acceptance.gate}` : ""}${r.acceptance.artifact ? `: ${r.acceptance.artifact}` : ""}]`)
         .join("\n")}\n\nSCOPE FENCE:\n${input.spec.scope_fence.join("\n") || "(none)"}`
     : `GOAL:\n${input.goal}`;
-  const productText = input.spec
-    ? `${input.spec.thesis}\n${input.spec.stories.join("\n")}\n${input.spec.requirements.map((r) => r.statement).join("\n")}`
-    : input.goal!;
-  const decomposeSurvey = trimSurveyForDecompose(survey, productText);
+  const decomposeSurvey = trimSurveyForDecompose(survey);
 
   // 2. decompose
   const coverageRule = input.spec
@@ -424,20 +377,9 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         .join(", ")}). EVERY node MUST set "requirement" to the id of the requirement it implements, and EVERY one of those requirement ids MUST be covered by at least one node. Do not emit a node without a "requirement"; do not leave any requirement uncovered.`
     : "";
   const decomposeSystem =
-    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${productPlanningContract(productText)} ${CONTRACT_FIRST} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
+    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${CONTRACT_FIRST} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
   const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
   let decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
-  if (isImplementationShapedDecomposition(decomposed.nodes, productText)) {
-    decomposed = await jsonStage(
-      llm,
-      model,
-      "decompose:product-shape-retry",
-      decomposeSystem,
-      `${decomposeUser}\n\nYour previous decomposition was too implementation-shaped for an interactive app. Re-plan around user-visible capabilities and product workflows instead of source files.`,
-      DecomposeSchema,
-      usage,
-    );
-  }
 
   // spec-mode coverage gate: every requirement maps to >=1 node
   if (input.spec) {

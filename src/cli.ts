@@ -16,7 +16,7 @@ import type { RenderResult } from "./review/visual.js";
 import type { VisualVerdict } from "./review/types.js";
 import { validateMissionFile } from "./contract/validate.js";
 import { sanitizeInput } from "./term.js";
-import { applyReviewPatches, visualAuditSummary } from "./funnel.js";
+import { visualAuditSummary } from "./funnel.js";
 import type { Spec } from "./contract/spec.js";
 import type { Mission } from "./contract/schema.js";
 
@@ -595,7 +595,6 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   } else {
     const { extractIdea } = await import("./contract/ingest.js");
     const { resolveBrief, ideaToSpec } = await import("./contract/brief.js");
-    const { reviewSpec } = await import("./contract/review.js");
     const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
 
     layer(1, "spec — your idea → a buildable, gated spec");
@@ -605,22 +604,11 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     idea.stories.forEach((s, i) => process.stdout.write(`  ${i + 1}. ${s}\n`));
     const io = { print: (l: string) => process.stdout.write(l + "\n"), ask: yes ? (async () => "") : ask };
     const resolutions = await resolveBrief(idea.decisions, io, st);
+    // The spec goes straight from authoring to the derive compile-check — the old
+    // multi-reviewer (ceo/design/eng/dx) spec review was deleted in the streamline.
+    // The derive adversarial review still gates buildability, and the live visual
+    // audit carries the product teeth.
     const spec = withFrontendFloorStories(ideaToSpec(prompt!, idea, resolutions));
-    // review lens (gstack eng + design review, borrowed): notes + the forks that
-    // genuinely need a human / can't be objectively gated.
-    process.stdout.write(st.gray("\nrunning the eng + design review lens…") + "\n");
-    const review = await reviewSpec(spec, llm, chain.executor);
-    // ser closes obvious gaps himself — each becomes a new gated requirement.
-    const { added: addedReqs, skipped: skippedReqs } = applyReviewPatches(spec, review.patches);
-    for (const p of skippedReqs) process.stdout.write(st.gray("  committee rejected coverage-only patch: ") + p.statement + "\n");
-    for (const r of addedReqs) process.stdout.write(st.gray("  + ") + r.statement + "\n");
-    let qn = spec.open_questions.length;
-    for (const q of review.open_questions) {
-      let text = q.text, answered = false;
-      if (!yes) { const a = (await ask(st.bold("\n  judgment call: ") + q.text + st.gray("\n  > "))).trim(); if (a) { text = `${q.text} → ${a}`; answered = true; } }
-      // only block when a human actively skipped a load-bearing call; --yes/answered proceed (flagged).
-      spec.open_questions.push({ id: `Q${++qn}`, text, blocking: q.blocking && !yes && !answered });
-    }
     specPath = resolve(flags.value.get("out") ?? `${basename(prompt!).replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32).replace(/^-|-$/g, "") || "product"}.spec.yaml`);
     const { writeFileSync: wf } = await import("node:fs");
     wf(specPath, stringify(spec));
@@ -697,17 +685,17 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     // creep. This is the autonomous equivalent of the TUI's pendingChange.
       if (pendingChange) {
         process.stdout.write(st.yellow(`\n↻ rebuild ${attempt}/${maxRebuilds} — folding the audit's blocking fixes back into the spec…`) + "\n");
-        const { reviewOuterDeltaBatch } = await import("./review/raise.js");
+        // The blocking fixes come straight from the live visual review (real,
+        // grounded gaps), so fold them directly — the old domain-keyed "delta
+        // committee" that filtered them was overfit to the demo corpus and deleted.
         const currentSpec = parseSpec(readFileSync(specPath, "utf8"), specPath);
-        const committee = reviewOuterDeltaBatch(pendingChange.stories, currentSpec.stories);
-        const acceptedStories = committee.filter((d) => d.accepted).map((d) => d.story);
-        const rejected = committee.filter((d) => !d.accepted);
-        for (const d of rejected) process.stdout.write(st.gray(`  committee rejected: ${d.story} (${d.reason})\n`));
-        if (acceptedStories.length === 0) {
-          process.stdout.write(st.yellow("\nall proposed rebuild deltas were rejected by the product/execution/adversarial committee; halting rather than mutating the spec with bad feedback.") + "\n");
+        const newStories = pendingChange.stories.filter((s) => !currentSpec.stories.includes(s));
+        if (newStories.length === 0) {
+          process.stdout.write(st.yellow("\nthe audit's blocking fixes are already in the spec; halting rather than looping without a new change.") + "\n");
           return 1;
         }
-        const delta = await refoldSpec(specPath, acceptedStories, llm, chain.executor);
+        for (const s of newStories) process.stdout.write(st.gray(`  + ${s}\n`));
+        const delta = await refoldSpec(specPath, newStories, llm, chain.executor);
         directRebuildMission = await buildDeltaMissionFromRefold(specPath, delta, {
           chainName,
           budgetUsd: Number(flags.value.get("budget") ?? "2.5"),
@@ -848,14 +836,16 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     if (stopAfterStage("audit")) return 0;
 
     if (outer >= maxOuterLoops || !selectedVerdict) break;
-    const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
-    const { planOuterDelta } = await import("./review/raise.js");
-    const nextSpec = withFrontendFloorStories(parseSpec(readFileSync(specPath, "utf8"), specPath));
-    const delta = planOuterDelta(nextSpec, recs, selectedVerdict);
-    if (delta.stories.length === 0) break;
-    process.stdout.write(st.gray(`\nraising the spec with ${delta.stories.length} tractable delta(s) for the next outer loop…`) + "\n");
-    delta.stories.forEach((story, i) => process.stdout.write(`  ${i + 1}. ${story}\n`));
-    const raised = await refoldSpec(specPath, delta.stories, llm, chain.executor);
+    // Next outer loop raises the spec with the visual review's own polish gaps —
+    // grounded, domain-agnostic, straight from the judge (the old planOuterDelta
+    // committee that scored deltas by tarot/casino/arb keywords was deleted).
+    const { polishFixes } = await import("./review/visual.js");
+    const nextSpec = parseSpec(readFileSync(specPath, "utf8"), specPath);
+    const deltaStories = polishFixes(selectedVerdict, 3).filter((s) => !nextSpec.stories.includes(s));
+    if (deltaStories.length === 0) break;
+    process.stdout.write(st.gray(`\nraising the spec with ${deltaStories.length} polish delta(s) for the next outer loop…`) + "\n");
+    deltaStories.forEach((story, i) => process.stdout.write(`  ${i + 1}. ${story}\n`));
+    const raised = await refoldSpec(specPath, deltaStories, llm, chain.executor);
     directRebuildMission = await buildDeltaMissionFromRefold(specPath, raised, {
       chainName,
       budgetUsd: Number(flags.value.get("budget") ?? "2.5"),

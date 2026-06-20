@@ -1,46 +1,14 @@
-import type { Spec } from "./contract/spec.js";
 import type { VisualVerdict, ReviewDimension } from "./review/types.js";
 import { blockingFixes } from "./review/visual.js";
-import { isTestOnlyDelta, isProcessDocPatch } from "./review/raise.js";
 
 /**
- * Shared funnel core — the spec-review and visual-audit LOGIC the CLI
- * (cmdPipeline) and the TUI (app) funnels run identically. The two funnels keep
- * their own interaction shells (the CLI is an autonomous batch; the TUI is an
- * interactive, turn-based session), because those shapes are genuinely different.
- * The logic lives here ONCE so it can't drift between them again — the CLI lacking
- * the rebuild loop, or the two handling a visual block differently, were both
- * drift bugs this module exists to prevent.
+ * Shared funnel core — the visual-audit LOGIC the CLI (cmdPipeline) and the TUI
+ * (app) funnels run identically. The two funnels keep their own interaction shells
+ * (the CLI is an autonomous batch; the TUI is an interactive, turn-based session),
+ * because those shapes are genuinely different. The logic lives here ONCE so it
+ * can't drift between them again — the two handling a visual block differently was a
+ * drift bug this module exists to prevent.
  */
-
-type Requirement = Spec["requirements"][number];
-
-/**
- * Apply a spec review's objective patches as tier-1 gated requirements, continuing
- * the R<n> numbering. Mutates `spec.requirements`; returns the added requirements
- * so each shell can present them its own way (CLI prints, TUI renders).
- */
-export function applyReviewPatches(
-  spec: Spec,
-  patches: { statement: string; gate: string }[],
-): { added: Requirement[]; skipped: { statement: string; gate: string }[] } {
-  let rn = spec.requirements.length;
-  const added: Requirement[] = [];
-  const skipped: { statement: string; gate: string }[] = [];
-  for (const p of patches) {
-    // Reject patches that aren't the load-bearing MVP: a coverage-only patch
-    // ("add a test for X") raises no product floor, and process docs (architecture
-    // docs, diagrams, threat models) are gold-plating for a small product.
-    if (isTestOnlyDelta(p.statement) || isProcessDocPatch(p.statement)) {
-      skipped.push(p);
-      continue;
-    }
-    const req: Requirement = { id: `R${++rn}`, statement: p.statement, acceptance: { tier: 1, gate: p.gate } };
-    spec.requirements.push(req);
-    added.push(req);
-  }
-  return { added, skipped };
-}
 
 /**
  * Pure summary of a visual verdict for the audit layer: the under-scored design

@@ -12,12 +12,7 @@ import type { LlmClient } from "../llm/types.js";
 import type { Spec } from "../contract/spec.js";
 import { tryParseJson } from "../contract/derive.js";
 import { ReviewerResultSchema, type ReviewerResult } from "./types.js";
-import {
-  CEO_REVIEW_SYSTEM,
-  DESIGN_REVIEW_SYSTEM,
-  ENG_REVIEW_SYSTEM,
-  DX_REVIEW_SYSTEM,
-} from "./prompts.js";
+import { DESIGN_REVIEW_SYSTEM } from "./prompts.js";
 
 export type ReviewerName = ReviewerResult["reviewer"];
 
@@ -74,20 +69,11 @@ async function runReviewer(
   return { reviewer, ...checked.data };
 }
 
-export function ceoReview(spec: Spec | ReviewSpecInput, llm: LlmClient, model: string): Promise<ReviewerResult> {
-  return runReviewer("ceo", CEO_REVIEW_SYSTEM, spec, llm, model);
-}
-
+// Only the design reviewer survives the streamline — the refold loop uses it to turn
+// rebuild fix-stories into objective gates. The ceo/eng/dx reviewers + their
+// orchestration were the multi-reviewer committee and were deleted.
 export function designReview(spec: Spec | ReviewSpecInput, llm: LlmClient, model: string): Promise<ReviewerResult> {
   return runReviewer("design", DESIGN_REVIEW_SYSTEM, spec, llm, model);
-}
-
-export function engReview(spec: Spec | ReviewSpecInput, llm: LlmClient, model: string): Promise<ReviewerResult> {
-  return runReviewer("eng", ENG_REVIEW_SYSTEM, spec, llm, model);
-}
-
-export function dxReview(spec: Spec | ReviewSpecInput, llm: LlmClient, model: string): Promise<ReviewerResult> {
-  return runReviewer("dx", DX_REVIEW_SYSTEM, spec, llm, model);
 }
 
 /** Re-exported for the orchestrator + tests: the validating schema for a model reply. */
