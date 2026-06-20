@@ -43,3 +43,35 @@ export function withFrontendFloorStories<T extends StorySpecLike>(spec: T): T {
   }
   return { ...spec, stories };
 }
+
+/** A spec with stories + tier-gated requirements (the full authored spec shape). */
+interface GatedSpecLike extends StorySpecLike {
+  requirements: { id: string; statement: string; acceptance: { tier: 0 | 1 | 2 | 3 | 4; gate?: string; artifact?: string } }[];
+}
+
+/**
+ * A visual app needs a real product SURFACE, not just logic with passing unit tests
+ * (the headless-library failure: every requirement is logic → the planner builds no
+ * UI node → the audit correctly blocks "no application surface"). Inject ONE dense,
+ * gated UI requirement so the planner is forced to build an actual UI node — index.html
+ * wiring the logic into a usable app. The gate is the build floor (it must compile);
+ * the LIVE VISUAL AUDIT carries the quality teeth. This is the deterministic, domain-
+ * agnostic replacement for the deleted design reviewer's UI-requirement patch.
+ */
+export function withUiRequirement<T extends GatedSpecLike>(spec: T): T {
+  if (!isVisualAppSpec(spec)) return spec;
+  const hasUi = spec.requirements.some(
+    (r) =>
+      /\b(ui|index\.html|render|renders|viewport|screen|first screen|page|front[- ]?end|interface)\b/i.test(r.statement) ||
+      /npm run build|vite build|index\.html/i.test(r.acceptance.gate ?? ""),
+  );
+  if (hasUi) return spec;
+  const id = `R${spec.requirements.length + 1}`;
+  const req = {
+    id,
+    statement:
+      "The app renders a usable product UI in index.html: the headline value visible in the first viewport, the primary workflow operable end to end, the standard empty/loading/error states, and a phone-friendly layout — wiring the domain logic into an actual surface, not a headless library.",
+    acceptance: { tier: 1 as const, gate: "npm run build --if-present" },
+  };
+  return { ...spec, requirements: [...spec.requirements, req] };
+}

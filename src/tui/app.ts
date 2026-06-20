@@ -213,7 +213,7 @@ async function specLayer(c: Ctx): Promise<boolean> {
   const { s } = c;
   const { extractIdea, briefToText, converseIdea } = await import("../contract/ingest.js");
   const { ideaToSpec, applyChoice } = await import("../contract/brief.js");
-  const { withFrontendFloorStories } = await import("../review/frontend-floor.js");
+  const { withFrontendFloorStories, withUiRequirement } = await import("../review/frontend-floor.js");
   const { stringify } = await import("yaml");
   railFull(c, "spec");
   const input = c.sess.brief && (c.sess.brief.intent || c.sess.brief.outcomes.length) ? briefToText(c.sess.brief) : c.sess.prompt;
@@ -239,7 +239,7 @@ async function specLayer(c: Ctx): Promise<boolean> {
   // multi-reviewer (ceo/design/eng/dx) spec review was deleted in the streamline.
   // The judgment calls were already ARROW-PICKED above (idea.decisions); the live
   // visual audit carries the product teeth.
-  const spec = withFrontendFloorStories(ideaToSpec(c.sess.prompt, idea, resolutions));
+  const spec = withUiRequirement(withFrontendFloorStories(ideaToSpec(c.sess.prompt, idea, resolutions)));
   const specPath = join(c.cwd, ".ser", "spec.yaml");
   mkdirSync(join(c.cwd, ".ser"), { recursive: true });
   writeFileSync(specPath, stringify(spec)); c.sess.specPath = specPath; c.save();

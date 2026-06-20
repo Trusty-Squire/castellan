@@ -1,0 +1,43 @@
+thesis: a flashcard app for studying
+stories:
+  - She creates a study deck with multiple front/back flashcards.
+  - She studies a deck by seeing each prompt, revealing the answer, and marking
+    herself correct or incorrect.
+  - She returns later and sees cards scheduled for review based on prior answers.
+  - A user sees the product's headline value in the first viewport rather than a
+    generic shell.
+  - A user can scan the primary content and compare key values without reading
+    long prose.
+  - A user can see the key value or ranking the product promises, not just
+    labels or surrounding chrome.
+  - A user on a phone-sized viewport can still use the primary workflow without
+    broken layout or horizontal scrolling.
+scope_fence: []
+requirements:
+  - id: R1
+    statement: "Deck and card management: create decks, add cards with front/back
+      text, and list saved cards."
+    acceptance:
+      tier: 1
+      gate: npm test -- --run card-management.test.ts
+  - id: R2
+    statement: "Study session flow: present due card fronts, reveal backs on
+      request, and record correct/incorrect responses."
+    acceptance:
+      tier: 1
+      gate: npm test -- --run study-session.test.ts
+  - id: R3
+    statement: "Persistent scheduling: store review history and compute due cards so
+      incorrect cards return sooner than correct cards across app restarts."
+    acceptance:
+      tier: 1
+      gate: npm test -- --run review-scheduling-persistence.test.ts
+decisions:
+  - id: D1
+    statement: "What study mechanism should v1 optimize for? → Build spaced
+      repetition in v1: correct answers move farther out, incorrect answers
+      return soon."
+    rationale: ser accepted
+    claims: []
+claims: []
+open_questions: []

@@ -346,7 +346,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   } else {
     const { extractIdea } = await import("./contract/ingest.js");
     const { resolveBrief, ideaToSpec } = await import("./contract/brief.js");
-    const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
+    const { withFrontendFloorStories, withUiRequirement } = await import("./review/frontend-floor.js");
 
     layer(1, "spec — your idea → a buildable, gated spec");
     process.stdout.write(st.gray("mapping your idea to clear user stories…") + "\n");
@@ -359,7 +359,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     // multi-reviewer (ceo/design/eng/dx) spec review was deleted in the streamline.
     // The derive adversarial review still gates buildability, and the live visual
     // audit carries the product teeth.
-    const spec = withFrontendFloorStories(ideaToSpec(prompt!, idea, resolutions));
+    const spec = withUiRequirement(withFrontendFloorStories(ideaToSpec(prompt!, idea, resolutions)));
     specPath = resolve(flags.value.get("out") ?? `${basename(prompt!).replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32).replace(/^-|-$/g, "") || "product"}.spec.yaml`);
     const { writeFileSync: wf } = await import("node:fs");
     wf(specPath, stringify(spec));
