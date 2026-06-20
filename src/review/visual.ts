@@ -176,13 +176,24 @@ async function capture(chrome: string, url: string, shot: string, width: number,
   );
 }
 
-/** Multimodal judge of a rendered screenshot against the spec stories. null on failure. */
+/**
+ * Multimodal judge of a rendered screenshot against the spec stories. null on failure.
+ *
+ * A null here makes the funnel HONEST-HALT ("won't ship a UI it couldn't verify"), so a
+ * TRANSIENT blip — a network hiccup, a 5xx, the per-call timeout, or a one-off malformed
+ * JSON the model occasionally emits — must NOT collapse to the same null as a genuine
+ * "the judge will not produce a verdict". Both are retryable: re-asking almost always
+ * clears them. We retry the whole call up to `attempts` times (fresh timeout each);
+ * only a PERSISTENT failure across every attempt returns null. This closes the gap where
+ * a single API blip false-halted an otherwise-green build at the very last gate.
+ */
 export async function visualReview(
   shot: RenderResult,
   spec: { thesis: string; stories: string[] },
   llm: LlmClient,
   model: string,
   timeoutMs = DEFAULT_VISUAL_REVIEW_TIMEOUT_MS,
+  attempts = 3,
 ): Promise<VisualVerdict | null> {
   if (!shot.ok || (!shot.images?.length && !shot.dataUrl)) return null;
   const images = shot.images?.length ? shot.images : [{ kind: "desktop" as const, screenshotPath: shot.screenshotPath ?? "", dataUrl: shot.dataUrl! }];
@@ -194,29 +205,36 @@ export async function visualReview(
     `SCREENSHOTS: ${images.map((img, i) => `${i + 1}. ${img.kind} viewport`).join("  ")}`,
     "The attached images are screenshots of the built UI.",
   ].join("\n\n");
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  timer.unref?.();
-  let res: { text: string };
-  try {
-    res = await llm.complete({
-      model,
-      system: VISUAL_JUDGE_SYSTEM,
-      user,
-      json: true,
-      maxTokens: 3500,
-      signal: ac.signal,
-      images: images.map((img) => ({ dataUrl: img.dataUrl })),
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+  const total = Math.max(1, attempts);
+  for (let attempt = 1; attempt <= total; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    timer.unref?.();
+    try {
+      const res = await llm.complete({
+        model,
+        system: VISUAL_JUDGE_SYSTEM,
+        user,
+        json: true,
+        maxTokens: 3500,
+        signal: ac.signal,
+        images: images.map((img) => ({ dataUrl: img.dataUrl })),
+      });
+      const parsed = tryParseJson(res.text);
+      if (parsed.ok) {
+        const checked = VisualVerdictSchema.safeParse(parsed.value);
+        if (checked.success) return checked.data; // a real verdict — done
+      }
+      // parse/schema miss: a transient malformed response — fall through to retry
+    } catch {
+      // network / 5xx / abort (timeout): transient — fall through to retry
+    } finally {
+      clearTimeout(timer);
+    }
+    // brief backoff before re-asking; skip after the final attempt
+    if (attempt < total) await new Promise((r) => setTimeout(r, 400 * attempt).unref?.());
   }
-  const parsed = tryParseJson(res.text);
-  if (!parsed.ok) return null;
-  const checked = VisualVerdictSchema.safeParse(parsed.value);
-  return checked.success ? checked.data : null;
+  return null;
 }
 
 /**
