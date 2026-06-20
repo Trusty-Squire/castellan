@@ -473,11 +473,13 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   }
 
   // Ground every gate (spec-authored OR inferred) in tools that exist: bare
-  // `python`/`pip` → `python3`/`pip3`. A gate that calls a missing command exits
-  // 127 and halts the build for a non-reason (the clairvoyance build halt).
+  // `python`/`pip` → `python3`/`pip3` (127 halts), strip hallucinated test-case
+  // filters (254 halts), downgrade node-level e2e to the build floor, and scaffold
+  // a runnable npm skeleton so a greenfield `npm test` doesn't ENOENT (254 halts).
+  // The harness owns this floor — the cheap builder can't be trusted to scaffold.
   for (const [id, g] of gatesByNode) {
     if ((g.type === "command" || g.type === "metric") && g.run) {
-      gatesByNode.set(id, { ...g, run: tractableGateRun(g.run) });
+      gatesByNode.set(id, { ...g, run: bootstrapGreenfieldNodeGate(tractableGateRun(g.run)) });
     }
   }
 
@@ -625,9 +627,26 @@ function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]
   throw new SquireError("SPEC_FAST_PATH_INVALID", `cannot fast-path unanchored acceptance tier ${acceptance.tier}`);
 }
 
-function bootstrapGreenfieldNodeGate(run: string): string {
+/**
+ * Make a greenfield npm gate runnable. The cheap builder writes source + tests but
+ * cannot be trusted to scaffold the project skeleton — and a node in an empty repo
+ * runs `npm test` against no package.json, which exits ENOENT (254) before a single
+ * test runs and halts the build for a non-reason (the clairvoyance N1 halt). The
+ * HARNESS owns this floor deterministically:
+ *   1. if no package.json, write a minimal vite+vitest skeleton (so `npm test` →
+ *      `vitest run` and `npm run build` → `vite build` resolve). Idempotent — the
+ *      `[ ! -f package.json ]` guard never clobbers a real project a node set up
+ *      (Next.js, an existing manifest, etc.).
+ *   2. ensure a test runner is actually installed (greenfield skeletons have none).
+ *   3. install deps if absent; install the browser harness only for e2e gates.
+ * The JSON is single-quote-free so it survives the sh -c re-quoting cleanly.
+ */
+export function bootstrapGreenfieldNodeGate(run: string): string {
   if (!/\bnpm (test|run)\b/.test(run)) return run;
+  const skeleton = '{"name":"app","private":true,"type":"module","scripts":{"test":"vitest run","build":"vite build"}}';
   const bootstrap = [
+    `if [ ! -f package.json ]; then printf '%s' '${skeleton}' > package.json; fi`,
+    "if [ ! -x node_modules/.bin/vitest ] && grep -q vitest package.json; then npm install --no-fund --no-audit -D vitest vite >/dev/null 2>&1; fi",
     "if [ ! -d node_modules ]; then npm install --no-fund --no-audit; fi",
     `if printf '%s' ${shellQuoteForCommand(run)} | grep -Eq 'playwright|test:e2e'; then npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1; fi`,
     run,

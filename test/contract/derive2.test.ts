@@ -9,6 +9,7 @@ import {
   groundGateRun,
   tractableGateRun,
   stripCaseFilters,
+  bootstrapGreenfieldNodeGate,
   isImplementationShapedDecomposition,
   productPlanningContract,
   trimSurveyForDecompose,
@@ -376,6 +377,18 @@ requirements:
     expect(stripCaseFilters("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
   });
 
+  it("bootstrapGreenfieldNodeGate scaffolds a runnable npm skeleton (idempotent) so greenfield npm test doesn't ENOENT", () => {
+    const out = bootstrapGreenfieldNodeGate("npm test -- --run tests/odds.test.ts");
+    expect(out).toMatch(/if \[ ! -f package\.json \]/); // never clobbers a real manifest
+    expect(out).toContain('"test":"vitest run"'); // skeleton maps npm test -> vitest
+    expect(out).toContain('"build":"vite build"');
+    expect(out).toMatch(/if \[ ! -d node_modules \]/); // install deps when absent
+    expect(out).toContain("npm test -- --run tests/odds.test.ts"); // the real gate still runs last
+    // non-npm gates are left completely alone (no scaffold noise)
+    expect(bootstrapGreenfieldNodeGate("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
+    expect(bootstrapGreenfieldNodeGate("python3 -m pytest tests/x.py")).toBe("python3 -m pytest tests/x.py");
+  });
+
   it("affirmsBuildability flags backwards evidence but not a genuine refutation", () => {
     expect(affirmsBuildability("Prior art demonstrates this is buildable")).toBe(true);
     expect(affirmsBuildability("a practical build path exists, existing systems already do this")).toBe(true);
@@ -439,7 +452,13 @@ requirements:
     const r = await deriveV2({ ...base(llm), goal: undefined, spec });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.mission.nodes[0]!.gate).toMatchObject({ type: "command", run: "npm run test" });
+    // the explicit acceptance gate wins over inference, then the harness scaffolds a
+    // runnable greenfield skeleton around it (so `npm run test` doesn't ENOENT on an
+    // empty repo). The real command still runs last; the spec author's gate is intact.
+    expect(r.mission.nodes[0]!.gate!.type).toBe("command");
+    const g0run = String(r.mission.nodes[0]!.gate!.run ?? "");
+    expect(g0run).toContain("npm run test");
+    expect(g0run).toMatch(/if \[ ! -f package\.json \]/);
     expect(r.mission.nodes[1]!.gate).toMatchObject({ type: "human", artifact: "renders/grid.png" });
     // no infer-gates call was needed: decompose + claims only
     expect(llm.calls).toHaveLength(2);
