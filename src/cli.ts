@@ -504,8 +504,19 @@ async function cmdPipeline(argv: string[]): Promise<number> {
 
     // Live visual review with TEETH: render the built UI, judge the screenshot,
     // collect the fixes that must block ship (an unsatisfied story / AI-slop).
+    // ONLY for visual products. A library/CLI has no UI to judge — and the build
+    // scaffold can leave a stub index.html, which would get a bogus design review
+    // and block a perfectly-good non-visual build (the lib2 misfire: a flawless
+    // duration library failed a "render a developer-tool UI" review). The gates
+    // already verified its logic.
       let fixes: { note: string; fix: string }[] = [];
       const { renderBuild, visualReview, polishFixes, qualityScore } = await import("./review/visual.js");
+      const { isVisualAppSpec } = await import("./review/frontend-floor.js");
+      if (!isVisualAppSpec(builtSpec)) {
+        process.stdout.write(st.green("  visual review skipped — not a visual product; its gates verify the logic.") + "\n");
+        delivered = true;
+        break;
+      }
       const shot = await renderBuild(buildDir);
       if (!shot.ok) {
         if (/not a visual build/i.test(shot.note ?? "")) {
