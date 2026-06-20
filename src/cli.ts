@@ -39,10 +39,6 @@ async function main(argv: string[]): Promise<number> {
       return cmdDo(rest);
     case "fix":
       return cmdFix(rest);
-    case "spec":
-      return cmdSpec(rest);
-    case "talk":
-      return cmdTalk(rest);
     case "login":
       return cmdLogin(rest);
     case undefined: {
@@ -72,7 +68,7 @@ function printUsage(): void {
     [
       "ser — Castellan: verified coding agent. An idea compiles to a gated build.",
       "",
-      "  ser                               start fresh — talk through an idea, then build it",
+      "  ser                               start fresh — the interactive TUI: shape an idea, then build it",
       "  ser --continue   (-c)             resume your last session where you left off",
       '  ser "<what you want to build>"     non-interactive: spec → build → audit → ship',
       "",
@@ -88,7 +84,7 @@ function printUsage(): void {
       "  --mock           dry engine",
       "",
       "Utilities:",
-      "  ser login · ser talk [spec.yaml] · ser do \"<goal>\" · ser fix \"<bug>\"",
+      "  ser login · ser do \"<goal>\" · ser fix \"<bug>\"",
       "  ser run/derive/validate/trace/experiment (advanced; stages of the above)",
       "",
     ].join("\n"),
@@ -263,252 +259,7 @@ async function cmdFix(args: string[]): Promise<number> {
   return executeMissionObject(mission, workdir, flags, "fix");
 }
 
-async function cmdSpec(args: string[]): Promise<number> {
-  const sub = args[0];
-  const { parseSpec } = await import("./contract/spec.js");
-  const { checkSpec, verifyClaim } = await import("./contract/spec-session.js");
-  const { stringify } = await import("yaml");
-  const { writeFileSync: wf } = await import("node:fs");
 
-  if (sub === "init") {
-    const flags = parseFlags(args.slice(1), ["thesis"]);
-    const file = flags.positional[0];
-    if (!file) throw new SquireError("USAGE", 'ser spec init <name.spec.yaml> --thesis "<one paragraph>"');
-    if (existsSync(resolve(file))) throw new SquireError("SPEC_EXISTS", `${file} already exists`);
-    const { blankSpec } = await import("./contract/talk.js");
-    wf(resolve(file), stringify(blankSpec(flags.value.get("thesis"))));
-    process.stdout.write(`initialized ${file} — talk with: ser talk ${file}\n`);
-    return 0;
-  }
-
-  if (sub === "check") {
-    const file = args[1];
-    if (!file) throw new SquireError("USAGE", "ser spec check <x.spec.yaml>");
-    const spec = parseSpec(readFileSync(resolve(file), "utf8"), file);
-    const { ok, lines } = checkSpec(spec);
-    process.stdout.write(lines.join("\n") + "\n");
-    return ok ? 0 : 1;
-  }
-
-  if (sub === "verify") {
-    const flags = parseFlags(args.slice(1), ["chain", "chains"]);
-    const [file, claimId] = flags.positional;
-    if (!file || !claimId) throw new SquireError("USAGE", "ser spec verify <x.spec.yaml> <claim-id>");
-    const { makeLlmClient } = await import("./backend.js");
-    const { loadChainsForDerive } = await import("./contract/derive.js");
-    const chains = loadChainsForDerive(process.cwd(), flags.value.get("chains"));
-    const chain = resolveChain(chains, flags.value.get("chain") ?? "cheap");
-    const spec = parseSpec(readFileSync(resolve(file), "utf8"), file);
-    const llm = await makeLlmClient();
-    const r = await verifyClaim(spec, claimId, llm, chain.executor);
-    wf(resolve(file), stringify(r.spec));
-    process.stdout.write(`${claimId}: ${r.verdict}\n  ${r.evidence}\n`);
-    return r.verdict === "verified" ? 0 : 1;
-  }
-
-  if (sub === "score") {
-    const flags = parseFlags(args.slice(1), ["chain", "chains"]);
-    const file = flags.positional[0];
-    if (!file) throw new SquireError("USAGE", "ser spec score <x.spec.yaml>");
-    const spec = parseSpec(readFileSync(resolve(file), "utf8"), file);
-    const { scoreSpec, renderScoreLine } = await import("./contract/spec-score.js");
-    // Use the live diagnostician when a backend is available; mechanical-only otherwise.
-    const { backendName, makeLlmClient } = await import("./backend.js");
-    const live = backendName() === "codex" || Boolean(process.env.OPENROUTER_API_KEY);
-    let s;
-    if (live) {
-      const { loadChainsForDerive } = await import("./contract/derive.js");
-      const chain = resolveChain(loadChainsForDerive(process.cwd(), flags.value.get("chains")), flags.value.get("chain") ?? "cheap");
-      const llm = await makeLlmClient();
-      s = await scoreSpec(spec, { llm, model: chain.executor });
-    } else {
-      s = await scoreSpec(spec);
-    }
-    process.stdout.write(`${renderScoreLine(s)}\n`);
-    for (const imp of s.improvements.slice(1, 6)) {
-      process.stdout.write(`  [${imp.severity}/${imp.dimension}] ${imp.problem}\n    → ${imp.suggestion}\n`);
-    }
-    return s.ready ? 0 : 1;
-  }
-
-  if (sub === "talk") return cmdTalk(args.slice(1));
-
-  throw new SquireError("USAGE", "ser spec init|check|verify|score|talk <x.spec.yaml>");
-}
-
-/**
- * The unified interface (`ser talk`): one conversation across all tools.
- * The mapper records deltas and may REQUEST a harness command (check/verify/
- * derive/run/status); the harness executes it mechanically and prints its own
- * report. The differences between the tools happen in the background.
- */
-async function cmdTalk(args: string[]): Promise<number> {
-  const flags = parseFlags(args, ["chain", "chains", "budget"]);
-  const { SpecSession } = await import("./contract/spec-session.js");
-  const { dispatchAction, ensureSpecFile, renderPlan, stripTrailingQuestion, funnelStage, funnelNext, renderFunnel } =
-    await import("./contract/talk.js");
-
-  // Color: --no-color forces off, --color forces on, else auto (TTY or
-  // FORCE_COLOR/CLICOLOR_FORCE). Auto-detection is unreliable under some
-  // tmux/SSH/phone setups, hence the explicit flag.
-  const colorOverride = flags.bool.has("no-color") ? false : flags.bool.has("color") ? true : undefined;
-  const { makeStyler, colorsEnabled, styleLockedIn } = await import("./style.js");
-  const st = makeStyler(colorsEnabled(process.env, Boolean(process.stdout.isTTY), colorOverride));
-
-  const { path: specFile, created } = ensureSpecFile(process.cwd(), flags.positional[0]);
-  if (created) process.stdout.write(st.gray(`new spec: ${specFile} — your first message pins the thesis.`) + "\n");
-  const { makeLlmClient } = await import("./backend.js");
-  const { chains, path: chainsPath } = resolveChains(process.cwd(), flags.value.get("chains"));
-  const chainName = flags.value.get("chain") ?? "cheap";
-  const chain = resolveChain(chains, chainName);
-  const { BUILTIN_CHAINS_SOURCE } = await import("./contract/default-chains.js");
-  if (chainsPath === BUILTIN_CHAINS_SOURCE) {
-    process.stdout.write(st.gray(`chain: ${chainName} (built-in defaults — drop a chains.yaml here to customize)`) + "\n");
-  }
-  const llm = await makeLlmClient();
-  const session = new SpecSession({
-    path: specFile,
-    llm,
-    executorModel: chain.executor,
-    knightModel: chain.knight,
-  });
-  const actionCtx = {
-    specPath: session.path,
-    llm,
-    executorModel: chain.executor,
-    chainName,
-    budgetUsd: flags.value.get("budget") ? Number(flags.value.get("budget")) : undefined,
-    confirm: async (q: string) => /^y(es)?\b/i.test((await ask(`${q} [y/N]: `)).trim()),
-    execute: async (missionPath: string) => {
-      const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
-      // ALWAYS sandbox a talk-run: the spec dir is a thinking space, often
-      // inside a larger repo. The harness does git reset --hard on failed
-      // nodes — it must never touch the user's working tree. The run executes
-      // in an isolated temp copy; the printed workdir is where artifacts land.
-      const runFlags: Flags = { positional: [], bool: new Set(flags.bool), value: new Map(flags.value) };
-      runFlags.bool.add("sandbox");
-      return executeMissionObject(mission, dirname(missionPath), runFlags, basename(missionPath).replace(/\.[^.]+$/, ""));
-    },
-  };
-  const { extractIdea } = await import("./contract/ingest.js");
-  const { ideaToTalkSpec, renderSeed } = await import("./contract/brief.js");
-  const { scoreSpec } = await import("./contract/spec-score.js");
-  const { writeFileSync: w } = await import("node:fs");
-  type Spec = ReturnType<typeof session.load>;
-
-  // The notebook updates in the BACKGROUND. A turn shows ser's reply (the
-  // conversation), a single dim note of what changed, and readiness only the
-  // moment it flips to buildable — never a per-turn diagnostic dump.
-  const fresh = (sp: Spec): boolean =>
-    /^TODO/.test(sp.thesis) || (sp.requirements.length === 1 && /^TODO/.test(sp.requirements[0]!.statement));
-  const isCommand = (m: string): boolean => /^(build|run|ship|check|derive|status|score|ready|verify)\b/i.test(m);
-  let lastReady = (await scoreSpec(session.load())).ready;
-  let built = false; // flips after the first run — advances the funnel to POLISH
-  const note = (s: string): void => { process.stdout.write(st.dim("· " + s) + "\n"); };
-
-  process.stdout.write(st.bold("ser") + st.gray(" — just talk. it builds the plan as you go; 'undo' reverts, empty line exits.") + "\n");
-  let undoStack: string[] = [];
-  for (;;) {
-    const msg = (await ask("\n" + st.cyan(st.bold("you")) + st.gray("  "))).trim();
-    if (!msg) return 0;
-    if (msg === "undo") {
-      const prev = undoStack.pop();
-      if (!prev) { note("nothing to undo"); continue; }
-      w(session.path, prev);
-      session.reject();
-      note(`reverted (next on ${session.currentModel()})`);
-      lastReady = (await scoreSpec(session.load())).ready;
-      continue;
-    }
-    const before = readFileSync(session.path, "utf8");
-    // CONVERGENCE: decompose a product through the calibrated idea phase, not
-    // the legacy mapper. Shared by a fresh start and a pivot to a new product.
-    const seed = async (pivotNote: boolean): Promise<void> => {
-      process.stdout.write(st.dim("  …working it out") + "\n");
-      const idea = await extractIdea(msg, llm, chain.executor);
-      undoStack.push(before);
-      w(session.path, (await import("yaml")).stringify(ideaToTalkSpec(msg, idea)));
-      // Capture facts in the OPENING idea too ("…on a laptop") — the seed path
-      // would otherwise never record them as decisions (A40).
-      try { await session.captureDecisions(msg); } catch { /* best-effort */ }
-      process.stdout.write("\n" + renderSeed(idea) + "\n");
-      note((pivotNote ? "new direction — old spec reset ('undo' restores it); " : "") +
-        `${idea.components.length} requirements, ${idea.decisions.filter((d) => d.bucket === 1).length} to decide`);
-      lastReady = (await scoreSpec(session.load())).ready;
-    };
-    try {
-      if (fresh(session.load()) && !isCommand(msg)) { await seed(false); continue; }
-
-      const batch = await session.turn(msg);
-      // A pivot is a new product — re-decompose it via the idea phase (same
-      // calibrated path), rather than the mapper's incremental decomposition.
-      if (batch.pivot) { await seed(true); continue; }
-      // Apply FIRST so we know the post-turn open forks before printing the reply.
-      let applied: Parameters<typeof styleLockedIn>[0] = [];
-      if (batch.deltas.length > 0) {
-        const res = await session.acceptLenient(batch);
-        applied = res.applied;
-        if (res.applied.length > 0) {
-          undoStack.push(before);
-          if (undoStack.length > 20) undoStack = undoStack.slice(-20);
-        }
-        if (res.dropped.length > 0) note(st.red(`${res.dropped.length} edit(s) didn't apply`));
-      }
-      // Semantic dedupe (A37): resolve forks a decision already answers, so the
-      // mapper stops re-asking settled questions. Harness-applied; best-effort.
-      let cleared: unknown[] = [];
-      try {
-        cleared = await session.reconcile();
-      } catch {
-        /* reconcile is best-effort — never break the conversation */
-      }
-      // Capture (A40): record constraints the user stated that the mapper dropped.
-      let captured: unknown[] = [];
-      try {
-        captured = await session.captureDecisions(msg);
-      } catch {
-        /* capture is best-effort */
-      }
-      // Coherence: when NOTHING is open to ask, the model must not pose a fork —
-      // "laptop locked but asking anyway". Strip a trailing question; the ✓ line
-      // below carries the next step.
-      let reply = batch.reply;
-      if (session.load().open_questions.filter((q) => q.blocking).length === 0) {
-        reply = stripTrailingQuestion(reply);
-      }
-      if (reply) process.stdout.write("\n" + reply + "\n");
-      if (applied.length > 0) note(styleLockedIn(applied, st));
-      if (cleared.length > 0) note(st.dim(`cleared ${cleared.length} already-answered question(s)`));
-      if (captured.length > 0) note(st.dim(`recorded ${captured.length} decision(s) from what you said`));
-      if (batch.action !== "none") {
-        try {
-          for (const line of await dispatchAction(batch.action, batch.action_arg, actionCtx)) {
-            const colored = /REFUTED|⚠|halted|cancelled|not buildable|not ready/i.test(line) ? st.red(line)
-              : /READY|complete|every requirement|building\./i.test(line) ? st.green(line) : line;
-            process.stdout.write(colored + "\n");
-          }
-          if (batch.action === "run") built = true; // crossed into POLISH
-        } catch (err) {
-          note(st.red(`${batch.action} failed: ${(err as Error).message.split("\n")[0]}`));
-        }
-      }
-      // Readiness: announce ONLY on the flip to buildable (mechanical = instant, free).
-      // Present the plan BEFORE inviting "build it" — so the user sees what they'd ship.
-      const spec = session.load();
-      const ready = (await scoreSpec(spec)).ready;
-      if (ready && !lastReady) {
-        for (const line of renderPlan(spec)) process.stdout.write(st.dim(line) + "\n");
-        process.stdout.write(st.green('\n✓ that\'s buildable — say "build it" when you want to go.') + "\n");
-      }
-      lastReady = ready;
-      // The funnel, every turn: where you are (idea → build → polish) + next move.
-      const stage = funnelStage(ready, built);
-      process.stdout.write(st.dim(renderFunnel(stage, funnelNext(spec, stage))) + "\n");
-    } catch (err) {
-      note(st.red(`hiccup: ${(err as Error).message.split("\n")[0]} — keep talking`));
-    }
-  }
-}
 
 /**
  * `ser login` — put OPENROUTER_API_KEY in ONE canonical place
