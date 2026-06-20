@@ -62,6 +62,18 @@ const LensSchema = z.object({
   evidence: z.string().default(""),
 });
 
+const RemedySchema = z.object({
+  remedies: z.array(
+    z.object({
+      claim: z.string().default(""),
+      // true = infeasible AS STATED but buildable with an obvious constraint;
+      // false = impossible IN PRINCIPLE (honest halt).
+      remediable: z.boolean(),
+      constraint: z.string().default(""),
+    }),
+  ),
+});
+
 // --- result types ---
 
 export interface ClaimVerdict {
@@ -552,21 +564,62 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     verdicts.push(verdict);
   }
   const refuted = verdicts.filter((v) => v.refuted);
+  const refutationOf = (v: ClaimVerdict): string =>
+    v.lenses
+      .filter((l) => l.refuted && !l.discarded)
+      .map((l) => `[${l.lens}] ${l.evidence}`)
+      .join("; ");
+  // 5b. remedy — don't dead-halt on a refutation that has an obvious fix. Mirror the
+  // audit→rebuild loop: for each refuted claim, decide whether it is impossible IN
+  // PRINCIPLE (no implementation could satisfy it → honest halt) or merely infeasible
+  // AS STATED but buildable with an obvious constraint (restrict inputs, filter edge
+  // cases, relax a universal to a guarded guarantee — e.g. "only surface arbs whose
+  // margin exceeds the cent-rounding error"). Remediable refutations FOLD a build
+  // constraint into every node brief and the plan proceeds; only the genuinely
+  // impossible still halts. The reviewer's rigor is intact — its verdict now drives a
+  // spec revision instead of a wall.
+  let foldedConstraints: string[] = [];
   if (refuted.length > 0) {
-    return {
-      ok: false,
-      reasons: refuted.map(
-        (v) =>
-          `load-bearing claim refuted: "${v.statement}" — ${v.lenses
-            .filter((l) => l.refuted && !l.discarded)
-            .map((l) => `[${l.lens}] ${l.evidence}`)
-            .join("; ")}`,
-      ),
-      remediations: [],
-    };
+    const refutationText = refuted.map((v) => `CLAIM: ${v.statement}\nREFUTATION: ${refutationOf(v)}`).join("\n\n");
+    let remedy: z.infer<typeof RemedySchema>;
+    try {
+      remedy = await jsonStage(
+        llm,
+        judgeModel ?? model,
+        "remedy",
+        'A feasibility reviewer refuted load-bearing claims with proofs. For EACH claim decide: is it impossible IN PRINCIPLE (no implementation could satisfy it, even after reasonable input restrictions or filtering edge cases), or merely infeasible AS STATED but buildable with an obvious constraint (restrict inputs, filter edge cases, relax a universal guarantee to a guarded one)? If remediable, write ONE imperative build-constraint sentence stating what the implementation must do to resolve it. If impossible in principle, set remediable=false and leave constraint empty. Output ONLY JSON: {"remedies":[{"claim":"<verbatim claim text>","remediable":boolean,"constraint":"<one imperative sentence>"}]}.',
+        refutationText,
+        RemedySchema,
+        usage,
+      );
+    } catch {
+      remedy = { remedies: [] };
+    }
+    const byClaim = new Map(remedy.remedies.map((r) => [r.claim.trim(), r]));
+    const remedyFor = (v: ClaimVerdict): z.infer<typeof RemedySchema>["remedies"][number] | undefined =>
+      byClaim.get(v.statement.trim()) ?? remedy.remedies.find((r) => r.claim.includes(v.statement.slice(0, 24)));
+    const unremediable = refuted.filter((v) => {
+      const r = remedyFor(v);
+      return !r || !r.remediable || !r.constraint.trim();
+    });
+    if (unremediable.length > 0) {
+      // Genuinely impossible (or the remedy stage couldn't produce a fix): honest halt.
+      return {
+        ok: false,
+        reasons: unremediable.map((v) => `load-bearing claim refuted, no buildable remedy: "${v.statement}" — ${refutationOf(v)}`),
+        remediations: [],
+      };
+    }
+    foldedConstraints = refuted.map((v) => remedyFor(v)!.constraint.trim()).filter((c, i, a) => c && a.indexOf(c) === i);
   }
 
-  // 6. compile + validate
+  // 6. compile + validate. Fold any remediable-refutation constraints into every
+  // node brief so the executor actually implements the fix (the executor sees only
+  // its brief + packed files, so the constraint must live there).
+  const constraintBlock =
+    foldedConstraints.length > 0
+      ? `\n\nBUILD CONSTRAINTS (resolve feasibility issues the plan review found — you MUST implement these):\n${foldedConstraints.map((c) => `- ${c}`).join("\n")}`
+      : "";
   const missionObj = {
     goal: input.spec ? input.spec.thesis : input.goal!,
     budget_usd: input.budgetUsd,
@@ -575,7 +628,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     max_human_checks: input.maxHumanChecks ?? 3,
     nodes: decomposed.nodes.map((n) => ({
       id: n.id,
-      brief: n.brief,
+      brief: n.brief + constraintBlock,
       deps: n.deps,
       context_globs: n.context_globs,
       blast_radius: n.blast_radius,
@@ -589,7 +642,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   }
 
   // 7. readback
-  const readback = renderReadback(mission.data, verdicts, freeformGates);
+  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints);
   return {
     ok: true,
     mission: mission.data,
@@ -726,7 +779,12 @@ function shellQuoteForCommand(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-function renderReadback(mission: Mission, claims: ClaimVerdict[], freeform: { node: string; run: string }[]): string {
+function renderReadback(
+  mission: Mission,
+  claims: ClaimVerdict[],
+  freeform: { node: string; run: string }[],
+  foldedConstraints: string[] = [],
+): string {
   const lines: string[] = [];
   lines.push(`plan: ${mission.nodes.length} node(s), budget $${mission.budget_usd}, chain ${mission.chain}`);
   const humanCount = mission.nodes.filter((n) => n.gate?.type === "human").length;
@@ -738,6 +796,9 @@ function renderReadback(mission: Mission, claims: ClaimVerdict[], freeform: { no
   const loadBearing = claims.filter((c) => c.loadBearing);
   for (const c of loadBearing) {
     lines.push(`  claim "${c.statement.slice(0, 60)}": survived ${c.lenses.filter((l) => !l.refuted).length}/${c.lenses.length} lenses`);
+  }
+  for (const c of foldedConstraints) {
+    lines.push(`  ↻ feasibility review refuted a claim; folded a build constraint instead of halting: ${c}`);
   }
   for (const f of freeform) {
     lines.push(`  ⚠ free-form gate on ${f.node} (no library pattern): ${f.run}`);

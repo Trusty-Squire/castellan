@@ -283,19 +283,41 @@ requirements:
     expect(r.costUsd).toBeCloseTo(0.004, 10);
   });
 
-  it("a refuted load-bearing claim (with evidence) blocks the plan — the poker path", async () => {
+  it("a refuted claim with NO buildable remedy (impossible in principle) still halts — the poker path", async () => {
     const llm = new MockLlm([
       { text: decomposeOut },
       { text: gatesOut },
       { text: JSON.stringify({ claims: [{ id: "C1", statement: "full-game CFR for NLHE is tractable on a laptop", loadBearing: true, about: "solver" }] }) },
       { text: JSON.stringify({ refuted: true, evidence: "10^160 game states x 1ns/state >> age of the universe; real solvers (PioSOLVER, Pluribus) use abstraction + subgame solving" }) },
       { text: lensOk },
+      // remedy stage: impossible in principle, no constraint resolves it → honest halt
+      { text: JSON.stringify({ remedies: [{ claim: "full-game CFR for NLHE is tractable on a laptop", remediable: false, constraint: "" }] }) },
     ]);
     const r = await deriveV2(base(llm));
     expect(r.ok).toBe(false);
     if (r.ok) return;
+    expect(r.reasons[0]).toContain("no buildable remedy");
     expect(r.reasons[0]).toContain("CFR");
     expect(r.reasons[0]).toContain("PioSOLVER");
+  });
+
+  it("a refuted claim WITH a buildable remedy folds a constraint into every brief and proceeds (don't stop at a failed state)", async () => {
+    const llm = new MockLlm([
+      { text: decomposeOut },
+      { text: gatesOut },
+      { text: JSON.stringify({ claims: [{ id: "C1", statement: "cent-rounded stake splits preserve guaranteed profit for all valid arbs", loadBearing: true, about: "stake" }] }) },
+      { text: JSON.stringify({ refuted: true, evidence: "sub-cent margins lose to rounding; $0.50/$0.50 on 1.99/2.02 pays $0.995 < $1" }) },
+      { text: lensOk },
+      // remedy stage: infeasible as stated, but buildable with an obvious constraint
+      { text: JSON.stringify({ remedies: [{ claim: "cent-rounded stake splits preserve guaranteed profit for all valid arbs", remediable: true, constraint: "Only surface opportunities whose margin exceeds the cent-rounding error so rounded stakes keep a non-negative profit." }] }) },
+    ]);
+    const r = await deriveV2(base(llm));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // the remedy is folded into every node brief, so the executor implements it
+    expect(r.mission.nodes.every((n) => n.brief.includes("BUILD CONSTRAINTS"))).toBe(true);
+    expect(r.mission.nodes[0]!.brief).toContain("margin exceeds the cent-rounding error");
+    expect(r.readback).toContain("folded a build constraint instead of halting");
   });
 
   it("evidence-free refutations are DISCARDED (refuters are accountable too)", async () => {
