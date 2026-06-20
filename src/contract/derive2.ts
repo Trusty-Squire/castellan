@@ -17,6 +17,15 @@ import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions 
 // --- stage output schemas ---
 
 const DecomposeSchema = z.object({
+  /**
+   * The shared CONTRACT for the whole build: the canonical data shapes (named types
+   * + fields) and module interfaces (exports + signatures) every node references.
+   * Prepended to each brief so nodes build compatible pieces instead of each
+   * inventing an incompatible schema (the N3 failure: one node's parser rejected its
+   * own fixture because no shared shape was pinned). Concise — the interface, not a
+   * design doc.
+   */
+  contract: z.string().default(""),
   nodes: z
     .array(
       z.object({
@@ -151,6 +160,18 @@ export function isInteractiveAppIntent(text: string): boolean {
  * per-category (dashboard/game/fortune) — that was overfit to a few demos; this is
  * the inference a senior builder applies to any product.
  */
+/**
+ * The decompose stage's anti-drift rule. A strong cheap model fails a node not
+ * because the task is hard but because the brief is abstract product-prose ("harden
+ * normalization around untrusted payloads") that never pins the data shape, the
+ * exports, or the upstream it builds on — so it invents an incompatible schema and
+ * trips over it. Briefs must stay product-shaped in INTENT but be concrete about the
+ * INTERFACE, all referencing one shared contract. This is what keeps the build on
+ * the cheap rung — escalation is a rare backstop, not the mechanism.
+ */
+export const CONTRACT_FIRST =
+  "CONTRACT-FIRST (so the cheap executor succeeds first try, not via escalation): emit a concise shared `contract` — the canonical data shapes (named types with their fields and value types) and the module interfaces (the exact exports and their signatures) that nodes share. Then make each brief CONCRETE ABOUT THE INTERFACE and concise about intent: name the contract types it consumes and produces, the functions/exports it must create with their signatures, and which prior node's output it builds on. A brief that only gestures at intent ('harden normalization', 'validate payloads') WITHOUT naming the data shape, the exports, and the upstream contract is REJECTED — the executor sees only its brief and will invent an incompatible schema. Keep the contract concise: the shared interface, not a design doc.";
+
 export function productPlanningContract(text: string): string {
   if (!isInteractiveAppIntent(text)) return "";
   return [
@@ -403,7 +424,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         .join(", ")}). EVERY node MUST set "requirement" to the id of the requirement it implements, and EVERY one of those requirement ids MUST be covered by at least one node. Do not emit a node without a "requirement"; do not leave any requirement uncovered.`
     : "";
   const decomposeSystem =
-    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${productPlanningContract(productText)} Output ONLY JSON: {"nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
+    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${productPlanningContract(productText)} ${CONTRACT_FIRST} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
   const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
   let decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
   if (isImplementationShapedDecomposition(decomposed.nodes, productText)) {
@@ -620,6 +641,12 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     foldedConstraints.length > 0
       ? `\n\nBUILD CONSTRAINTS (resolve feasibility issues the plan review found — you MUST implement these):\n${foldedConstraints.map((c) => `- ${c}`).join("\n")}`
       : "";
+  // Prepend the shared contract so every node builds to the SAME data shapes and
+  // module signatures — the executor sees only its brief, so the shared interface
+  // must live there or nodes drift into incompatible schemas.
+  const contractBlock = decomposed.contract.trim()
+    ? `SHARED CONTRACT (the whole build conforms to these data shapes + module signatures — do not invent your own):\n${decomposed.contract.trim()}\n\n---\n\n`
+    : "";
   const missionObj = {
     goal: input.spec ? input.spec.thesis : input.goal!,
     budget_usd: input.budgetUsd,
@@ -628,7 +655,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     max_human_checks: input.maxHumanChecks ?? 3,
     nodes: decomposed.nodes.map((n) => ({
       id: n.id,
-      brief: n.brief + constraintBlock,
+      brief: contractBlock + n.brief + constraintBlock,
       deps: n.deps,
       context_globs: n.context_globs,
       blast_radius: n.blast_radius,

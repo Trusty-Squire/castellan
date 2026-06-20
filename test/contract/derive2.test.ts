@@ -283,6 +283,24 @@ requirements:
     expect(r.costUsd).toBeCloseTo(0.004, 10);
   });
 
+  it("prepends the shared decompose contract to every brief so nodes build compatible pieces", async () => {
+    const withContract = JSON.stringify({
+      contract: "type NormalizedLine = { event: string; market: string; selection: string; decimalOdds: number; ts: number }; module odds.ts exports normalizeFeed(raw): NormalizedLine[]",
+      nodes: [
+        { id: "impl", brief: "implement the parser", deps: [], context_globs: ["src/**"], blast_radius: ["src/**"], budget_usd: 0.5 },
+        { id: "tests", brief: "write parser tests", deps: ["impl"], context_globs: ["src/**", "test/**"], blast_radius: ["test/**"], budget_usd: 0.5 },
+      ],
+    });
+    const llm = new MockLlm([{ text: withContract }, { text: gatesOut }, { text: claimsOut }, { text: lensOk }, { text: lensOk }]);
+    const r = await deriveV2(base(llm));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes.every((n) => n.brief.includes("SHARED CONTRACT"))).toBe(true);
+    expect(r.mission.nodes.every((n) => n.brief.includes("type NormalizedLine"))).toBe(true);
+    // the node's own brief still follows the contract block
+    expect(r.mission.nodes[0]!.brief).toContain("implement the parser");
+  });
+
   it("a refuted claim with NO buildable remedy (impossible in principle) still halts — the poker path", async () => {
     const llm = new MockLlm([
       { text: decomposeOut },
