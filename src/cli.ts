@@ -511,8 +511,12 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     // already verified its logic.
       let fixes: { note: string; fix: string }[] = [];
       const { renderBuild, visualReview, polishFixes, qualityScore } = await import("./review/visual.js");
-      const { isVisualAppSpec } = await import("./review/frontend-floor.js");
-      if (!isVisualAppSpec(builtSpec)) {
+      const { isExplicitlyNonVisual } = await import("./review/frontend-floor.js");
+      // Gate off the STABLE thesis (a library/CLI/SDK has no UI), not the stories —
+      // a rebuild can fold visual-fix stories into a library's spec and bogusly flip
+      // a story-based check to "visual" (lib3: a flawless duration library blocked by
+      // a "render a developer-tool UI" review).
+      if (isExplicitlyNonVisual(builtSpec.thesis)) {
         process.stdout.write(st.green("  visual review skipped — not a visual product; its gates verify the logic.") + "\n");
         delivered = true;
         break;

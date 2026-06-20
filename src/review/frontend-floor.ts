@@ -21,6 +21,19 @@ export interface StorySpecLike {
   stories: string[];
 }
 
+/**
+ * The product's THESIS explicitly names a non-visual artifact (library, CLI, SDK,
+ * package, framework, service…). Used to gate the visual review off the STABLE
+ * thesis rather than the mutable stories — a rebuild can fold visual-fix stories
+ * ("fix the cramped error rows / panel") into a library's spec, which would flip a
+ * story-based check to "visual" and bogusly block a perfectly-good library on a
+ * design review (the lib3 misfire). The thesis doesn't drift, so it's the reliable
+ * signal for "this product has no UI to review."
+ */
+export function isExplicitlyNonVisual(thesis: string): boolean {
+  return VISUAL_APP_NEGATIVE.test(thesis);
+}
+
 export function isVisualAppSpec(spec: StorySpecLike): boolean {
   const hay = [spec.thesis, ...spec.stories].join("\n");
   if (VISUAL_APP_POSITIVE.test(hay)) return true;
