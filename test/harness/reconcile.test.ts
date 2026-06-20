@@ -33,6 +33,28 @@ describe("reconcile", () => {
     expect(r.confabulation).toBe(false);
   });
 
+  it("allows standard project plumbing the builder creates to run its own checks", () => {
+    const r = reconcile({
+      blastRadius: ["src/**"],
+      doneCheck: "npm test",
+      changedFiles: ["src/parse.ts", "package.json", "tsconfig.json", "vitest.config.ts", "index.html", ".gitignore"],
+      record: record({ executedWrites: ["src/parse.ts"], finalMessage: "wrote it and ran npm test", toolCalls: [{ id: "1", name: "bash", args: {}, ok: true, output: "", command: "npm test", denied: false }] }),
+    });
+    expect(r.outOfRadius).toEqual([]); // plumbing files are not radius violations
+    expect(r.violations).toEqual([]);
+  });
+
+  it("still flags a genuine out-of-radius source file (not plumbing)", () => {
+    const r = reconcile({
+      blastRadius: ["src/**"],
+      doneCheck: "true",
+      changedFiles: ["src/a.ts", "other/b.ts"],
+      record: record({ executedWrites: ["src/a.ts", "other/b.ts"] }),
+    });
+    expect(r.outOfRadius).toEqual(["other/b.ts"]);
+    expect(r.violations.some((v) => v.includes("other/b.ts"))).toBe(true);
+  });
+
   it("flags a write that never reached the git diff", () => {
     const r = reconcile({
       blastRadius: ["src/**"],

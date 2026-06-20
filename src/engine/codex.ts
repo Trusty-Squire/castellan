@@ -40,16 +40,20 @@ export class CodexEngine implements Engine {
       "TASK:",
       req.brief,
       "",
-      `You are working directly in ${req.cwd}. Implement the task by creating/editing files there.`,
-      `You may ONLY create or modify files matching these globs: ${globs}. Do not touch anything else.`,
-      "CRITICAL — keep the working tree clean: write ONLY the source/deliverable files above. Do NOT run, execute, import, or test the code; do NOT run the acceptance check yourself; do NOT create scratch, sample, log, cache, build-output, or test-artifact files (e.g. __pycache__, *.pyc, sample/output files). A separate harness runs every check after you finish — your job is just to write correct source. Any stray file you leave outside the allowed globs FAILS the whole piece.",
+      `You are working directly in ${req.cwd}. Implement the task by creating/editing files in these globs: ${globs} (plus standard project plumbing — package.json, tsconfig, test/build config, the html entry — which you may create as needed).`,
+      "WORK ITERATIVELY — DO NOT WRITE BLIND. Implement, then actually RUN it: run the tests, build it, exercise the code, and for a UI render and open it. Read the failures and FIX until it genuinely works. Code you never ran is how bugs ship — running and iterating is exactly your job, not something to skip. Install dependencies and run the project's checks freely.",
+      "KEEP THE TREE CLEAN so the harness can verify your work: build/test byproducts (node_modules, dist, caches, coverage, lockfiles) are already gitignored and fine to generate. Do NOT leave stray NON-artifact files (scratch/sample/output/log files) OUTSIDE the allowed globs above — any such stray file FAILS the whole piece. Your deliverables go in those globs.",
       req.files.length > 0 ? `\n=== CONTEXT FILES ===\n${renderPackedFiles(req.files)}` : "",
     ].join("\n");
 
     const args = [
       "exec",
       "-C", req.cwd,
+      // workspace-write contains file writes to the build dir (reconcile enforces
+      // blast-radius post-turn anyway), but the builder now RUNS its own checks —
+      // so it needs network to install deps and run the tests/build it iterates on.
       "-s", "workspace-write",
+      "-c", "sandbox_workspace_write.network_access=true",
       "--skip-git-repo-check",
       "--color", "never",
       "--json",

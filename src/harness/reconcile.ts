@@ -46,8 +46,13 @@ export function reconcile(opts: {
     violations.push(`engine wrote "${p}" but it does not appear in git diff`);
   }
 
-  // 2. No change outside blast_radius.
-  const outOfRadius = changedFiles.map(norm).filter((p) => !inRadius(p));
+  // 2. No change outside blast_radius — EXCEPT standard project plumbing. Once the
+  // builder is allowed to run its own checks (write → run → see failure → fix), it
+  // must be able to create the project scaffold (manifest, tsconfig, test/build
+  // config, the html entry) to run anything at all. These are shared infrastructure,
+  // not another node's work, so they're never a blast-radius violation. Pure
+  // byproducts (node_modules, dist, caches) are handled by .gitignore upstream.
+  const outOfRadius = changedFiles.map(norm).filter((p) => !inRadius(p) && !isPlumbing(p));
   for (const p of outOfRadius) {
     violations.push(`changed file "${p}" is outside blast_radius`);
   }
@@ -70,6 +75,14 @@ function commandMatchesDoneCheck(command: string, doneCheck: string): boolean {
   const a = command.trim();
   const b = doneCheck.trim();
   return a === b || a.includes(b) || b.includes(a);
+}
+
+/** Standard project plumbing the builder may create to run its own checks — shared
+ *  infrastructure, never another node's work, so allowed regardless of blast_radius. */
+const PLUMBING_RE =
+  /^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(\.[\w-]+)?\.json|(vitest|vite|jest|playwright|eslint|tailwind|postcss)\.config\.[\w]+|\.gitignore|index\.html|pyproject\.toml|setup\.(py|cfg)|requirements\.txt|go\.(mod|sum)|Cargo\.toml)$/;
+function isPlumbing(p: string): boolean {
+  return PLUMBING_RE.test(p);
 }
 
 function norm(p: string): string {

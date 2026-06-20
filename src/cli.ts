@@ -478,7 +478,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     const gitignorePath = join(buildDir, ".gitignore");
     if (!existsSync(gitignorePath)) {
       const { writeFileSync: wfg } = await import("node:fs");
-      wfg(gitignorePath, ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "node_modules/", ".venv/", "venv/", "*.egg-info/", ".DS_Store"].join("\n") + "\n");
+      wfg(gitignorePath, ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "node_modules/", ".venv/", "venv/", "*.egg-info/", ".DS_Store", "dist/", "build/", "coverage/", ".vite/", ".turbo/", "*.tsbuildinfo", ".cache/"].join("\n") + "\n");
     }
       if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
       const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
