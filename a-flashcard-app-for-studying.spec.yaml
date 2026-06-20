@@ -1,9 +1,10 @@
 thesis: a flashcard app for studying
 stories:
-  - She creates a study deck with multiple front/back flashcards.
-  - She studies a deck by seeing each prompt, revealing the answer, and marking
-    herself correct or incorrect.
-  - She returns later and sees cards scheduled for review based on prior answers.
+  - A student creates flashcards with a prompt and an answer.
+  - A student studies a deck by seeing the prompt, revealing the answer, and
+    marking whether they knew it.
+  - A student comes back later and sees cards scheduled for review based on
+    prior answers.
   - A user sees the product's headline value in the first viewport rather than a
     generic shell.
   - A user can scan the primary content and compare key values without reading
@@ -12,31 +13,70 @@ stories:
     labels or surrounding chrome.
   - A user on a phone-sized viewport can still use the primary workflow without
     broken layout or horizontal scrolling.
+  - The screen shows a Start studying button but does not visibly show a study
+    prompt, reveal action, or knew-it marking controls.
+  - The screen shows a Due count, but no visible scheduled cards, dates, or
+    review scheduling based on prior answers.
+  - The promised key value is due scheduling, but the UI only shows labels and
+    zero counts without visible scheduled review information.
+  - Only a Start studying button is visible; no study prompt, reveal action, or
+    knew-it controls are shown.
+  - The screen shows Due counts but no scheduled cards, due dates, or
+    prior-answer-based review information.
+  - The promised due scheduling is not shown beyond labels and zero counts.
+  - Add visible scheduled-review information such as next due date, due queue,
+    or per-card review status.
+  - Show scheduled review metadata directly in the deck list and due review area.
 scope_fence: []
 requirements:
   - id: R1
-    statement: "Deck and card management: create decks, add cards with front/back
-      text, and list saved cards."
+    statement: Card editor stores prompts and answers in a deck.
     acceptance:
       tier: 1
-      gate: npm test -- --run card-management.test.ts
+      gate: npm test -- --run card-editor.spec.ts && npm run e2e -- card-editor.e2e.ts
   - id: R2
-    statement: "Study session flow: present due card fronts, reveal backs on
-      request, and record correct/incorrect responses."
+    statement: Study session presents one card at a time, hides the answer until
+      reveal, and records knew/did-not-know responses.
     acceptance:
       tier: 1
-      gate: npm test -- --run study-session.test.ts
+      gate: npm test -- --run study-session.spec.ts && npm run e2e --
+        study-session.e2e.ts
   - id: R3
-    statement: "Persistent scheduling: store review history and compute due cards so
-      incorrect cards return sooner than correct cards across app restarts."
+    statement: Review scheduler persists card performance and returns due cards
+      using a simple spaced-repetition rule.
     acceptance:
       tier: 1
-      gate: npm test -- --run review-scheduling-persistence.test.ts
+      gate: npm test -- --run review-scheduler.spec.ts && npm run e2e --
+        persistence-review.e2e.ts
+  - id: R4
+    statement: "The app renders a usable product UI in index.html: the headline
+      value visible in the first viewport, the primary workflow operable end to
+      end, the standard empty/loading/error states, and a phone-friendly layout
+      — wiring the domain logic into an actual surface, not a headless library."
+    acceptance:
+      tier: 1
+      gate: npm run build --if-present
+  - id: R5
+    statement: "The product UI must name and show the headline value as due
+      scheduling in the first viewport: visible due count, at least one
+      scheduled or due card surface when data exists, next-review timing, and
+      study controls for prompt, reveal answer, and knew/did-not-know so the
+      scheduler is visible rather than implied by labels or zero-count chrome."
+    acceptance:
+      tier: 1
+      gate: sh -c 'test -f index.html && grep -Eiq "due|scheduled|next review|review
+        date" index.html && grep -Eiq "reveal|show answer" index.html && grep
+        -Eiq "knew|did not know|again" index.html && npm run build --if-present'
 decisions:
   - id: D1
-    statement: "What study mechanism should v1 optimize for? → Build spaced
-      repetition in v1: correct answers move farther out, incorrect answers
-      return soon."
+    statement: Is v1 a single-device personal study app, or does it need accounts
+      and sync across devices? → Build v1 as a single-device personal app with
+      local persistence.
+    rationale: ser accepted
+    claims: []
+  - id: D2
+    statement: Is the study mechanism simple self-quizzing, or must v1 enforce
+      spaced repetition? → Use a simple spaced-repetition scheduler in v1.
     rationale: ser accepted
     claims: []
 claims: []

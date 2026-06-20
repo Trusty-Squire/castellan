@@ -70,7 +70,7 @@ export function withUiRequirement<T extends GatedSpecLike>(spec: T): T {
   const req = {
     id,
     statement:
-      "The app renders a usable product UI in index.html: the headline value visible in the first viewport, the primary workflow operable end to end, the standard empty/loading/error states, and a phone-friendly layout — wiring the domain logic into an actual surface, not a headless library.",
+      "The app renders a usable product UI in index.html, SEEDED WITH REALISTIC SAMPLE CONTENT on first load so the very first viewport shows the actual product in use — not an empty shell or a zero-state. The headline value is visible immediately, the primary workflow is operable end to end, the standard empty/loading/error states exist, and the layout is phone-friendly. Wire the domain logic into a real surface, not a headless library.",
     acceptance: { tier: 1 as const, gate: "npm run build --if-present" },
   };
   return { ...spec, requirements: [...spec.requirements, req] };
