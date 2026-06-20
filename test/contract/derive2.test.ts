@@ -9,6 +9,7 @@ import {
   groundGateRun,
   tractableGateRun,
   stripCaseFilters,
+  canonicalizeTestGate,
   bootstrapGreenfieldNodeGate,
   isImplementationShapedDecomposition,
   productPlanningContract,
@@ -355,9 +356,9 @@ requirements:
       expect(out).toContain("npm run build --if-present"); // tractable floor
       expect(out).not.toMatch(/playwright|cypress|test:e2e/i); // the intractable harness is gone
     }
-    // non-e2e gates pass through unchanged (just grounded) — no general bootstrap
+    // non-test gates pass through unchanged (just grounded) — no general bootstrap
     expect(tractableGateRun("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
-    expect(tractableGateRun("npm test -- foo")).toBe("npm test -- foo");
+    expect(tractableGateRun("npm test -- foo")).toBe("npm test"); // pure test gate → whole vitest suite
     expect(tractableGateRun("python -m pytest tests/x.py")).toContain("python3 -m pytest"); // still grounds tools
   });
 
@@ -377,13 +378,28 @@ requirements:
     expect(stripCaseFilters("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
   });
 
-  it("bootstrapGreenfieldNodeGate scaffolds a runnable npm skeleton (idempotent) so greenfield npm test doesn't ENOENT", () => {
-    const out = bootstrapGreenfieldNodeGate("npm test -- --run tests/odds.test.ts");
+  it("canonicalizeTestGate runs the whole vitest suite for pure test gates (robust to jest flags / pinned filenames), keeping compound gates", () => {
+    // jest idiom vitest rejects (CACError) + a pinned filename the cheap model renamed
+    expect(canonicalizeTestGate("test -f tests/x.test.js && npm test -- --runTestsByPath tests/x.test.js")).toBe("npm test");
+    expect(canonicalizeTestGate("npm test -- --run tests/arbitrage-engine.test.ts")).toBe("npm test");
+    expect(canonicalizeTestGate("npx vitest run tests/foo.test.ts")).toBe("npm test");
+    // applied end-to-end through tractableGateRun
+    expect(tractableGateRun("npm test -- --runTestsByPath tests/x.test.js")).toBe("npm test");
+    // compound gates keep their non-test payload (UI build+grep checks, plain grep)
+    expect(canonicalizeTestGate("npm run build --if-present && grep -q data-edge index.html")).toContain("grep -q data-edge");
+    expect(canonicalizeTestGate("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
+  });
+
+  it("bootstrapGreenfieldNodeGate scaffolds a runnable npm skeleton + e2e-excluding vitest config (idempotent)", () => {
+    const out = bootstrapGreenfieldNodeGate("npm test");
     expect(out).toMatch(/if \[ ! -f package\.json \]/); // never clobbers a real manifest
     expect(out).toContain('"test":"vitest run"'); // skeleton maps npm test -> vitest
     expect(out).toContain('"build":"vite build"');
+    expect(out).toMatch(/if \[ ! -f vitest\.config\.js \]/); // writes a config so the suite excludes e2e
+    expect(out).toContain('"**/e2e/**"'); // playwright specs don't choke the unit run
+    expect(out).toContain('"**/*.spec.*"');
     expect(out).toMatch(/if \[ ! -d node_modules \]/); // install deps when absent
-    expect(out).toContain("npm test -- --run tests/odds.test.ts"); // the real gate still runs last
+    expect(out.endsWith("npm test'")).toBe(true); // the real gate still runs last, inside the sh -c wrap
     // non-npm gates are left completely alone (no scaffold noise)
     expect(bootstrapGreenfieldNodeGate("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
     expect(bootstrapGreenfieldNodeGate("python3 -m pytest tests/x.py")).toBe("python3 -m pytest tests/x.py");

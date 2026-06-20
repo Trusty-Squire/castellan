@@ -315,7 +315,31 @@ const E2E_BUILD_FLOOR = "if [ ! -d node_modules ]; then npm install --no-fund --
  */
 export function tractableGateRun(run: string): string {
   const grounded = groundGateRun(run);
-  return E2E_GATE.test(grounded) ? E2E_BUILD_FLOOR : grounded;
+  if (E2E_GATE.test(grounded)) return E2E_BUILD_FLOOR;
+  return canonicalizeTestGate(grounded);
+}
+
+/** A gate whose payload is running the test suite (npm test / vitest / jest). */
+const TEST_RUN_GATE = /\bnpm test\b|\bnpx? +vitest\b|\bnpx? +jest\b/i;
+/** A gate that ALSO builds, greps, curls, or drives a browser has a non-test
+ *  payload we must preserve — not a pure test-run gate. */
+const COMPOUND_PAYLOAD = /\bnpm run build\b|\bgrep\b|\bcurl\b|\bplaywright\b|\bcypress\b/i;
+
+/**
+ * Canonicalize a pure test-runner gate to the whole vitest suite (`npm test`).
+ * The cheap builder writes real tests but names files its own way, and the gate
+ * authoring emits jest idioms — `--runTestsByPath` (a flag vitest rejects with
+ * CACError), `--case`, and pinned `tests/exact-name.test.js` paths — each a 254/1
+ * halt on a non-reason when the model named the file differently or the runner
+ * differs. Running the whole suite is robust to filename/extension/flag drift, and
+ * "all unit tests green" is the invariant the build loop actually wants per node
+ * (the scaffolded vitest config excludes e2e/playwright specs so they don't choke
+ * the unit run). Applied ONLY when the gate is purely a test run — compound gates
+ * (build+grep UI checks, e2e build floors) keep their payload.
+ */
+export function canonicalizeTestGate(run: string): string {
+  if (!TEST_RUN_GATE.test(run) || COMPOUND_PAYLOAD.test(run)) return run;
+  return "npm test";
 }
 
 export const LENSES: { id: string; instruction: string }[] = [
@@ -644,8 +668,15 @@ function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]
 export function bootstrapGreenfieldNodeGate(run: string): string {
   if (!/\bnpm (test|run)\b/.test(run)) return run;
   const skeleton = '{"name":"app","private":true,"type":"module","scripts":{"test":"vitest run","build":"vite build"}}';
+  // A vitest config that runs the whole UNIT suite but excludes e2e/playwright specs
+  // (.spec.* + anything under e2e/) — without it, `npm test` collects the model's
+  // playwright specs and dies importing @playwright/test. Double-quoted only, so it
+  // survives the sh -c single-quote re-quoting.
+  const vitestConfig =
+    'import { defineConfig, configDefaults } from "vitest/config"; export default defineConfig({ test: { exclude: [...configDefaults.exclude, "**/e2e/**", "**/*.spec.*"] } });';
   const bootstrap = [
     `if [ ! -f package.json ]; then printf '%s' '${skeleton}' > package.json; fi`,
+    `if [ ! -f vitest.config.js ] && [ ! -f vitest.config.ts ]; then printf '%s' '${vitestConfig}' > vitest.config.js; fi`,
     "if [ ! -x node_modules/.bin/vitest ] && grep -q vitest package.json; then npm install --no-fund --no-audit -D vitest vite >/dev/null 2>&1; fi",
     "if [ ! -d node_modules ]; then npm install --no-fund --no-audit; fi",
     `if printf '%s' ${shellQuoteForCommand(run)} | grep -Eq 'playwright|test:e2e'; then npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1; fi`,
