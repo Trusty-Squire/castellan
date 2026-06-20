@@ -663,7 +663,12 @@ function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]
  *      (Next.js, an existing manifest, etc.).
  *   2. ensure a test runner is actually installed (greenfield skeletons have none).
  *   3. install deps if absent; install the browser harness only for e2e gates.
- * The JSON is single-quote-free so it survives the sh -c re-quoting cleanly.
+ *   4. for a BUILD gate, ensure a vite entry exists: `vite build` on an early node
+ *      that hasn't written the UI shell yet dies with "Could not resolve entry
+ *      module index.html" (the clairvoyance N2 halt). A minimal bare index.html lets
+ *      the build resolve; later UI nodes overwrite it and the visual audit keeps the
+ *      real UI teeth. Only for build gates — pure test nodes don't need (or want) it.
+ * The JSON/HTML are single-quote-free so they survive the sh -c re-quoting cleanly.
  */
 export function bootstrapGreenfieldNodeGate(run: string): string {
   if (!/\bnpm (test|run)\b/.test(run)) return run;
@@ -674,9 +679,13 @@ export function bootstrapGreenfieldNodeGate(run: string): string {
   // survives the sh -c single-quote re-quoting.
   const vitestConfig =
     'import { defineConfig, configDefaults } from "vitest/config"; export default defineConfig({ test: { exclude: [...configDefaults.exclude, "**/e2e/**", "**/*.spec.*"] } });';
+  const indexHtml =
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>app</title></head><body><div id="app"></div></body></html>';
+  const isBuildGate = /\bnpm run build\b|\bvite build\b/.test(run);
   const bootstrap = [
     `if [ ! -f package.json ]; then printf '%s' '${skeleton}' > package.json; fi`,
     `if [ ! -f vitest.config.js ] && [ ! -f vitest.config.ts ]; then printf '%s' '${vitestConfig}' > vitest.config.js; fi`,
+    ...(isBuildGate ? [`if [ ! -f index.html ]; then printf '%s' '${indexHtml}' > index.html; fi`] : []),
     "if [ ! -x node_modules/.bin/vitest ] && grep -q vitest package.json; then npm install --no-fund --no-audit -D vitest vite >/dev/null 2>&1; fi",
     "if [ ! -d node_modules ]; then npm install --no-fund --no-audit; fi",
     `if printf '%s' ${shellQuoteForCommand(run)} | grep -Eq 'playwright|test:e2e'; then npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1; fi`,

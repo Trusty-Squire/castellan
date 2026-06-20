@@ -400,6 +400,11 @@ requirements:
     expect(out).toContain('"**/*.spec.*"');
     expect(out).toMatch(/if \[ ! -d node_modules \]/); // install deps when absent
     expect(out.endsWith("npm test'")).toBe(true); // the real gate still runs last, inside the sh -c wrap
+    expect(out).not.toContain("index.html"); // a pure test node doesn't get a vite entry
+    // a BUILD gate also gets a minimal vite entry so `vite build` resolves on an early node
+    const buildOut = bootstrapGreenfieldNodeGate("npm run build --if-present");
+    expect(buildOut).toMatch(/if \[ ! -f index\.html \]/);
+    expect(buildOut).toContain("<!doctype html>");
     // non-npm gates are left completely alone (no scaffold noise)
     expect(bootstrapGreenfieldNodeGate("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
     expect(bootstrapGreenfieldNodeGate("python3 -m pytest tests/x.py")).toBe("python3 -m pytest tests/x.py");
