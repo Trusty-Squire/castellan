@@ -29,7 +29,33 @@ Run the check command yourself before declaring done; if it
 fails, fix and re-run. Declare done only when it exits 0.
 Your final message: one short paragraph stating what changed
 (file list) and the check result. Claim nothing you did not do;
-your tool calls are audited against your claims.`;
+your tool calls are audited against your claims.
+
+If, after genuinely attempting it, you conclude the CHECK or the TASK itself is
+wrong — self-contradictory, impossible, or in conflict with the shared contract
+(NOT merely hard) — do NOT fake a pass or flail. Instead end your final message
+with exactly one line in this form:
+DISPUTE: <gate|brief>: <one sentence naming the specific contradiction, with evidence>
+A stronger model will be asked to confirm it, so raise a dispute ONLY when you can
+point to the concrete contradiction — an unsubstantiated dispute just wastes a turn.`;
+
+/** A node's structured push-back: the brief or gate it was handed is mis-specified. */
+export interface NodeDispute {
+  target: "gate" | "brief";
+  evidence: string;
+}
+
+const DISPUTE_RE = /DISPUTE:\s*(gate|brief)\s*:\s*([^\n]+)/i;
+
+/** Parse a dispute the builder raised in its final message. Requires real evidence
+ *  (not a bare "DISPUTE: gate:") so an empty cry-wolf doesn't register. */
+export function parseDispute(finalMessage: string): NodeDispute | null {
+  const m = DISPUTE_RE.exec(finalMessage ?? "");
+  if (!m) return null;
+  const evidence = m[2]!.trim();
+  if (evidence.length < 8) return null;
+  return { target: m[1]!.toLowerCase() as "gate" | "brief", evidence };
+}
 
 
 /** Command string for reconcile's confabulation matching ("" for human/judge gates). */
@@ -163,6 +189,11 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
 
     let failure: FailureInfo | undefined;
     let priorDiff: string | undefined;
+    // The most recent rung's dispute (if any). The ladder runs weakest→strongest,
+    // so a dispute that survives to the LAST rung that ran is the strongest model's
+    // verdict — that's the substantiation. A weak model that cries "bad gate" but is
+    // then overruled by a stronger rung that simply tries (no dispute) is cleared.
+    let lastDispute: (NodeDispute & { rung: number; model: string }) | undefined;
 
     for (const rung of rungs) {
       outcome.attempts = rung.rung;
@@ -357,13 +388,21 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         confabulation: rec.confabulation,
         changedFiles: changed,
       };
+      // Did the builder push back that the task itself is mis-specified? Track the
+      // most recent rung's verdict (a later rung that just tries, no dispute, clears it).
+      const dispute = parseDispute(record.finalMessage);
+      lastDispute = dispute ? { ...dispute, rung: rung.rung, model: rung.model } : undefined;
       trace.append("node_fail", {
         nodeId: node.id,
         rung: rung.rung,
-        payload: { gateExitCode: gate.exitCode, reason: nodeBudgetHit ? "node_budget" : "gate_or_reconcile" },
+        payload: {
+          gateExitCode: gate.exitCode,
+          reason: nodeBudgetHit ? "node_budget" : dispute ? "disputed" : "gate_or_reconcile",
+          ...(dispute ? { dispute: { target: dispute.target, evidence: dispute.evidence } } : {}),
+        },
         costUsdSoFar: budget.globalSpent(),
       });
-      log(`node(${node.id}): fail (rung ${rung.rung}, gate exit ${gate.exitCode})`);
+      log(`node(${node.id}): fail (rung ${rung.rung}, gate exit ${gate.exitCode})${dispute ? ` — disputes its ${dispute.target}` : ""}`);
 
       // The node FAILED its gate. If it also burned its per-node budget, stop
       // escalating — the next rung would only spend more without a result.
@@ -383,7 +422,13 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
 
     if (!outcome.passed && !halted) {
       halted = true;
-      haltReason = `node "${node.id}" exhausted the escalation ladder`;
+      // Attribution: if the strongest rung that ran disputed the task as mis-specified,
+      // halt with THAT — "the gate/brief is wrong, here's the evidence" — not the
+      // model-blaming "exhausted the ladder". The orchestrator (and the human) now
+      // see a harness defect distinctly from a model ceiling.
+      haltReason = lastDispute
+        ? `node "${node.id}" disputes its ${lastDispute.target} as mis-specified (rung ${lastDispute.rung}/${lastDispute.model}): ${lastDispute.evidence}`
+        : `node "${node.id}" exhausted the escalation ladder`;
     }
   }
 

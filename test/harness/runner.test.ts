@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EXECUTOR_SYSTEM_PROMPT, runMission } from "../../src/harness/runner.js";
+import { EXECUTOR_SYSTEM_PROMPT, runMission, parseDispute } from "../../src/harness/runner.js";
 import { MockEngine, type ScriptResolver } from "../../src/engine/mock.js";
 import { initRepo } from "../../src/harness/checkpoint.js";
 import { parseMission, parseChains } from "../../src/contract/schema.js";
@@ -155,6 +155,44 @@ describe("runMission", () => {
     expect(result.halted).toBe(true);
     expect(result.haltReason).toMatch(/ladder/);
     expect(result.nodes[0]!.maxRung).toBe(4);
+  });
+
+  it("parseDispute reads a substantiated push-back and rejects cry-wolf", () => {
+    expect(parseDispute("tried it. DISPUTE: gate: the gate wants v=1 but the brief says v=2 — contradiction")).toEqual({
+      target: "gate",
+      evidence: "the gate wants v=1 but the brief says v=2 — contradiction",
+    });
+    expect(parseDispute("DISPUTE: brief:")).toBeNull(); // no evidence = cry-wolf, ignored
+    expect(parseDispute("all tests pass, exit 0")).toBeNull();
+  });
+
+  it("attributes the halt to a DISPUTE (mis-specified task) instead of blaming the model", async () => {
+    // The node never passes (gate fails) AND the builder disputes the gate every rung.
+    const result = await run(oneNode, () => ({
+      steps: [{ text: "I tried" }, { done: "DISPUTE: gate: the check greps for v = 1 but this brief is impossible to satisfy without breaking the shared contract" }],
+    }));
+    expect(result.completed).toBe(false);
+    expect(result.halted).toBe(true);
+    expect(result.haltReason).toMatch(/disputes its gate as mis-specified/);
+    expect(result.haltReason).not.toMatch(/exhausted the escalation ladder/);
+    const fails = readTrace(result.tracePath).filter((e) => e.kind === "node_fail");
+    expect((fails[fails.length - 1]!.payload as { reason?: string }).reason).toBe("disputed");
+  });
+
+  it("a dispute is CLEARED when a stronger rung simply does the task (no cry-wolf halt)", async () => {
+    const result = await run(oneNode, (_id, rung) => {
+      if (rung === 1) return { steps: [{ done: "DISPUTE: gate: I think this is contradictory and cannot be done" }] };
+      // a later rung just does it — the dispute was the weak model's excuse
+      return {
+        steps: [
+          { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
+          { tool: "bash", args: { command: "bash check.sh" } },
+          { done: "actually it was fine, fixed it" },
+        ],
+      };
+    });
+    expect(result.completed).toBe(true); // the dispute did NOT halt — a stronger rung overruled it
+    expect(result.committedNodeIds).toEqual(["fix"]);
   });
 
   it("counts a blast-radius denial without persisting the out-of-radius write", async () => {
