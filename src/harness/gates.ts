@@ -109,15 +109,38 @@ export async function runGate(
   timeoutMs: number = DEFAULT_GATE_TIMEOUT_MS,
 ): Promise<GateResult> {
   const started = Date.now();
+  // The gate runs an arbitrary shell command (npm test → vitest, npm install, …)
+  // that can spawn grandchildren which hold the stdout pipe open — a vitest worker
+  // with an unclosed handle, a dev server. execa's `timeout` SIGTERMs the `sh -c`
+  // parent but then awaits a stream the surviving grandchild never closes, so the
+  // gate hangs for HOURS past its timeout (a build stalled 2h on a hung vitest
+  // worker). So: run DETACHED (its own process group), race the await against a hard
+  // wall, and on the wall SIGKILL the ENTIRE group (-pid) to reap the orphans, then
+  // report a timeout failure so the rung ladder retries instead of hanging.
+  const subprocess = execa(command, {
+    cwd,
+    shell: true,
+    timeout: timeoutMs,
+    reject: false,
+    all: false,
+    stripFinalNewline: false,
+    detached: true,
+    forceKillAfterDelay: 10_000,
+  });
+  subprocess.catch(() => {});
+  const killGroup = (): void => {
+    try { if (subprocess.pid) process.kill(-subprocess.pid, "SIGKILL"); } catch { /* group gone */ }
+    try { subprocess.kill("SIGKILL"); } catch { /* already dead */ }
+  };
+  const hardWallMs = timeoutMs + 30_000;
+  let hardTimedOut = false;
   try {
-    const result = await execa(command, {
-      cwd,
-      shell: true,
-      timeout: timeoutMs,
-      reject: false,
-      all: false,
-      stripFinalNewline: false,
-    });
+    const result = await Promise.race([
+      subprocess,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => { hardTimedOut = true; reject(new Error(`gate hard-timeout after ${Math.round(hardWallMs / 1000)}s`)); }, hardWallMs).unref(),
+      ),
+    ]);
     return {
       command,
       passed: result.exitCode === 0 && !result.timedOut,
@@ -128,16 +151,17 @@ export async function runGate(
       durationMs: Date.now() - started,
     };
   } catch (err) {
-    // execa with reject:false should not throw for nonzero exits; this catches
-    // spawn failures (command not found, etc.) — treat as a hard gate failure.
+    // A hung gate (hard-wall) or a spawn failure (command not found). Kill the whole
+    // group to reap any pipe-holding orphans, then fail the gate.
+    killGroup();
     const e = err as { shortMessage?: string; message?: string };
     return {
       command,
       passed: false,
-      exitCode: 127,
-      timedOut: false,
+      exitCode: hardTimedOut ? 124 : 127,
+      timedOut: hardTimedOut,
       stdoutTail: "",
-      stderrTail: tail(e.shortMessage ?? e.message ?? String(err)),
+      stderrTail: tail(hardTimedOut ? `gate exceeded ${Math.round(hardWallMs / 1000)}s and was killed (likely a test left a process/handle open)` : (e.shortMessage ?? e.message ?? String(err))),
       durationMs: Date.now() - started,
     };
   }
