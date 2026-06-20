@@ -641,8 +641,15 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const { parseSpec } = await import("./contract/spec.js");
   const { auditBuild } = await import("./contract/review.js");
   const { makeVisualClient } = await import("./backend.js");
+  // Thread --budget through to the plan compiler: the mission budget is what
+  // decompose distributes per node, and the per-node budget is what lets the
+  // escalation ladder run (a failed cheap rung can only escalate to the deepseek
+  // fallback / opus knight if the node budget covers another attempt). Without this
+  // the mission always defaults to $2.5 (~$0.25/node), so the first cheap attempt
+  // exhausts the node budget and the ladder breaks before it can escalate.
+  const budgetArgs = flags.value.get("budget") ? ["--budget", String(flags.value.get("budget"))] : [];
   process.stdout.write(st.gray("\ncompiling the spec to a buildable plan…") + "\n");
-  const compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
+  const compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
   if (compileRc !== 0) {
     process.stdout.write(st.yellow("\nthis spec can't be built as written (the plan compiler refused above) — revise the spec and re-run. ser won't proceed on an unverified plan.") + "\n");
     return compileRc;
@@ -724,7 +731,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
         process.stdout.write(st.gray("running the plan compiled during the spec phase…\n"));
       } else {
         process.stdout.write(st.gray("re-deriving the gated build plan…\n"));
-        const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...(yes ? ["--yes"] : [])]);
+        const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
         if (drc !== 0) return drc;
       }
     // Keep language/test ephemera out of the git diff so reconcile's blast-radius
