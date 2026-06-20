@@ -271,6 +271,32 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         costUsdSoFar: budget.globalSpent(),
       });
 
+      // A truncated pack means the node's context no longer fits the executor's
+      // envelope — a PLANNING defect surfaced at run time (the node was sized too
+      // coarse, or its context_globs are too broad). We do NOT mutate the DAG inline
+      // (that's a scheduler rewrite); we HALT honestly with a diagnostic so the funnel
+      // can re-derive the remaining nodes from the last green checkpoint. The dropped
+      // files vs. the glob set let a reader tell real over-scope from a sloppy glob.
+      if (pack.truncated) {
+        halted = true;
+        haltReason =
+          `node "${node.id}" over-scoped at run time: context packed to ~${pack.estTokens} tokens over the ${node.max_context_tokens}-token envelope, ` +
+          `dropping ${pack.droppedFiles.length} file(s) [${pack.droppedFiles.slice(0, 5).join(", ")}${pack.droppedFiles.length > 5 ? ", …" : ""}]. ` +
+          `Re-derive this node smaller or narrow its context_globs (${effectiveContextGlobs(node).join(", ")}).`;
+        trace.append("budget_stop", {
+          nodeId: node.id,
+          rung: rung.rung,
+          payload: {
+            scope: "context",
+            estTokens: pack.estTokens,
+            maxTokens: node.max_context_tokens,
+            droppedFiles: pack.droppedFiles,
+          },
+          costUsdSoFar: budget.globalSpent(),
+        });
+        break;
+      }
+
       let brief = node.brief;
       if (rung.addFailureContext && failure) {
         brief +=

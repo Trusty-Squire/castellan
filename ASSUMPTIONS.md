@@ -390,6 +390,23 @@ Decisions made where SPEC.md is silent. SPEC.md wins on conflict.
   amnesia). Sequenced as eval-gated layers; the eval gains a sweep-style
   completeness tier so objectiveRate (gameable: objective gates on shallow
   requirements, per the kid-companion cloud-chatbot) is a floor, not the score.
+- A43. Node sizing — count anchor removed (2026-06-20; plan node-chunking.md).
+  Two decisions SPEC-v0.x was silent on, recorded here:
+  (a) MULTI-REQUIREMENT NODES. To break the coverage retry's per-requirement
+  count inflation a node may now map to several requirement ids. The one-gate-per-
+  node model then needs an AGGREGATE gate or it's a verification loophole (the
+  same principle the plan demands for a future split: the gate must verify the
+  WHOLE unit). Rule: any tier-4 requirement → the node is a human gate (a person
+  must sign the unit off); else all tier-1/2 → AND their concrete acceptance
+  commands into one gate; else (some tier-3/inference-needing) → infer one gate
+  for the unit, then AND on the concrete commands. AND-of-commands is the
+  aggregate; a node that bundles requirements must pass ALL of them.
+  (b) ENVELOPE DEFAULT. node_context_budget defaults to 40000 in ChainSchema
+  (matches NodeSchema.max_context_tokens → zero behavior change for chains that
+  omit it). The cheap chain sets a PROVISIONAL 24000 in chains.yaml pending
+  `pnpm calibrate-envelope`; the plan flags the number as load-bearing and
+  uncalibrated, so it is conservative-by-default and clearly marked provisional,
+  not presented as measured. Step 5 (real split-as-DAG-transform) stays deferred.
 - A17. Commands: `run <mission> [--mock] [--chain <name>]`,
   `derive "<goal>" [--yes] [--chain <name>]`, `trace <file>`,
   `experiment` (delegated to scripts/experiment.ts via pnpm). Top-level

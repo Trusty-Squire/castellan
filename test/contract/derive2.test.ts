@@ -13,6 +13,9 @@ import {
   bootstrapGreenfieldNodeGate,
   trimSurveyForDecompose,
   buildDirectMission,
+  nodeRequirementIds,
+  allocateNodeBudgets,
+  overflowingNodes,
 } from "../../src/contract/derive2.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { MockLlm } from "../../src/llm/mock.js";
@@ -472,5 +475,99 @@ open_questions:
   it("rejects neither-or-both goal/spec input", async () => {
     const llm = new MockLlm([]);
     await expect(deriveV2({ ...base(llm), goal: undefined })).rejects.toThrow(SquireError);
+  });
+});
+
+describe("node sizing — kill the count anchor, size to the executor envelope", () => {
+  it("the decompose prompt no longer carries the '1-12 nodes' anchor; it states the envelope", async () => {
+    const llm = new MockLlm([{ text: decomposeOut }, { text: gatesOut }, { text: JSON.stringify({ claims: [] }) }]);
+    await deriveV2({ ...base(llm), executorModel: "qwen/qwen3-coder", nodeContextBudget: 18000 });
+    const decomposeSystem = llm.calls[0]!.system ?? "";
+    expect(decomposeSystem).not.toContain("1-12");
+    expect(decomposeSystem).toContain("SIZE EACH NODE TO THE EXECUTOR'S ENVELOPE");
+    // the envelope it sizes against is the EXECUTOR slug + its calibrated budget
+    expect(decomposeSystem).toContain("qwen/qwen3-coder");
+    expect(decomposeSystem).toContain("18000");
+  });
+
+  it("copies the executor envelope into every node's max_context_tokens", async () => {
+    const llm = new MockLlm([{ text: decomposeOut }, { text: gatesOut }, { text: JSON.stringify({ claims: [] }) }]);
+    const r = await deriveV2({ ...base(llm), nodeContextBudget: 22000 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    for (const n of r.mission.nodes) expect(n.max_context_tokens).toBe(22000);
+  });
+
+  it("nodeRequirementIds splits comma/space lists and tolerates an absent field", () => {
+    expect(nodeRequirementIds({ requirement: "R1, R2  R3" })).toEqual(["R1", "R2", "R3"]);
+    expect(nodeRequirementIds({})).toEqual([]);
+  });
+
+  it("coverage gate accepts ONE node satisfying SEVERAL requirements (no count inflation)", async () => {
+    const spec = parseSpec(`
+thesis: "a small tool"
+requirements:
+  - id: R1
+    statement: "parse input"
+    acceptance: { tier: 1, gate: "npm run test" }
+  - id: R2
+    statement: "validate input"
+    acceptance: { tier: 1, gate: "npm run lint" }
+`);
+    // a SINGLE node claims both requirements — must pass coverage with no retry
+    const decompose = JSON.stringify({
+      nodes: [
+        { id: "core", brief: "parse + validate", deps: [], context_globs: [], blast_radius: ["src/**"], budget_usd: 1, requirement: "R1, R2" },
+      ],
+    });
+    const llm = new MockLlm([{ text: decompose }, { text: JSON.stringify({ claims: [] }) }]);
+    const r = await deriveV2({ ...base(llm), goal: undefined, spec });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes).toHaveLength(1);
+    // the node's gate AGGREGATES both concrete acceptance commands (verifies the WHOLE unit)
+    const run = String(r.mission.nodes[0]!.gate!.run ?? "");
+    expect(run).toContain("npm run test");
+    expect(run).toContain("npm run lint");
+    // coverage passed on the FIRST decompose — no coverage-retry call was spent
+    expect(llm.calls.some((c) => c.user.includes("uncovered"))).toBe(false);
+  });
+
+  it("refuses a node whose EXISTING context_globs already blow the envelope (derive-time filter)", async () => {
+    // a real, oversized file in the workdir that the node's context_globs match
+    writeFileSync(join(workdir, "src", "huge.ts"), "x".repeat(80_000));
+    const decompose = JSON.stringify({
+      nodes: [
+        { id: "big", brief: "touch the huge module", deps: [], context_globs: ["src/**"], blast_radius: ["src/**"], budget_usd: 1 },
+      ],
+    });
+    const llm = new MockLlm([{ text: decompose }, { text: gatesOut }, { text: JSON.stringify({ claims: [] }) }]);
+    const r = await deriveV2({ ...base(llm), nodeContextBudget: 5_000 });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons.join(" ")).toMatch(/over-scoped/);
+    expect(r.reasons.join(" ")).toContain("big");
+  });
+});
+
+describe("allocateNodeBudgets — floor + escalation reserve", () => {
+  it("holds back a reserve and gives every node at least the floor", () => {
+    const out = allocateNodeBudgets([10, 0, 0], 1.0);
+    // 20% reserve held back → distributed pool is ~0.80
+    expect(out.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(0.8 + 0.02);
+    // the two zero-weight nodes still clear the floor
+    expect(out[1]!).toBeGreaterThanOrEqual(0.05);
+    expect(out[2]!).toBeGreaterThanOrEqual(0.05);
+    // the heavy node still gets the lion's share
+    expect(out[0]!).toBeGreaterThan(out[1]!);
+  });
+
+  it("never returns below one cent, even on a degenerate tiny budget", () => {
+    const out = allocateNodeBudgets([1, 1, 1, 1], 0.001);
+    for (const b of out) expect(b).toBeGreaterThanOrEqual(0.01);
+  });
+
+  it("overflowingNodes ignores nodes with no context_globs (greenfield)", () => {
+    expect(overflowingNodes(workdir, [{ id: "x", context_globs: [] }], 1000)).toEqual([]);
   });
 });

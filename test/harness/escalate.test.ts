@@ -7,6 +7,7 @@ const chain = {
   knight: "anthropic/claude-opus-4",
   harness: "on" as const,
   budget_scale: 1,
+  node_context_budget: 40000,
 };
 
 describe("ladder", () => {

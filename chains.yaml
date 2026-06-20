@@ -7,6 +7,11 @@ chains:
     executor: "qwen/qwen3-coder" # cheap MoE coder, supports tools
     fallback: "deepseek/deepseek-chat" # DeepSeek V3, second cheap model
     knight: "anthropic/claude-opus-4" # frontier escalation target, supports tools
+    # The executor's effective working envelope per node — the planner sizes nodes
+    # to THIS instead of the old "1-12" count anchor. PROVISIONAL & conservative
+    # until measured: run `pnpm calibrate-envelope --chain cheap` and set it just
+    # below the first-try knee it reports.
+    node_context_budget: 24000
   knight-only:
     executor: "anthropic/claude-opus-4"
     fallback: "anthropic/claude-opus-4"

@@ -65,6 +65,45 @@ deriveV2 planner sums it and `ser talk` prints actual provider-reported spend
 price-table (pi-ai computes from a zeroed price config, not billed cost; harness
 walled from pi) — needs a proxy spend header or pi `usage.include` passthrough.
 
+## Node sizing — kill the "1-12" count anchor DONE (2026-06-20)
+Plan: ~/.claude/plans/node-chunking.md (eng-reviewed + Codex-corrected). The
+decompose prompt's "1-12 nodes" range was an ANCHOR (LLM output clusters at an
+embedded number; prompt-softening doesn't fix it), so node count tracked the
+range, not task size. Shipped steps 1-4 of the 5-step sequence; step 5 (real
+split-as-DAG-transform) stays deferred per the plan.
+- (1) BOTH count inflators removed. decompose prompt now carries SIZING_RULE +
+  an EXECUTOR-ENVELOPE line (no number to anchor on); the spec-mode coverage
+  retry was softened — it REASSIGNS uncovered ids to existing nodes instead of
+  telling the model to add/split (the second, independent inflator Codex found).
+- A node may now carry SEVERAL requirement ids (comma-separated, `nodeRequirementIds`).
+  Coverage counts the union. Gate inference AGGREGATES per node (the parent-gate
+  principle: a multi-requirement node is a verification loophole unless its gate
+  covers all of them) — any tier-4 → human dominates; all tier-1/2 → AND the
+  concrete commands; mixed → infer one gate then AND the concrete commands on.
+- (2) Envelope WIRED. Optional `node_context_budget` on ChainSchema (default
+  40000, back-compat); CLI threads chain.executor + chain.node_context_budget
+  into deriveV2 (envelope targets the EXECUTOR, not the knight that plans); it's
+  copied into every derived node's max_context_tokens. Per-node USD now goes
+  through `allocateNodeBudgets` (floor 0.05 + 20% escalation reserve over the
+  planner's weights) so a small-but-hard node keeps escalation headroom.
+- (3) Derive-time overflow filter (`overflowingNodes`): a node whose EXISTING
+  context_globs already pack over the envelope → refuse (re-derive). Weak by
+  design (blind to files future nodes create); a cheap first filter.
+- (4) Runtime `pack.truncated` → HONEST HALT with a diagnostic naming the dropped
+  files + glob set (not inline DAG surgery — that stays out of scope). This is the
+  real safety net; the funnel re-derives from last green.
+- Calibration (PREREQUISITE, plan step 0): `pnpm calibrate-envelope` sweeps a
+  synthetic needle-in-context node by size, finds the first-try knee = the
+  envelope. chains.yaml `cheap.node_context_budget` set PROVISIONAL 24000 pending
+  the live run. derive-bench extended with a count-vs-size SIZING report
+  (Spearman ρ + derived-count spread; near-zero spread = the anchor's fingerprint).
+- Tests: +9 hermetic (schema back-compat, envelope→max_context_tokens, multi-
+  requirement coverage+aggregate gate, derive-time overflow refusal, budget
+  floor/reserve, runtime truncation halt). Full suite 281→ green; typecheck +
+  lint clean; demo + ablation + experiment --dry-run exit 0.
+- LIVE pending: `pnpm calibrate-envelope` (set the real envelope), then
+  `pnpm derive-bench` to confirm count-vs-size ρ>0 and the tax stays <=10.
+
 ## Next
 Live gates 2-3 (derive-bench, poker-bench, human/key). Then v0.3 centerpiece
 per thesis: the standing-loop runtime (triggers, queue, recurring missions) —

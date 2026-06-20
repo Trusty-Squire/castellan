@@ -19,6 +19,7 @@
     "lint": "eslint . --ext .ts",
     "experiment": "tsx scripts/experiment.ts",
     "calibrate": "tsx scripts/calibrate.ts",
+    "calibrate-envelope": "tsx scripts/calibrate-envelope.ts",
     "setup-fixtures": "tsx scripts/setup-fixtures.ts",
     "derive-bench": "tsx scripts/derive-bench.ts",
     "poker-bench": "tsx scripts/poker-bench.ts",

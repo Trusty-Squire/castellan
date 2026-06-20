@@ -161,6 +161,12 @@ export const ChainSchema = z
     /** Multiply all mission budgets (global + per-node) by this factor. Used to
      *  match an expensive chain to budgets sized for a cheaper model. */
     budget_scale: z.number().positive().default(1),
+    /** The EXECUTOR's effective working-context envelope (tokens) — NOT its max
+     *  window. The planner sizes each node to this (replacing the "1-12 nodes"
+     *  count anchor) and it's copied into each derived node's max_context_tokens.
+     *  Calibrate per executor (where first-try pass rate falls off); conservative
+     *  default until measured. Optional so existing chains.yaml files still parse. */
+    node_context_budget: z.number().positive().default(40000),
   })
   .strict();
 

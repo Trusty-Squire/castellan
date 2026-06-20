@@ -99,6 +99,23 @@ prices:
     const c = parseChains(chainsYaml);
     expect(() => resolveChain(c, "nope")).toThrow(/not found/);
   });
+
+  it("back-compat: a chain WITHOUT node_context_budget still parses (defaults 40000)", () => {
+    const c = parseChains(chainsYaml); // chainsYaml omits the field
+    expect(resolveChain(c, "cheap").node_context_budget).toBe(40000);
+  });
+
+  it("honours an explicit node_context_budget (the calibrated executor envelope)", () => {
+    const c = parseChains(`
+chains:
+  cheap:
+    executor: "qwen/qwen3-coder"
+    fallback: "deepseek/deepseek-chat"
+    knight: "anthropic/claude-opus-4"
+    node_context_budget: 18000
+`);
+    expect(resolveChain(c, "cheap").node_context_budget).toBe(18000);
+  });
 });
 
 describe("topoSort", () => {

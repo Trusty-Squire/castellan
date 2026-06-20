@@ -6,6 +6,7 @@ import { renderGate } from "./gate-patterns.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
+import { packContext } from "../harness/context.js";
 
 /**
  * derive-v2 — the herald pipeline (SPEC-v0.2 §6). Planning as a gated loop:
@@ -134,6 +135,18 @@ export interface DeriveV2Input {
   chainName: string;
   budgetUsd: number;
   maxHumanChecks?: number;
+  /**
+   * The RUNTIME executor slug (chain.executor — e.g. qwen), NOT the planner. The
+   * planner is the knight, but nodes are sized to the executor's working envelope,
+   * so the decompose prompt must name the executor it is building FOR. Falls back to
+   * `model` (the planner) only for callers that don't resolve a chain.
+   */
+  executorModel?: string;
+  /**
+   * The executor's effective working-context envelope in tokens (chain.node_context_budget).
+   * Sizes each node at decompose time and is copied into every node's max_context_tokens.
+   */
+  nodeContextBudget?: number;
 }
 
 export interface DirectMissionItem {
@@ -163,6 +176,80 @@ export interface DirectMissionInput {
  */
 export const CONTRACT_FIRST =
   "CONTRACT-FIRST (so the cheap executor succeeds first try, not via escalation): emit a concise shared `contract` — the canonical data shapes (named types with their fields and value types) and the module interfaces (the exact exports and their signatures) that nodes share. Then make each brief CONCRETE ABOUT THE INTERFACE and concise about intent: name the contract types it consumes and produces, the functions/exports it must create with their signatures, and which prior node's output it builds on. A brief that only gestures at intent ('harden normalization', 'validate payloads') WITHOUT naming the data shape, the exports, and the upstream contract is REJECTED — the executor sees only its brief and will invent an incompatible schema. Keep the contract concise: the shared interface, not a design doc.";
+
+/**
+ * Node SIZING — replaces the "1-12 nodes" count anchor. LLM outputs anchor hard to
+ * an embedded number (~88% of the time per anchoring research, and prompt-softening
+ * doesn't fix it), so we do NOT ask for a count: node count is whatever falls out of
+ * sizing each unit to the EXECUTOR's working envelope. The proxy is LOC/files (LLMs
+ * estimate those far better than their own token counts); the harness keeps the token
+ * budget as the objective backstop (an over-budget pack truncates and is caught).
+ */
+export const SIZING_RULE =
+  "SIZE EACH NODE TO THE EXECUTOR'S ENVELOPE, NOT A COUNT: a node is ONE cohesive module or capability (plus its tests) the cheap executor finishes reliably in a single focused turn. Make each node as LARGE as stays reliably workable; split a unit ONLY when it would exceed roughly 150-250 lines of new code, touch more than ~3 source files, or need to read more than the per-node context budget stated below. The node COUNT is emergent — a small task may be 2 nodes, a large one 9. Do NOT aim for any particular count and do NOT pad to fill a range.";
+
+/** The executor envelope line appended after SIZING_RULE so the "context budget
+ *  stated below" it references is concrete. Names the runtime executor the plan is
+ *  sized FOR (not the planner) and its token envelope. */
+function envelopeRule(executor: string, budgetTokens: number): string {
+  return `EXECUTOR ENVELOPE: each node is built by a cheap executor (${executor}) that reliably holds about ${budgetTokens} tokens of working context per node. Size every node so the files it must read PLUS the code it writes fit comfortably inside that — this, not a node-count target, is what bounds a node.`;
+}
+
+/** A node may name SEVERAL requirements (comma/whitespace separated) — the coverage
+ *  gate no longer forces one node per requirement. Returns the trimmed ids. */
+export function nodeRequirementIds(n: { requirement?: string }): string[] {
+  if (!n.requirement) return [];
+  return n.requirement
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Per-node USD allocation with a FLOOR + escalation reserve, applied BEFORE any
+ * complexity-proportional weighting (eng review: budget-proportional allocation can
+ * starve a small-but-hard node of escalation headroom). The planner's per-node
+ * weights set the SHAPE; this guarantees every node clears a floor and holds back a
+ * reserve fraction of the mission budget for the escalation ladder. Rounded to cents,
+ * never below 0.01.
+ */
+export function allocateNodeBudgets(weights: number[], missionBudget: number): number[] {
+  const FLOOR = 0.05; // minimum a node gets even if the planner weighted it ~0
+  const RESERVE_FRAC = 0.2; // held back from per-node distribution for escalation headroom
+  const n = weights.length;
+  if (n === 0) return [];
+  const cents = (x: number): number => Math.max(0.01, Math.round(x * 100) / 100);
+  const pool = Math.max(0, missionBudget * (1 - RESERVE_FRAC));
+  // If even the floors don't fit, split the pool evenly (degenerate tiny-budget case).
+  if (pool <= FLOOR * n) return weights.map(() => cents(pool / n));
+  const extra = pool - FLOOR * n;
+  const wsum = weights.reduce((a, b) => a + Math.max(0, b), 0) || n;
+  return weights.map((w) => cents(FLOOR + extra * (Math.max(0, w) / wsum)));
+}
+
+/**
+ * Conservative DERIVE-TIME overflow filter (plan step 3). Flags a node whose
+ * ALREADY-EXISTING context_globs pack beyond the executor envelope — a clear
+ * mis-plan we can catch before any tokens burn. Deliberately weak: it cannot see
+ * files FUTURE nodes will create, and the runtime adds blast_radius paths to the
+ * pack anyway, so the real safety net is the runtime `pack.truncated` → halt (step
+ * 4). Returns the offending node ids with their measured size.
+ */
+export function overflowingNodes(
+  workdir: string,
+  nodes: { id: string; context_globs: string[] }[],
+  budgetTokens: number,
+): { id: string; estTokens: number }[] {
+  const over: { id: string; estTokens: number }[] = [];
+  for (const n of nodes) {
+    if (n.context_globs.length === 0) continue;
+    // Pack with an effectively unbounded cap so estTokens reflects the TRUE size
+    // (packContext keeps at least one file, so a single huge file still registers).
+    const pack = packContext({ workdir, globs: n.context_globs, maxTokens: Number.MAX_SAFE_INTEGER });
+    if (pack.estTokens > budgetTokens) over.push({ id: n.id, estTokens: pack.estTokens });
+  }
+  return over;
+}
 
 /** Trim the repository survey before it goes into the decompose prompt — keeps the
  *  stage within token budget. Domain-agnostic: a flat size cap, no app-type heuristic. */
@@ -370,20 +457,30 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     : `GOAL:\n${input.goal}`;
   const decomposeSurvey = trimSurveyForDecompose(survey);
 
-  // 2. decompose
+  // 2. decompose — NO node-count anchor. Sizing is by the executor envelope; the
+  // count is emergent. Coverage stays mandatory but no longer forces one node per
+  // requirement (a node may name several) — that was a second, independent count
+  // inflator on top of the old "1-12" anchor.
+  const executor = input.executorModel ?? input.model;
+  const envelopeTokens = input.nodeContextBudget ?? 40000;
   const coverageRule = input.spec
-    ? ` SPEC MODE — COVERAGE IS MANDATORY: the requirements above are labelled R1, R2, … (specifically: ${input.spec.requirements
+    ? ` SPEC MODE — COVERAGE IS MANDATORY (but does NOT dictate node count): the requirements above are labelled ${input.spec.requirements
         .map((r) => r.id)
-        .join(", ")}). EVERY node MUST set "requirement" to the id of the requirement it implements, and EVERY one of those requirement ids MUST be covered by at least one node. Do not emit a node without a "requirement"; do not leave any requirement uncovered.`
+        .join(", ")}. EVERY requirement id MUST be covered by at least one node, and EVERY node MUST name the requirement(s) it implements in its "requirement" field. ONE node MAY satisfy SEVERAL requirements — list them comma-separated (e.g. "${input.spec.requirements
+        .slice(0, 2)
+        .map((r) => r.id)
+        .join(", ")}"). Do NOT add nodes just to reach a one-node-per-requirement mapping; size nodes by the envelope rule above, not by the requirement count.`
     : "";
   const decomposeSystem =
-    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into 1-12 nodes forming a DAG. Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${CONTRACT_FIRST} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
+    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into a DAG of nodes. ${SIZING_RULE} ${envelopeRule(executor, envelopeTokens)} Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${CONTRACT_FIRST} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
   const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
   let decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
 
-  // spec-mode coverage gate: every requirement maps to >=1 node
+  // spec-mode coverage gate: every requirement maps to >=1 node (a node may carry
+  // several). The retry repairs coverage by REASSIGNING ids to existing nodes — it
+  // must NOT instruct the model to add/split nodes (that re-inflates the count).
   if (input.spec) {
-    let covered = new Set(decomposed.nodes.map((n) => n.requirement).filter(Boolean));
+    let covered = new Set(decomposed.nodes.flatMap(nodeRequirementIds));
     let missing = input.spec.requirements.filter((r) => !covered.has(r.id)).map((r) => r.id);
     if (missing.length > 0) {
       decomposed = await jsonStage(
@@ -391,11 +488,11 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         model,
         "decompose:coverage-retry",
         decomposeSystem,
-        `${decomposeUser}\n\nYour previous decomposition left these requirement ids uncovered: ${missing.join(", ")}.\nRe-emit the SAME plan shape if you want, but every requirement id must be assigned to at least one node via the "requirement" field. If one node satisfies multiple requirements, duplicate that capability into additional nodes or split the node so that each listed requirement id is explicitly covered.`,
+        `${decomposeUser}\n\nYour previous decomposition left these requirement ids uncovered: ${missing.join(", ")}.\nAssign each uncovered id to the single most appropriate EXISTING node by adding it to that node's "requirement" field (comma-separated — one node may list several). Do NOT add or split nodes just to cover requirements; keep node sizing driven by the executor envelope.`,
         DecomposeSchema,
         usage,
       );
-      covered = new Set(decomposed.nodes.map((n) => n.requirement).filter(Boolean));
+      covered = new Set(decomposed.nodes.flatMap(nodeRequirementIds));
       missing = input.spec.requirements.filter((r) => !covered.has(r.id)).map((r) => r.id);
     }
     if (missing.length > 0) {
@@ -403,22 +500,63 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     }
   }
 
-  // 3. infer-gates — spec acceptance wins; otherwise select from the pattern library
+  // 2b. Conservative derive-time overflow filter (step 3): a node whose EXISTING
+  // context already blows the executor envelope is a mis-plan — refuse so the funnel
+  // re-derives, BEFORE spending gate-inference tokens. Weak by design (blind to files
+  // future nodes create); the runtime pack.truncated → halt is the real safety net.
+  const overflow = overflowingNodes(input.workdir, decomposed.nodes, envelopeTokens);
+  if (overflow.length > 0) {
+    return {
+      ok: false,
+      reasons: overflow.map(
+        (o) =>
+          `node "${o.id}" over-scoped: its context_globs already pack to ~${o.estTokens} tokens, over the executor envelope of ${envelopeTokens} — split this node or narrow its context_globs.`,
+      ),
+      remediations: [],
+    };
+  }
+
+  // 3. infer-gates — spec acceptance wins; otherwise select from the pattern library.
+  // A node may now map to SEVERAL requirements, so the gate must verify the WHOLE
+  // unit (the aggregate-gate principle: a multi-requirement node, like a split, is a
+  // verification loophole unless its gate covers all of them). Aggregation:
+  //   • any tier-4 requirement  → human signoff dominates (the unit needs a person)
+  //   • all tier-1/2            → AND the concrete commands into one gate
+  //   • some tier-3/unanchorable → infer ONE gate, then AND on any concrete commands
   const gatesByNode = new Map<string, Gate>();
   const freeformGates: { node: string; run: string }[] = [];
+  // Concrete acceptance commands to AND onto a node's inferred gate (mixed-tier nodes).
+  const concreteExtra = new Map<string, string[]>();
   const needsInference = decomposed.nodes.filter((n) => {
-    const req = input.spec?.requirements.find((r) => r.id === n.requirement);
-    if (!req) return true;
-    const a = req.acceptance;
-    if (a.tier >= 1 && a.tier <= 2) {
-      gatesByNode.set(n.id, { type: a.tier === 1 ? "command" : "metric", run: a.gate!, soft: false });
+    const reqs = nodeRequirementIds(n)
+      .map((id) => input.spec?.requirements.find((r) => r.id === id))
+      .filter((r): r is NonNullable<typeof r> => Boolean(r));
+    if (reqs.length === 0) return true; // goal-mode, or a node mapped to no real requirement
+    if (reqs.some((r) => r.acceptance.tier === 4)) {
+      const artifact = reqs
+        .filter((r) => r.acceptance.tier === 4)
+        .map((r) => r.acceptance.artifact!)
+        .join(", ");
+      gatesByNode.set(n.id, { type: "human", artifact, soft: false });
       return false;
     }
-    if (a.tier === 4) {
-      gatesByNode.set(n.id, { type: "human", artifact: a.artifact!, soft: false });
+    const concreteCmds = [
+      ...new Set(reqs.filter((r) => r.acceptance.tier >= 1 && r.acceptance.tier <= 2).map((r) => r.acceptance.gate!)),
+    ];
+    const needInfer = reqs.filter((r) => !(r.acceptance.tier >= 1 && r.acceptance.tier <= 2) && r.acceptance.tier !== 4);
+    if (needInfer.length === 0) {
+      // all concrete → aggregate gate (AND verifies every requirement on the node)
+      const anyMetric = reqs.some((r) => r.acceptance.tier === 2);
+      gatesByNode.set(
+        n.id,
+        GateSchema.parse({ type: anyMetric ? "metric" : "command", run: concreteCmds.join(" && "), soft: false }),
+      );
       return false;
     }
-    return true; // tier 3 or unanchorable handled elsewhere
+    // mixed: an inferred gate covers the tier-3 part; remember the concrete commands
+    // to AND on after inference so the auto-anchored requirements are still verified.
+    if (concreteCmds.length > 0) concreteExtra.set(n.id, concreteCmds);
+    return true; // tier 3 or unanchorable handled by inference below
   });
 
   if (needsInference.length > 0) {
@@ -468,6 +606,16 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         reasons: [`no objective gate could be inferred for node(s): ${ungated.join(", ")}`],
         remediations: ungated.map((node) => remediationFor(node)),
       };
+    }
+  }
+
+  // Fold the concrete acceptance commands of a mixed-tier node onto its inferred
+  // gate, so a node that bundles auto-anchored requirements WITH inference-needing
+  // ones still verifies all of them (the aggregate-gate property).
+  for (const [id, cmds] of concreteExtra) {
+    const g = gatesByNode.get(id);
+    if (g && (g.type === "command" || g.type === "metric") && g.run) {
+      gatesByNode.set(id, GateSchema.parse({ type: "command", run: [g.run, ...cmds].join(" && "), soft: false }));
     }
   }
 
@@ -589,20 +737,28 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   const contractBlock = decomposed.contract.trim()
     ? `SHARED CONTRACT (the whole build conforms to these data shapes + module signatures — do not invent your own):\n${decomposed.contract.trim()}\n\n---\n\n`
     : "";
+  // Per-node USD: floor + escalation reserve over the planner's weights (step 2).
+  const nodeBudgets = allocateNodeBudgets(
+    decomposed.nodes.map((n) => n.budget_usd),
+    input.budgetUsd,
+  );
   const missionObj = {
     goal: input.spec ? input.spec.thesis : input.goal!,
     budget_usd: input.budgetUsd,
     chain: input.chainName,
     workdir: ".",
     max_human_checks: input.maxHumanChecks ?? 3,
-    nodes: decomposed.nodes.map((n) => ({
+    nodes: decomposed.nodes.map((n, i) => ({
       id: n.id,
       brief: contractBlock + n.brief + constraintBlock,
       deps: n.deps,
       context_globs: n.context_globs,
       blast_radius: n.blast_radius,
       gate: gatesByNode.get(n.id)!,
-      budget_usd: n.budget_usd,
+      budget_usd: nodeBudgets[i]!,
+      // Size every node to the EXECUTOR's envelope (replaces the "1-12" count anchor):
+      // the planner sized the work to it; the runtime pack must honour the same bound.
+      max_context_tokens: envelopeTokens,
     })),
   };
   const mission = MissionSchema.safeParse(missionObj);
@@ -849,6 +1005,9 @@ export async function runDeriveV2(args: string[]): Promise<number> {
     judgeModel: chain.knight,
     chainName,
     budgetUsd: Number(value.get("budget") ?? "2.5"),
+    // Size nodes to the RUNTIME executor's envelope, not the knight that plans them.
+    executorModel: chain.executor,
+    nodeContextBudget: chain.node_context_budget,
   });
 
   if (!result.ok) {

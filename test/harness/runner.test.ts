@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXECUTOR_SYSTEM_PROMPT, runMission, parseDispute } from "../../src/harness/runner.js";
 import { MockEngine, type ScriptResolver } from "../../src/engine/mock.js";
-import { initRepo } from "../../src/harness/checkpoint.js";
+import { initRepo, commitAll } from "../../src/harness/checkpoint.js";
 import { parseMission, parseChains } from "../../src/contract/schema.js";
 import { readTrace } from "../../src/harness/trace.js";
 
@@ -155,6 +155,44 @@ describe("runMission", () => {
     expect(result.halted).toBe(true);
     expect(result.haltReason).toMatch(/ladder/);
     expect(result.nodes[0]!.maxRung).toBe(4);
+  });
+
+  it("halts honestly when a node's pack TRUNCATES at run time (over-scoped node, not DAG surgery)", async () => {
+    // A node sized too coarse: its context_globs match more than its envelope holds.
+    // Two large files + a tiny max_context_tokens → one is dropped → pack.truncated.
+    // Commit them so the per-rung reset (git clean) doesn't wipe untracked files.
+    writeFileSync(join(repo, "src", "big.ts"), "x".repeat(40_000));
+    writeFileSync(join(repo, "src", "target.ts"), "x".repeat(40_000));
+    await commitAll(repo, "add oversized context");
+    const overscoped = `
+goal: "touch the module"
+budget_usd: 5
+chain: cheap
+nodes:
+  - id: fix
+    brief: "edit src/target.ts so v = 1"
+    context_globs: ["src/**"]
+    blast_radius: ["src/**"]
+    done_check: "bash check.sh"
+    budget_usd: 1
+    max_context_tokens: 50
+`;
+    let attempts = 0;
+    const result = await run(overscoped, () => {
+      attempts += 1;
+      return { steps: [{ done: "should never run — halted before the executor" }] };
+    });
+    expect(result.completed).toBe(false);
+    expect(result.halted).toBe(true);
+    expect(result.haltReason).toMatch(/over-scoped at run time/);
+    // names the glob set to fix (which file is dropped depends on mtime, so don't pin it)
+    expect(result.haltReason).toContain("src/**");
+    // halted BEFORE invoking the executor — no attempt was spent
+    expect(attempts).toBe(0);
+    // and the halt is recorded in the trace with the context scope
+    const events = readTrace(join(repo, ".squire", "trace.jsonl"));
+    const stop = events.find((e) => e.kind === "budget_stop");
+    expect((stop?.payload as { scope?: string } | undefined)?.scope).toBe("context");
   });
 
   it("parseDispute reads a substantiated push-back and rejects cry-wolf", () => {
