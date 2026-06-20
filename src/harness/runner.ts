@@ -57,6 +57,28 @@ export function parseDispute(finalMessage: string): NodeDispute | null {
   return { target: m[1]!.toLowerCase() as "gate" | "brief", evidence };
 }
 
+/** The orchestrator's verdict on a node's dispute. */
+export interface DisputeReview {
+  /** True = the dispute is valid; the gate/brief was genuinely mis-specified. */
+  upheld: boolean;
+  /** When upheld: a corrected, READY-TO-RUN gate command (caller scaffold-wraps it). */
+  gate?: string;
+  reason: string;
+}
+
+/**
+ * Adjudicates a node's dispute. Supplied by the funnel (which owns the planner/LLM)
+ * so the runner stays engine/LLM-agnostic. An upheld review returns a corrected gate;
+ * the runner then re-allocates the node to the SAME cheap executor — a wrong gate is
+ * a planning defect, so it should NOT cost an escalation to opus.
+ */
+export type DisputeReviewer = (input: {
+  nodeId: string;
+  brief: string;
+  gate: string;
+  dispute: NodeDispute;
+}) => Promise<DisputeReview>;
+
 
 /** Command string for reconcile's confabulation matching ("" for human/judge gates). */
 function gateCommandOf(node: MissionNode): string {
@@ -122,6 +144,10 @@ export interface RunMissionOptions {
   harnessMode?: "on" | "off";
   /** Tier-4 human-gate adjudicator (SPEC-v0.2 §4). Absent in unattended contexts. */
   adjudicate?: Adjudicator;
+  /** Adjudicates a node's DISPUTE that its gate/brief is mis-specified. When present,
+   *  an upheld dispute repairs the gate and re-runs the SAME cheap executor (no
+   *  escalation). Absent → a dispute just re-attributes the honest halt. */
+  disputeReviewer?: DisputeReviewer;
 }
 
 /**
@@ -194,6 +220,16 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
     // verdict — that's the substantiation. A weak model that cries "bad gate" but is
     // then overruled by a stronger rung that simply tries (no dispute) is cleared.
     let lastDispute: (NodeDispute & { rung: number; model: string }) | undefined;
+    // Node-level retry: a substantiated dispute repairs the gate and re-runs the SAME
+    // ladder from rung 1 (the cheap executor) — it does NOT escalate. Bounded so a
+    // pathological dispute loop can't spin.
+    let gateRepairsLeft = opts.disputeReviewer ? 2 : 0;
+    let rerunLadder = true;
+    while (rerunLadder) {
+      rerunLadder = false;
+      failure = undefined;
+      priorDiff = undefined;
+      lastDispute = undefined;
 
     for (const rung of rungs) {
       outcome.attempts = rung.rung;
@@ -404,6 +440,32 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
       });
       log(`node(${node.id}): fail (rung ${rung.rung}, gate exit ${gate.exitCode})${dispute ? ` — disputes its ${dispute.target}` : ""}`);
 
+      // The builder disputed the task AND a reviewer is configured → adjudicate NOW,
+      // before climbing the ladder. An upheld dispute repairs the gate and re-runs the
+      // SAME cheap executor (a wrong gate is a planning defect — don't burn opus on it).
+      if (dispute && opts.disputeReviewer && gateRepairsLeft > 0) {
+        const review = await opts.disputeReviewer({
+          nodeId: node.id,
+          brief: node.brief,
+          gate: effectiveGate(node).run ?? "",
+          dispute,
+        });
+        trace.append("dispute_review", {
+          nodeId: node.id,
+          rung: rung.rung,
+          payload: { upheld: review.upheld, target: dispute.target, reason: review.reason, repaired: Boolean(review.upheld && review.gate) },
+          costUsdSoFar: budget.globalSpent(),
+        });
+        if (review.upheld && review.gate) {
+          node.gate = { ...effectiveGate(node), run: review.gate };
+          gateRepairsLeft -= 1;
+          rerunLadder = true;
+          log(`node(${node.id}): dispute UPHELD — repaired the ${dispute.target}; re-allocating to ${rungs[0]!.model}`);
+          break; // exit the rung ladder; the node-level while re-runs it from rung 1
+        }
+        // rejected → the gate stands; fall through to normal escalation.
+      }
+
       // The node FAILED its gate. If it also burned its per-node budget, stop
       // escalating — the next rung would only spend more without a result.
       if (nodeBudgetHit) {
@@ -419,6 +481,7 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         });
       }
     }
+    } // end node-level dispute-retry loop (an upheld dispute re-runs the ladder once)
 
     if (!outcome.passed && !halted) {
       halted = true;

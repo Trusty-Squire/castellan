@@ -179,6 +179,41 @@ describe("runMission", () => {
     expect((fails[fails.length - 1]!.payload as { reason?: string }).reason).toBe("disputed");
   });
 
+  it("an UPHELD dispute repairs the gate and re-runs the SAME cheap rung (no escalation)", async () => {
+    // The mission's gate is wrong: it greps for v = 2, but the brief asks for v = 1.
+    const wrongGate = oneNode.replace('done_check: "bash check.sh"', 'done_check: "grep -q \'v = 2\' src/target.ts"');
+    const mission = parseMission(wrongGate);
+    let reviewedGate = "";
+    const result = await runMission({
+      mission,
+      chains,
+      engine: new MockEngine({
+        resolveScript: () => ({
+          steps: [
+            { tool: "write", args: { path: "src/target.ts", content: "export const v = 1;\n" } },
+            { done: "wrote v=1. DISPUTE: gate: the brief asks for v = 1 but the gate greps for v = 2 — it can never pass." },
+          ],
+        }),
+      }),
+      workdir: repo,
+      missionId: "dispute-fix",
+      tracePath: join(repo, ".squire", "trace.jsonl"),
+      now: () => ++clock,
+      disputeReviewer: async ({ gate, dispute }) => {
+        reviewedGate = gate;
+        // Uphold: the gate is genuinely mis-specified; hand back a corrected one.
+        return { upheld: dispute.target === "gate", gate: "grep -q 'v = 1' src/target.ts", reason: "gate checked v=2; brief requires v=1" };
+      },
+    });
+    expect(reviewedGate).toContain("v = 2"); // the reviewer saw the original (wrong) gate
+    expect(result.completed).toBe(true); // the repaired gate passes
+    expect(result.committedNodeIds).toEqual(["fix"]);
+    expect(result.nodes[0]!.maxRung).toBe(1); // re-ran on the CHEAP executor — never escalated
+    const kinds = readTrace(result.tracePath).map((e) => e.kind);
+    expect(kinds).toContain("dispute_review");
+    expect(kinds).not.toContain("escalate");
+  });
+
   it("a dispute is CLEARED when a stronger rung simply does the task (no cry-wolf halt)", async () => {
     const result = await run(oneNode, (_id, rung) => {
       if (rung === 1) return { steps: [{ done: "DISPUTE: gate: I think this is contradictory and cannot be done" }] };

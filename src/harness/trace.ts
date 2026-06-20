@@ -19,6 +19,7 @@ export const TRACE_KINDS = [
   "checkpoint",
   "reset",
   "escalate",
+  "dispute_review",
   "budget_stop",
   "engine_error",
   "node_pass",

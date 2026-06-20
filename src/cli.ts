@@ -4,7 +4,7 @@ import { dirname, resolve, join, basename, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { parseMission, resolveChain, type ChainsFile } from "./contract/schema.js";
 import { resolveChains } from "./contract/derive.js";
-import { runMission } from "./harness/runner.js";
+import { runMission, type DisputeReviewer } from "./harness/runner.js";
 import { summarizeTrace } from "./harness/trace.js";
 import { MockEngine, fileScriptResolver } from "./engine/mock.js";
 import { commitAll, initRepo, isClean } from "./harness/checkpoint.js";
@@ -201,6 +201,34 @@ async function executeMissionObject(
   // exact trace file and follow live progress without racing the newest-file scan.
   process.stdout.write(`trace: ${tracePath}\n`);
 
+  // Dispute reviewer: when a node pushes back that its GATE is mis-specified, a
+  // TRUSTED model (the chain's knight — NOT the cheap executor, which would be
+  // motivated to weaken its own gate) adjudicates and, if upheld, hands back a
+  // corrected gate that still objectively verifies the work. The runner then re-runs
+  // the SAME cheap executor. Lazy: only invoked when a dispute actually fires.
+  const disputeReviewer: DisputeReviewer | undefined = useMock
+    ? undefined
+    : async ({ brief, gate, dispute }) => {
+        try {
+          const { makeLlmClient } = await import("./backend.js");
+          const { tryParseJson } = await import("./contract/derive.js");
+          const { bootstrapGreenfieldNodeGate, tractableGateRun } = await import("./contract/derive2.js");
+          const llm = await makeLlmClient();
+          const system =
+            "You adjudicate a coding agent's DISPUTE that the CHECK it must pass is itself mis-specified. UPHOLD only when the gate genuinely cannot be satisfied by a CORRECT implementation of the brief — self-contradictory, impossible, or testing something the brief never asked for. When you uphold, return a corrected gate (one shell command, exit 0 = pass) that STILL objectively verifies the brief's real behavior — NEVER weaken it to a trivial/vacuous pass (no `true`, no bare `exit 0`, no tautology). If the gate is fine and the agent was merely struggling, REJECT. Output ONLY JSON: {\"upheld\":boolean,\"gate\":\"<corrected command, omit if rejecting>\",\"reason\":\"<one sentence>\"}.";
+          const user = `BRIEF:\n${brief}\n\nCURRENT GATE (may be wrapped in setup; judge the ASSERTION it makes):\n${gate}\n\nAGENT'S DISPUTE (target: ${dispute.target}): ${dispute.evidence}`;
+          const res = await llm.complete({ model: chain.knight, system, user, json: true, maxTokens: 1200 });
+          const parsed = tryParseJson(res.text);
+          if (!parsed.ok || typeof parsed.value !== "object" || parsed.value === null) return { upheld: false, reason: "reviewer returned no JSON" };
+          const v = parsed.value as { upheld?: boolean; gate?: string; reason?: string };
+          if (!v.upheld || !v.gate || typeof v.gate !== "string") return { upheld: Boolean(v.upheld), reason: v.reason ?? "rejected" };
+          if (/^\s*(true|:|exit\s+0)\s*$/i.test(v.gate.trim())) return { upheld: false, reason: "rejected: corrected gate was vacuous" };
+          return { upheld: true, gate: bootstrapGreenfieldNodeGate(tractableGateRun(v.gate)), reason: v.reason ?? "gate corrected" };
+        } catch {
+          return { upheld: false, reason: "reviewer call failed" };
+        }
+      };
+
   const result = await runMission({
     mission,
     chains,
@@ -216,6 +244,7 @@ async function executeMissionObject(
     // Tier-4 human gates: interactive prompt when a TTY is attached; absent
     // otherwise so unattended runs fail loudly instead of self-approving.
     adjudicate: process.stdin.isTTY ? promptAdjudicator(workdir) : undefined,
+    disputeReviewer,
   });
 
   process.stdout.write("\n" + summarizeTrace(tracePath) + "\n");
