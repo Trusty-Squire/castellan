@@ -1,0 +1,75 @@
+thesis: a command-line tool that converts CSV files to JSON, inferring column
+  types (number, boolean, ISO date, string), handling quoted fields, embedded
+  commas/newlines, custom delimiters, and missing values
+stories:
+  - A user runs the tool on a CSV file and gets a JSON array of objects keyed by
+    the header row.
+  - A user converts CSV containing quoted fields, embedded commas, and embedded
+    newlines without corrupting records or values.
+  - A user supplies a custom delimiter and gets JSON with inferred numbers,
+    booleans, ISO dates, strings, and missing values handled consistently.
+scope_fence: []
+requirements:
+  - id: R1
+    statement: CLI entrypoint reads a CSV path, parses headers and rows, and writes
+      JSON records to stdout.
+    acceptance:
+      tier: 1
+      gate: tmp=$(mktemp -d); printf 'name,age\nAda,36\nGrace,85\n' > "$tmp/in.csv";
+        csv2json "$tmp/in.csv" > "$tmp/out.json"; python3 -c 'import json,sys;
+        data=json.load(open(sys.argv[1])); assert data ==
+        [{"name":"Ada","age":36},{"name":"Grace","age":85}]' "$tmp/out.json"
+  - id: R2
+    statement: CSV parser correctly handles quoted fields, embedded commas, escaped
+      quotes, and embedded newlines.
+    acceptance:
+      tier: 1
+      gate: tmp=$(mktemp -d); printf 'id,note\n1,"hello, world"\n2,"line one\nline
+        two"\n3,"she said ""yes"""\n' > "$tmp/in.csv"; csv2json "$tmp/in.csv" >
+        "$tmp/out.json"; python3 -c 'import json,sys;
+        data=json.load(open(sys.argv[1])); assert data[0]["note"]=="hello,
+        world"; assert data[1]["note"]=="line one\nline two"; assert
+        data[2]["note"]=="she said \"yes\""' "$tmp/out.json"
+  - id: R3
+    statement: Delimiter option parses non-comma separated files without changing
+      JSON output semantics.
+    acceptance:
+      tier: 1
+      gate: tmp=$(mktemp -d); printf
+        'name;active;score\nAda;true;9.5\nGrace;false;10\n' > "$tmp/in.csv";
+        csv2json --delimiter ';' "$tmp/in.csv" > "$tmp/out.json"; python3 -c
+        'import json,sys; data=json.load(open(sys.argv[1])); assert data ==
+        [{"name":"Ada","active":True,"score":9.5},{"name":"Grace","active":False,"score":10}]'
+        "$tmp/out.json"
+  - id: R4
+    statement: Type inference converts numbers and booleans to native JSON values,
+      preserves ISO dates as strings, preserves ordinary strings, and treats
+      missing values according to the chosen null policy.
+    acceptance:
+      tier: 1
+      gate: tmp=$(mktemp -d); printf
+        'n,b,d,s,missing\n42,true,2026-06-20,hello,\n-3.14,false,2026-06-20T12:30:00Z,00123,\n'
+        > "$tmp/in.csv"; csv2json "$tmp/in.csv" > "$tmp/out.json"; python3 -c
+        'import json,sys; data=json.load(open(sys.argv[1])); assert
+        data[0]=={"n":42,"b":True,"d":"2026-06-20","s":"hello","missing":None};
+        assert
+        data[1]=={"n":-3.14,"b":False,"d":"2026-06-20T12:30:00Z","s":"00123","missing":None}'
+        "$tmp/out.json"
+decisions:
+  - id: D1
+    statement: How should missing CSV values be represented in JSON? → Represent
+      missing cells as JSON null.
+    rationale: ser accepted
+    claims: []
+  - id: D2
+    statement: What parsing strategy should the implementation use? → Use the
+      platform's mature CSV parser/library rather than a custom parser.
+    rationale: ser accepted
+    claims: []
+  - id: D3
+    statement: How should ISO dates be emitted in JSON? → Preserve ISO dates as
+      strings after recognizing them during inference.
+    rationale: ser accepted
+    claims: []
+claims: []
+open_questions: []

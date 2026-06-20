@@ -1,0 +1,62 @@
+thesis: a TypeScript library that parses and formats ISO 8601 durations (e.g.
+  'PT1H30M' to seconds and back), handling weeks, fractional seconds, negative
+  durations, and invalid input with named errors
+stories:
+  - A developer parses ISO 8601 duration strings into total seconds and gets
+    correct numeric results for weeks, time parts, fractional seconds, and
+    negative durations.
+  - A developer formats a number of seconds back into a canonical ISO 8601
+    duration string.
+  - A developer passes malformed or unsupported duration input and receives a
+    named error they can catch programmatically.
+scope_fence: []
+requirements:
+  - id: R1
+    statement: "Public TypeScript API exports parseDuration(input: string): number,
+      formatDuration(seconds: number): string, and named error classes for
+      invalid syntax, unsupported units, and invalid numeric values."
+    acceptance:
+      tier: 1
+      gate: npm test -- --run tests/public-api.test.ts
+  - id: R2
+    statement: Duration parser accepts ISO week durations, time durations,
+      fractional seconds, and a leading negative sign, returning total seconds
+      without losing sub-second precision.
+    acceptance:
+      tier: 1
+      gate: npm test -- --run tests/parse-duration.test.ts
+  - id: R3
+    statement: Duration formatter converts finite second values into canonical ISO
+      8601 strings using weeks when exactly divisible by 604800, otherwise
+      day/time components, preserving fractional seconds and negative signs.
+    acceptance:
+      tier: 1
+      gate: npm test -- --run tests/format-duration.test.ts
+  - id: R4
+    statement: Validation layer rejects malformed strings, mixed or unsupported
+      units, duplicate units, empty durations, non-finite numbers, and ambiguous
+      calendar units with stable named errors.
+    acceptance:
+      tier: 1
+      gate: npm test -- --run tests/errors.test.ts
+  - id: R5
+    statement: Package build emits TypeScript declarations and usable ESM/CJS
+      JavaScript entrypoints.
+    acceptance:
+      tier: 1
+      gate: npm run build && npm test -- --run tests/package-entrypoints.test.ts
+decisions:
+  - id: D1
+    statement: Should the library support ISO 8601 calendar units years and months
+      when converting to seconds? → Reject years and months with a named
+      UnsupportedUnitError in v1.
+    rationale: ser accepted
+    claims: []
+  - id: D2
+    statement: Should week durations be allowed to mix with day or time components?
+      → Disallow mixed week and day/time components in v1; parse P2W and
+      PT1H30M, but reject P1W2D or P1WT2H with InvalidDurationSyntaxError.
+    rationale: ser accepted
+    claims: []
+claims: []
+open_questions: []

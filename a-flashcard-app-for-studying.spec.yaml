@@ -1,10 +1,11 @@
 thesis: a flashcard app for studying
 stories:
-  - A student creates flashcards with a prompt and an answer.
-  - A student studies a deck by seeing the prompt, revealing the answer, and
-    marking whether they knew it.
-  - A student comes back later and sees cards scheduled for review based on
-    prior answers.
+  - She creates a deck with at least two question-and-answer flashcards and sees
+    them saved.
+  - She studies a deck by seeing a prompt, revealing the answer, and marking
+    whether she knew it.
+  - She returns later and sees cards scheduled from prior study results, with
+    known cards delayed and missed cards shown sooner.
   - A user sees the product's headline value in the first viewport rather than a
     generic shell.
   - A user can scan the primary content and compare key values without reading
@@ -13,70 +14,101 @@ stories:
     labels or surrounding chrome.
   - A user on a phone-sized viewport can still use the primary workflow without
     broken layout or horizontal scrolling.
-  - The screen shows a Start studying button but does not visibly show a study
-    prompt, reveal action, or knew-it marking controls.
-  - The screen shows a Due count, but no visible scheduled cards, dates, or
-    review scheduling based on prior answers.
-  - The promised key value is due scheduling, but the UI only shows labels and
-    zero counts without visible scheduled review information.
-  - Only a Start studying button is visible; no study prompt, reveal action, or
-    knew-it controls are shown.
-  - The screen shows Due counts but no scheduled cards, due dates, or
-    prior-answer-based review information.
-  - The promised due scheduling is not shown beyond labels and zero counts.
-  - Add visible scheduled-review information such as next due date, due queue,
-    or per-card review status.
-  - Show scheduled review metadata directly in the deck list and due review area.
+  - The screenshot shows fields and buttons, but no saved deck or saved
+    flashcards are visible.
+  - No study prompt, reveal action, or knew/missed controls are visible.
+  - No scheduled cards, prior results, or due timing information is visible.
+  - The first viewport shows a generic form, not the headline value of studying
+    flashcards or due-card scheduling.
+  - There are no visible key values, deck counts, card counts, or due status to
+    scan or compare.
+  - The screen only shows labels and controls, with no visible flashcard value
+    such as due cards or study progress.
+  - Replace the generic form-on-plain-background shell with a purpose-built
+    flashcard study interface that visibly shows decks, cards, due status, and
+    review controls.
+  - The screenshot shows deck and card fields, but no saved deck or saved
+    flashcards are visible.
+  - The screenshot still shows a generic form shell and lacks visible decks,
+    cards, due status, and review controls.
+  - Replace the generic plain form shell with a purpose-built study dashboard
+    that visibly communicates flashcard value through decks, due cards,
+    progress, and review controls.
 scope_fence: []
 requirements:
   - id: R1
-    statement: Card editor stores prompts and answers in a deck.
+    statement: Deck and card storage with create/list/read operations for text
+      question-and-answer cards.
     acceptance:
       tier: 1
-      gate: npm test -- --run card-editor.spec.ts && npm run e2e -- card-editor.e2e.ts
+      gate: npm test -- --runTestsByPath tests/deck-storage.test.ts
+        --testNamePattern='creates and reloads two decks with varied card text
+        after process restart'
   - id: R2
-    statement: Study session presents one card at a time, hides the answer until
-      reveal, and records knew/did-not-know responses.
+    statement: Study session flow that selects due cards, hides answers until
+      reveal, and records a remembered or missed grade.
     acceptance:
       tier: 1
-      gate: npm test -- --run study-session.spec.ts && npm run e2e --
-        study-session.e2e.ts
+      gate: npm test -- --runTestsByPath tests/study-session.test.ts
+        --testNamePattern='requires reveal before grading and records remembered
+        and missed outcomes'
   - id: R3
-    statement: Review scheduler persists card performance and returns due cards
-      using a simple spaced-repetition rule.
+    statement: Scheduling engine that updates each card's next due time from study
+      grades and persists the schedule.
     acceptance:
       tier: 1
-      gate: npm test -- --run review-scheduler.spec.ts && npm run e2e --
-        persistence-review.e2e.ts
+      gate: npm test -- --runTestsByPath tests/scheduling.test.ts
+        --testNamePattern='schedules missed cards sooner than remembered cards
+        across two study sessions and reloads'
   - id: R4
-    statement: "The app renders a usable product UI in index.html: the headline
-      value visible in the first viewport, the primary workflow operable end to
-      end, the standard empty/loading/error states, and a phone-friendly layout
-      — wiring the domain logic into an actual surface, not a headless library."
+    statement: Minimal learner interface for deck creation, card entry, due-card
+      study, answer reveal, and grading.
     acceptance:
       tier: 1
-      gate: npm run build --if-present
+      gate: npm run test:e2e -- --grep 'creates two cards, studies them with reveal,
+        grades one known and one missed, then shows only due cards after reload'
   - id: R5
-    statement: "The product UI must name and show the headline value as due
-      scheduling in the first viewport: visible due count, at least one
-      scheduled or due card surface when data exists, next-review timing, and
-      study controls for prompt, reveal answer, and knew/did-not-know so the
-      scheduler is visible rather than implied by labels or zero-count chrome."
+    statement: Input validation that rejects empty prompts or answers while
+      accepting two distinct valid cards.
     acceptance:
       tier: 1
-      gate: sh -c 'test -f index.html && grep -Eiq "due|scheduled|next review|review
-        date" index.html && grep -Eiq "reveal|show answer" index.html && grep
-        -Eiq "knew|did not know|again" index.html && npm run build --if-present'
+      gate: npm test -- --runTestsByPath tests/card-validation.test.ts
+        --testNamePattern='rejects empty fronts and backs while accepting two
+        nonempty varied cards'
+  - id: R6
+    statement: "The learner interface must be a purpose-built flashcard study
+      workspace: in the first viewport it prominently shows the headline study
+      value with visible deck names, card counts, due counts or due timing,
+      current study prompt, reveal action, remembered/missed controls, and
+      saved-study feedback; it must also include loading, empty, validation, and
+      save-error states and remain usable on a phone-sized viewport without
+      horizontal scrolling."
+    acceptance:
+      tier: 1
+      gate: npm run build --if-present && ls tests/*ui*build*floor* >/dev/null 2>&1
+  - id: R7
+    statement: The scheduling engine must make remembered cards due later than
+      missed cards for the same review moment, persist those next-due
+      timestamps, and select due cards in earliest-due order so returning later
+      produces the expected review queue.
+    acceptance:
+      tier: 1
+      gate: test -f tests/scheduling.test.js && npm test -- scheduling
 decisions:
   - id: D1
-    statement: Is v1 a single-device personal study app, or does it need accounts
-      and sync across devices? → Build v1 as a single-device personal app with
-      local persistence.
+    statement: Should v1 be text-only cards, or must it support images/audio/cloze
+      deletion from the start? → Text-only question-and-answer cards for v1.
     rationale: ser accepted
     claims: []
   - id: D2
-    statement: Is the study mechanism simple self-quizzing, or must v1 enforce
-      spaced repetition? → Use a simple spaced-repetition scheduler in v1.
+    statement: Should v1 be single-device local study, or account-based cross-device
+      sync? → Single-device local persistence for v1.
+    rationale: ser accepted
+    claims: []
+  - id: D3
+    statement: Should v1 optimize for manual card entry, or must it import existing
+      study materials? → Manual card entry only for v1 unless the first real use
+      case starts with an existing card collection.
     rationale: ser accepted
     claims: []
 claims: []

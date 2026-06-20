@@ -26,7 +26,7 @@ export class CodexEngine implements Engine {
 
   constructor(opts: { bin?: string; timeoutMs?: number; model?: string } = {}) {
     this.bin = opts.bin ?? "codex";
-    this.timeoutMs = opts.timeoutMs ?? 1_200_000; // 20m: a build node can be substantial
+    this.timeoutMs = opts.timeoutMs ?? 600_000; // 10m: generous for a real node, fast recovery on a hang
     this.model = opts.model ?? process.env.CODEX_MODEL;
   }
 
@@ -61,14 +61,48 @@ export class CodexEngine implements Engine {
     let stdout = "";
     let errored = false;
     let errorMessage = "";
+    // `codex exec` spawns sandbox grandchildren that hold the stdout pipe open, so
+    // execa's own `timeout` SIGTERMs the codex parent but then awaits a stream the
+    // surviving grandchild never closes — the whole build hangs indefinitely (a node
+    // stalled 5+ hours in testing). So: run codex DETACHED (its own process group)
+    // and race the await against a hard wall-clock. If the wall wins, SIGKILL the
+    // ENTIRE group (-pid) to reap the orphaned grandchildren, abandon the await, and
+    // fail the turn — the rung ladder then retries/escalates instead of hanging.
+    const subprocess = execa(this.bin, args, {
+      timeout: this.timeoutMs,
+      stdin: "ignore",
+      reject: false,
+      detached: true,
+      forceKillAfterDelay: 10_000,
+    });
+    subprocess.catch(() => {}); // we may abandon the await on hard-timeout; never an unhandled rejection
+    const hardWallMs = this.timeoutMs + 30_000;
+    const killGroup = (): void => {
+      try {
+        if (subprocess.pid) process.kill(-subprocess.pid, "SIGKILL");
+      } catch {
+        /* group already gone */
+      }
+      try {
+        subprocess.kill("SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    };
     try {
-      const res = await execa(this.bin, args, { timeout: this.timeoutMs, stdin: "ignore", reject: false });
+      const res = await Promise.race([
+        subprocess,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`codex exec hard-timeout after ${Math.round(hardWallMs / 1000)}s — abandoning a hung subprocess`)), hardWallMs).unref(),
+        ),
+      ]);
       stdout = res.stdout ?? "";
       if (res.exitCode !== 0) {
         errored = true;
         errorMessage = `codex exec exited ${res.exitCode}: ${(res.stderr || res.stdout || "").slice(-400)}`;
       }
     } catch (err) {
+      killGroup();
       errored = true;
       errorMessage = (err as Error).message.split("\n")[0] ?? "codex exec failed";
     }

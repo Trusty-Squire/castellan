@@ -74,8 +74,23 @@ export class CodexCliClient implements LlmClient {
         ...imagePaths.flatMap((p) => ["-i", p]),
         ...(this.model ? ["-m", this.model] : []),
       ];
+      // Detached + hard-wall race so a hung codex (sandbox grandchildren holding the
+      // pipe open) can't stall planning forever — kill the whole group and retry.
+      const sub = execa(this.bin, args, {
+        timeout: this.timeoutMs,
+        input: prompt,
+        cancelSignal: req.signal,
+        detached: true,
+        forceKillAfterDelay: 10_000,
+      });
+      sub.catch(() => {});
       try {
-        await execa(this.bin, args, { timeout: this.timeoutMs, input: prompt, cancelSignal: req.signal });
+        await Promise.race([
+          sub,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`codex hard-timeout after ${Math.round((this.timeoutMs + 30_000) / 1000)}s`)), this.timeoutMs + 30_000).unref(),
+          ),
+        ]);
         const raw = readFileSync(msgFile, "utf8").trim();
         const text = req.json ? extractJsonBlock(raw) : raw;
         if (req.json && !text.includes("{")) {
@@ -85,6 +100,8 @@ export class CodexCliClient implements LlmClient {
         if (!raw) { lastErr = "codex returned an empty message"; continue; }
         return { text, inTokens: 0, outTokens: 0 };
       } catch (err) {
+        try { if (sub.pid) process.kill(-sub.pid, "SIGKILL"); } catch { /* group gone */ }
+        try { sub.kill("SIGKILL"); } catch { /* already dead */ }
         lastErr = (err as Error).message.split("\n")[0] ?? "codex exec failed";
       } finally {
         rmSync(dir, { recursive: true, force: true });
