@@ -215,8 +215,15 @@ export function serverGatePort(run: string): number | null {
   if (loneBackground || /serve-gate\.mjs|dom-gate\.mjs|--serve\b|npm (run )?(start|dev)|uvicorn|flask run|gunicorn|hypercorn|\.listen\(|http\.server|nohup/.test(run)) {
     return null;
   }
-  const m = run.match(LOCALHOST_PORT_RE);
-  return m ? Number(m[1]) : null;
+  // A localhost:port bound to an external-service env var (VOUCHFLOW_BASE_URL=http://localhost:8001)
+  // is a dependency the gate TALKS TO — a mock/provider already running — NOT a server the build
+  // SERVES; booting it would fail (the build has no such server). Take the first localhost port
+  // that ISN'T such a base URL.
+  const re = /(\w*URL\s*=\s*['"]?)?https?:\/\/(?:localhost|127\.0\.0\.1):(\d{2,5})\b/g;
+  for (let m = re.exec(run); m; m = re.exec(run)) {
+    if (!m[1]) return Number(m[2]);
+  }
+  return null;
 }
 
 /** Wrap a localhost-curl gate so the harness boots the built server, waits, checks, tears down. */

@@ -36,6 +36,12 @@ describe("serverGatePort — detect a localhost gate that boots no server", () =
     expect(serverGatePort("curl -s ${VOUCHFLOW_BASE_URL}/signup | jq -e '.account_id'")).toBeNull();
     expect(serverGatePort("curl -s https://api.example.com/v1/keys")).toBeNull();
   });
+  it("does NOT wrap a localhost port bound to an external-service base URL (the mock provider)", () => {
+    // 8001 is an inlined mock provider the gate talks TO, not a build server.
+    expect(serverGatePort("VOUCHFLOW_BASE_URL=http://localhost:8001 ./run-bot.sh vouchflow | grep -q vf_")).toBeNull();
+    // but a real app port alongside the mock base URL still wraps (the app the build serves)
+    expect(serverGatePort("VOUCHFLOW_BASE_URL=http://localhost:8001 ./run-bot.sh && curl http://localhost:3000/api/keys")).toBe(3000);
+  });
 });
 
 describe("wrapWithServeGate — route the gate through the booting runner", () => {
