@@ -209,7 +209,10 @@ const LOCALHOST_PORT_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d{2,5})\b/;
  * only hit EXTERNAL hosts (an env-var base URL, a real domain) — those need no server.
  */
 export function serverGatePort(run: string): number | null {
-  if (/serve-gate\.mjs|dom-gate\.mjs|--serve\b|npm (run )?(start|dev)|uvicorn|flask run|gunicorn|hypercorn|\.listen\(|http\.server|&\s*(sleep|\w)|nohup/.test(run)) {
+  // Already boots a server? (a serve/dom runner, an inline launch, or a LONE `&` that
+  // backgrounds a process — but NOT `&&`, which is just logical-AND between curls.)
+  const loneBackground = /(?<![&>])&(?![&])(\s|$)/.test(run);
+  if (loneBackground || /serve-gate\.mjs|dom-gate\.mjs|--serve\b|npm (run )?(start|dev)|uvicorn|flask run|gunicorn|hypercorn|\.listen\(|http\.server|nohup/.test(run)) {
     return null;
   }
   const m = run.match(LOCALHOST_PORT_RE);

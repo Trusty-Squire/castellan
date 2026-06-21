@@ -20,9 +20,16 @@ describe("serverGatePort — detect a localhost gate that boots no server", () =
     expect(serverGatePort("curl -s http://localhost:8000/login | jq -e '.token'")).toBe(8000);
     expect(serverGatePort("curl http://127.0.0.1:3001/api/keys | jq -e 'type==\"array\"'")).toBe(3001);
   });
+  it("a chain of && curls is logical-AND, NOT backgrounding — still wraps (regression)", () => {
+    const chain =
+      "curl -s -X POST http://localhost:8000/login -d '{}' | jq -e '.access_token != null' && " +
+      "T=$(curl -s http://localhost:8000/login | jq -r '.t') && curl http://localhost:8000/api/keys -H \"Authorization: Bearer $T\" | jq -e '.'";
+    expect(serverGatePort(chain)).toBe(8000);
+  });
   it("returns null when the gate ALREADY boots something (no double-boot)", () => {
     expect(serverGatePort("node .squire/dom-gate.mjs 'http://localhost:3000' '[]' --serve 'npm start'")).toBeNull();
     expect(serverGatePort("uvicorn app:app & sleep 2; curl http://localhost:8000/")).toBeNull();
+    expect(serverGatePort("python3 app.py & sleep 1; curl http://localhost:8000/")).toBeNull(); // lone & = background
     expect(serverGatePort("node .squire/serve-gate.mjs --port 8000 --check 'curl http://localhost:8000/'")).toBeNull();
   });
   it("returns null for gates that hit only EXTERNAL hosts (env base url / real domain)", () => {
