@@ -1,17 +1,27 @@
 import { describe, it, expect } from "vitest";
 import { createServer, type Server } from "node:http";
 import { renderGate } from "../../src/contract/gate-patterns.js";
-import { findChrome, runDomGate, type DomStep } from "../../src/harness/dom-gate.js";
+import { findChrome, runDomGate, scaffoldDomGate, type DomStep } from "../../src/harness/dom-gate.js";
+import { existsSync, mkdtempSync as mkdtemp } from "node:fs";
+import { tmpdir as tmp } from "node:os";
+import { join as pjoin } from "node:path";
 
-// ---- pure pattern render (hermetic, no browser) ----
+// ---- pure pattern render + scaffold (hermetic, no browser) ----
 describe("dom-behavior gate pattern", () => {
-  it("renders to a `ser dom-gate <url> <steps>` command, steps JSON intact", () => {
+  it("renders to a `node .squire/dom-gate.mjs <url> <steps>` command, steps JSON intact", () => {
     const steps = '[{"read":"#pot","as":"p0"},{"click":"[data-action=raise]"},{"assert":"#pot","gt":"p0"}]';
     const g = renderGate("dom-behavior", { url: "http://localhost:3000", steps });
     expect(g.type).toBe("command");
-    expect(g.run).toContain("ser dom-gate");
+    expect(g.run).toContain("node .squire/dom-gate.mjs");
     expect(g.run).toContain("http://localhost:3000");
     expect(g.run).toContain('"gt":"p0"'); // the steps survive shell-quoting
+  });
+
+  it("scaffolds a self-contained runner into .squire/ (the gate runs with bare node)", () => {
+    const dir = mkdtemp(pjoin(tmp(), "scaffold-"));
+    const rel = scaffoldDomGate(dir);
+    expect(rel).toBe(pjoin(".squire", "dom-gate.mjs"));
+    expect(existsSync(pjoin(dir, rel))).toBe(true);
   });
 });
 

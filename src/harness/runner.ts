@@ -3,6 +3,7 @@ import { resolveChain, topoSort, effectiveGate, type MissionNode } from "../cont
 import type { Engine, AttemptRecord, ToolCallRecord, ToolName } from "../engine/types.js";
 import { Trace } from "./trace.js";
 import { packContext } from "./context.js";
+import { scaffoldDomGate } from "./dom-gate.js";
 import { reconcile } from "./reconcile.js";
 import { executeGate, DEFAULT_GATE_TIMEOUT_MS, type Adjudicator } from "./gates.js";
 import { BudgetMeter } from "./budget.js";
@@ -173,6 +174,9 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
   // Keep harness artifacts out of git: never staged by `git add -A`, never
   // removed by `git clean -fd` during a node reset.
   addGitExclude(workdir, [".squire/", ".squire"]);
+  // Drop the self-contained dom-behavior runner into .squire/ so a frontend gate
+  // runs with bare `node` (no `ser` on PATH, no deps). Survives the per-rung reset.
+  scaffoldDomGate(workdir);
 
   const trace = new Trace(tracePath, missionId, { now: opts.now });
   const scale = chain.budget_scale;

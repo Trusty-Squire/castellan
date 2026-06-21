@@ -12,22 +12,18 @@
  * gate asserts STABLE hooks (#pot, [data-action=raise], [data-face]) that the node brief
  * must also tell the builder to emit — same shared-contract discipline as the data shapes.
  */
-import { execa, type ResultPromise } from "execa";
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { mkdtempSync, readFileSync, existsSync, rmSync, mkdirSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const CHROME_BINS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"];
 
 /** First Chrome/Chromium on PATH, or null (the gate then reports "no browser"). */
 export async function findChrome(): Promise<string | null> {
   for (const bin of CHROME_BINS) {
-    try {
-      await execa("which", [bin]);
-      return bin;
-    } catch {
-      /* try next */
-    }
+    if (spawnSync("which", [bin]).status === 0) return bin;
   }
   return null;
 }
@@ -135,16 +131,16 @@ export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutM
   if (!chrome) return { ok: false, ran: 0, failures: ["no Chrome/Chromium found — dom-behavior gate cannot run"] };
 
   const userDir = mkdtempSync(join(tmpdir(), "ser-domgate-"));
-  let proc: ResultPromise | undefined;
+  let proc: ChildProcess | undefined;
   let cdp: Cdp | undefined;
   const vars = new Map<string, unknown>();
   const failures: string[] = [];
   let ran = 0;
   try {
-    proc = execa(chrome, [
+    proc = spawn(chrome, [
       "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
       "--remote-debugging-port=0", `--user-data-dir=${userDir}`, url,
-    ], { reject: false });
+    ], { stdio: "ignore" });
     // Chrome writes the chosen port to DevToolsActivePort once the endpoint is up.
     const portFile = join(userDir, "DevToolsActivePort");
     while (!existsSync(portFile)) {
@@ -229,4 +225,46 @@ async function runAssert(cdp: Cdp, step: { assert: string; prop?: string } & Ass
   if ("eq" in step) { const ok = String(cur ?? "").trim() === step.eq; return ok ? null : `assert ${sel} == "${step.eq}" failed (got "${cur}")`; }
   if ("includes" in step) { const ok = String(cur ?? "").includes(step.includes); return ok ? null : `assert ${sel} includes "${step.includes}" failed (got "${cur}")`; }
   return `unknown assertion for ${sel}`;
+}
+
+/**
+ * Copy this runner into <workdir>/.squire/dom-gate.mjs so a dom-behavior gate runs
+ * with bare `node` — no `ser` on PATH, no deps. `.squire/` is git-clean-excluded, so
+ * it survives the per-rung reset. Returns the workdir-relative path the gate invokes.
+ */
+export function scaffoldDomGate(workdir: string): string {
+  const rel = join(".squire", "dom-gate.mjs");
+  const dest = join(workdir, rel);
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(fileURLToPath(import.meta.url), dest);
+  return rel;
+}
+
+/** CLI entry: `node dom-gate.mjs <url> '<steps-json>'` — exit 0 = pass, 1 = a real failure, 2 = usage. */
+async function domGateMain(argv: string[]): Promise<number> {
+  const [url, stepsJson] = argv;
+  if (!url || !stepsJson) {
+    process.stderr.write("usage: dom-gate <url> '<steps-json>'\n");
+    return 2;
+  }
+  let steps: DomStep[];
+  try {
+    steps = JSON.parse(stepsJson);
+    if (!Array.isArray(steps)) throw new Error("steps must be a JSON array");
+  } catch (e) {
+    process.stderr.write(`invalid steps JSON: ${(e as Error).message}\n`);
+    return 2;
+  }
+  const r = await runDomGate(url, steps);
+  if (!r.ok) {
+    for (const f of r.failures) process.stderr.write(`dom-gate FAIL: ${f}\n`);
+    return 1;
+  }
+  process.stdout.write(`dom-gate OK (${r.ran} step(s) passed)\n`);
+  return 0;
+}
+
+// Run directly (the scaffolded .squire/dom-gate.mjs) — but NOT when imported by the CLI/tests.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  domGateMain(process.argv.slice(2)).then((c) => process.exit(c));
 }

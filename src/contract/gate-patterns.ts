@@ -158,7 +158,9 @@ export const GATE_PATTERNS: GatePattern[] = [
       '(after clicking [data-action=raise] #pot increases; [data-face] flips on reveal), NOT for "looks good".',
     bornFrom: "the strip dogfood — the frontend node fell back to `grep poker-table` and a text page false-passed 'immersive'",
     params: ["url", "steps"],
-    render: (p) => command(`ser dom-gate ${sq(str(p, "url"))} ${sq(str(p, "steps"))}`),
+    // The runner is scaffolded into .squire/ (git-clean-excluded) by the harness, so the
+    // gate runs with bare `node` — no `ser` on PATH, no deps in the build env.
+    render: (p) => command(`node .squire/dom-gate.mjs ${sq(str(p, "url"))} ${sq(str(p, "steps"))}`),
   },
   {
     id: "slop-audit",
