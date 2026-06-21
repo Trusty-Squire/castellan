@@ -307,17 +307,15 @@ requirements:
     expect(groundGateRun("./mypython.sh")).toBe("./mypython.sh"); // substring untouched
   });
 
-  it("tractableGateRun downgrades node-level e2e gates to a build floor (visual audit keeps the teeth)", () => {
-    for (const e2e of [
-      "npm run test:e2e -- tests/e2e/lines-dashboard.spec.ts",
-      "npm run e2e",
-      "npx playwright test",
-      "cypress run",
-    ]) {
+  it("tractableGateRun downgrades a project-wide e2e SUITE, but lets a single playwright spec through", () => {
+    // project-wide suites / cypress stay intractable per node → build floor
+    for (const e2e of ["npm run test:e2e -- tests/e2e/x.spec.ts", "npm run e2e", "cypress run"]) {
       const out = tractableGateRun(e2e);
-      expect(out).toContain("npm run build --if-present"); // tractable floor
-      expect(out).not.toMatch(/playwright|cypress|test:e2e/i); // the intractable harness is gone
+      expect(out).toContain("npm run build --if-present");
+      expect(out).not.toMatch(/cypress|test:e2e/i);
     }
+    // a SINGLE-FILE playwright behavioral spec is now the deterministic UI gate we WANT — survives
+    expect(tractableGateRun("npx playwright test tests/raise.spec.ts")).toBe("npx playwright test tests/raise.spec.ts");
     // non-test gates pass through unchanged (just grounded) — no general bootstrap
     expect(tractableGateRun("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
     expect(tractableGateRun("npm test -- foo")).toBe("npm test"); // pure test gate → whole vitest suite

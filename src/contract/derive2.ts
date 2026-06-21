@@ -375,10 +375,13 @@ export function stripCaseFilters(run: string): string {
   return run.replace(CASE_FILTER, "");
 }
 
-/** An end-to-end / browser-harness gate at the NODE level (intractable: a single
- *  cheap node can't stand up Playwright/Cypress + a project-wide `test:e2e` script
- *  from nothing). End-to-end is the VISUAL AUDIT's job, not a per-node gate. */
-const E2E_GATE = /\b(playwright|cypress|webdriver\.?io|puppeteer)\b|\bnpm run (test:e2e|e2e)\b|\btest:e2e\b/i;
+/** A PROJECT-WIDE end-to-end SUITE at the node level stays intractable (a single cheap
+ *  node can't stand up a whole `test:e2e` harness + cypress from nothing) → downgrade it.
+ *  But a SINGLE-FILE playwright behavioral spec (`npx playwright test one.spec.ts`) is now
+ *  tractable — the harness installs playwright+chromium — and is the deterministic UI gate
+ *  we WANT, so it must NOT match here. (We learned the visual audit is too lenient to be
+ *  the home for browser verification; a per-node spec beats punting to a judge.) */
+const E2E_GATE = /\b(cypress|webdriver\.?io)\b|\bnpm run (test:e2e|e2e)\b|\btest:e2e\b/i;
 
 /** A tractable build floor: install deps if needed, then compile (no-op when there's
  *  no build script). Something a single cheap node can actually pass. */
@@ -563,7 +566,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   });
 
   if (needsInference.length > 0) {
-    const inferSystem = `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). TRACTABILITY: a gate must be satisfiable by ONE cheap attempt from a fresh checkout using the AVAILABLE TOOLS in the survey. NEVER emit a full e2e TEST-RUNNER gate (playwright/cypress test suites, "npm run test:e2e"/"npm run e2e") or a project-wide npm script that may not exist. But a UI node's BEHAVIOR must still be gated with TEETH, not a "grep for a class name" stub: for anything the user must SEE happen (a value updates on a click, a card flips on reveal, a control disables off-turn, an element animates) SELECT THE "dom-behavior" PATTERN — it drives the built page in a headless browser and asserts one DOM behavior (the jq-for-the-DOM), a single built-in assertion, not a test suite. Emit its "steps" as a JSON ARRAY directly (do NOT escape it into a string), assert the [data-testid=...]/[data-action=...] hooks the CONTRACT pins, and set "serve" to the command that starts the app on the url (the survey's start/dev/preview script, e.g. "npm start"). Reserve "npm run build --if-present" + grep ONLY for "the page renders at all"; for logic/data use a unit test or node -e assertion. Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`;
+    const inferSystem = `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). TRACTABILITY: a gate must be satisfiable by ONE cheap attempt from a fresh checkout using the AVAILABLE TOOLS in the survey. Do NOT emit a project-wide e2e SUITE ("npm run test:e2e"/"npm run e2e", a cypress run) or a project-wide npm script that may not exist. But a UI node's BEHAVIOR must be gated with TEETH, not a "grep for a class name" stub. For anything the user must SEE happen (a value updates on a click, a card flips on reveal, a control disables off-turn), PREFER a SINGLE-FILE PLAYWRIGHT behavioral spec: gate it as "npx playwright test <one .spec.ts>" and have the build write that one spec to drive the page and assert the [data-testid=...]/[data-action=...] behaviors the CONTRACT pins (the harness installs playwright + chromium on demand). ONE focused spec per node — never a whole suite. (The zero-dep "dom-behavior" pattern is an alternative when a browser is present but playwright is not.) Reserve "npm run build --if-present" + grep ONLY for "the page renders at all"; for logic/data use a unit test or node -e assertion. Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`;
     const inferUser = `NODES:\n${needsInference.map((n) => `${n.id}: ${n.brief}`).join("\n")}\n\nREPOSITORY SURVEY (use REAL commands found here):\n${survey}`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const inferred = await jsonStage(
@@ -869,7 +872,7 @@ export function bootstrapGreenfieldNodeGate(run: string): string {
     ...(isBuildGate ? [`if [ ! -f index.html ]; then printf '%s' '${indexHtml}' > index.html; fi`] : []),
     "if [ ! -x node_modules/.bin/vitest ] && grep -q vitest package.json; then npm install --no-fund --no-audit -D vitest vite >/dev/null 2>&1; fi",
     "if [ ! -d node_modules ]; then npm install --no-fund --no-audit; fi",
-    `if printf '%s' ${shellQuoteForCommand(run)} | grep -Eq 'playwright|test:e2e'; then npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1; fi`,
+    `if printf '%s' ${shellQuoteForCommand(run)} | grep -Eq 'playwright|test:e2e'; then npm install --no-fund --no-audit -D @playwright/test >/dev/null 2>&1; npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1; fi`,
     run,
   ].join(" && ");
   return `sh -c ${shellQuoteForCommand(bootstrap)}`;

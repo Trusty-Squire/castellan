@@ -215,6 +215,10 @@ export async function detectAvailableTools(): Promise<{ name: string; present: b
   let browser = false;
   for (const b of browserBins) if (await has(b)) { browser = true; break; }
   base.push({ name: "headless browser (enables the dom-behavior UI gate)", present: browser });
+  // Playwright is HARNESS-PROVIDED for a single-file browser-behavior spec: the build
+  // installs @playwright/test + chromium on demand. Advertised so the planner stops
+  // treating "npx playwright test one.spec.ts" as an unavailable/forbidden tool.
+  base.push({ name: "playwright (npx playwright test <one.spec.ts> — single UI-behavior spec; harness installs it)", present: true });
   return base;
 }
 
