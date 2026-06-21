@@ -199,17 +199,23 @@ export async function buildRepoSurvey(workdir: string): Promise<string> {
 
 /** Probe which common interpreters/test-runners exist, so gates only use present ones. */
 export async function detectAvailableTools(): Promise<{ name: string; present: boolean }[]> {
+  const has = async (name: string): Promise<boolean> => {
+    try {
+      return (await execa("command", ["-v", name], { shell: true, reject: false })).exitCode === 0;
+    } catch {
+      return false;
+    }
+  };
   const names = ["python3", "python", "pytest", "node", "npm", "go", "cargo", "rg", "bash"];
-  return Promise.all(
-    names.map(async (name) => {
-      try {
-        const r = await execa("command", ["-v", name], { shell: true, reject: false });
-        return { name, present: r.exitCode === 0 };
-      } catch {
-        return { name, present: false };
-      }
-    }),
-  );
+  const base = await Promise.all(names.map(async (name) => ({ name, present: await has(name) })));
+  // A headless browser makes the dom-behavior gate satisfiable; without this line the
+  // survey's "gates MUST use only these tools" wrongly forbids it and the planner falls
+  // back to a grep stub. Detected, not assumed.
+  const browserBins = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"];
+  let browser = false;
+  for (const b of browserBins) if (await has(b)) { browser = true; break; }
+  base.push({ name: "headless browser (enables the dom-behavior UI gate)", present: browser });
+  return base;
 }
 
 /** Detect test/lint/build commands from package.json scripts or a Makefile. */
@@ -221,6 +227,10 @@ export function detectCheckCommands(workdir: string): string[] {
       const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, string> };
       for (const key of ["test", "lint", "build", "typecheck"]) {
         if (pkg.scripts?.[key]) cmds.push(`npm run ${key}`);
+      }
+      // Serve scripts — the `serve` a dom-behavior gate needs to boot the app.
+      for (const key of ["start", "dev", "preview", "serve"]) {
+        if (pkg.scripts?.[key]) cmds.push(`npm run ${key}  # serve (for dom-behavior)`);
       }
     } catch {
       // ignore malformed package.json
