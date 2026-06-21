@@ -236,8 +236,9 @@ export function serveGateBriefNote(port: number): string {
     `RUNTIME GATE — this module is verified by STARTING it as a live server and curling it on port ${port}.`,
     `It MUST be runnable as a process that LISTENS on the port from $PORT (default ${port}) when run directly.`,
     `If you also export a factory (createApp/create_app) for tests, ADD a run-directly entrypoint that calls it and listens:`,
-    `  Node:   if (require.main === module) (module.exports.createApp ? module.exports.createApp() : module.exports).listen(process.env.PORT || ${port});`,
-    `  Python: if __name__ == "__main__": import os; app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "${port}")))`,
+    `  Node:    if (require.main === module) (module.exports.createApp ? module.exports.createApp() : module.exports).listen(process.env.PORT || ${port});`,
+    `  Flask:   if __name__ == "__main__": import os; app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "${port}")))`,
+    `  FastAPI: if __name__ == "__main__": import os, uvicorn; uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "${port}")))  # NOT app.run() — FastAPI needs uvicorn`,
     `Bind 127.0.0.1 (or 0.0.0.0). The same file may both export the factory AND self-listen — keep it in this node's allowed files.`,
   ].join("\n");
 }
