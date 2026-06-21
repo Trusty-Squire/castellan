@@ -104,6 +104,30 @@ split-as-DAG-transform) stays deferred per the plan.
 - LIVE pending: `pnpm calibrate-envelope` (set the real envelope), then
   `pnpm derive-bench` to confirm count-vs-size ρ>0 and the tax stays <=10.
 
+## Frontend-gate thread (2026-06-21) — DONE 1+2 of 3
+Empirical finding (4 live `--to spec` runs): the cheap planner will NOT select a
+browser/DOM gate for UI nodes — it anchors on curl/grep/vitest. So the harness DOES,
+it doesn't coax.
+- (#1, commit 0007efe) Harness-ATTACH a deterministic DOM gate. derive2.ts:
+  extractDomHooks + looksLikeUi + deriveUiGate → a dom-behavior gate asserting each
+  pinned [data-*] hook RENDERS (served via npm start), attached to the LAST UI node,
+  overriding the planner's stub grep. Live-confirmed: holdem's lobby-ui node now gets
+  `node .squire/dom-gate.mjs … assert [data-bot-selection]/[data-start-game]/[data-card]`.
+  +5 hermetic tests.
+- (#2, commit d4d82ab) Adversarial CLOSURE judge for the rebuild loop. The loop
+  re-judged holistically each round → fresh nitpicks while the load-bearing defect
+  survived (the empty-chart case the old "more polished?" ratchet shipped). Now:
+  freezeDefects (freeze what blocked at round 1) → reviewClosure (VISUAL_CLOSURE_SYSTEM:
+  adversarial default-present, ABSTAIN unsure, no new blockers) → unresolvedDefects
+  (only 'fixed' clears; present/unsure/omitted/null stay open). Ship ⟺ list empty;
+  converges or honest-halts. Validated on the real screenshots (rubric-demo/
+  closure-check.mjs): empty chart held `present` both rounds, abstained on unprovable,
+  confirmed a real fix. +7 hermetic tests. 308/308; typecheck+lint+build clean.
+- Also added EXPERIMENTS.md (index of this session's scattered ad-hoc runs).
+- (#3, NEXT) render backstop: flag a node that renders content but got no visual/dom
+  gate. (#4, deferred) web-search spec enrichment via Exa, only if component-knowledge
+  proves too stale.
+
 ## Next
 Live gates 2-3 (derive-bench, poker-bench, human/key). Then v0.3 centerpiece
 per thesis: the standing-loop runtime (triggers, queue, recurring missions) —
