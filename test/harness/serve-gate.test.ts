@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { inferStartCommands, runServeGate } from "../../src/harness/serve-gate.js";
@@ -56,6 +56,18 @@ describe("inferStartCommands — boot whatever the build produced", () => {
     expect(cmds).toContain("npm run dev");
     expect(cmds).toContain("node server.js");
     expect(cmds).toContain("python3 helper.py"); // content-sniffed (uvicorn), not a known name
+  });
+  it("finds a server written into src/ (the blast-radius case), not just the root", () => {
+    const d = workdir();
+    mkdirSync(join(d, "src"));
+    writeFileSync(join(d, "src", "auth-api.js"), "require('http').createServer((q,s)=>s.end('ok')).listen(8000)");
+    expect(inferStartCommands(d)).toContain("node src/auth-api.js");
+  });
+  it("skips node_modules / venv noise when scanning subdirs", () => {
+    const d = workdir();
+    mkdirSync(join(d, "node_modules", "x"), { recursive: true });
+    writeFileSync(join(d, "node_modules", "x", "server.js"), "require('http').createServer(()=>{}).listen(1)");
+    expect(inferStartCommands(d)).toEqual([]);
   });
   it("returns [] for a workdir with no bootable server", () => {
     const d = workdir();

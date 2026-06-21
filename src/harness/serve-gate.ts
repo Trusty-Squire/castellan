@@ -13,7 +13,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { connect } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -43,10 +43,34 @@ function waitForPort(port: number, deadline: number): Promise<boolean> {
   });
 }
 
+const IGNORE_DIRS = new Set(["node_modules", ".git", ".squire", ".venv", "venv", "__pycache__", "dist", "build", ".pytest_cache", "coverage", ".next"]);
+
+/** Relative paths of .py/.js source files up to `maxDepth` levels deep, skipping noise dirs. */
+function listSourceFiles(root: string, maxDepth: number): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, prefix: string, depth: number): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (IGNORE_DIRS.has(e.name) || (e.name.startsWith(".") && e.isDirectory())) continue;
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (e.isFile() && /\.(py|js|mjs|cjs)$/.test(e.name)) out.push(rel);
+      else if (e.isDirectory() && depth > 0) walk(join(dir, e.name), rel, depth - 1);
+    }
+  };
+  walk(root, "", maxDepth);
+  return out;
+}
+
 /**
  * Ordered candidate commands to boot a server in `workdir`. The harness OWNS this so a
- * server node need not declare it: try npm start/dev, then any python/node file that
- * either has a conventional server name or whose source carries a server signature.
+ * server node need not declare it: try npm start/dev, then any python/node file (root OR
+ * a level down in src/ / app/ / backend/) that has a conventional server name or whose
+ * source carries a server signature.
  */
 export function inferStartCommands(workdir: string): string[] {
   const out: string[] = [];
@@ -73,18 +97,17 @@ export function inferStartCommands(workdir: string): string[] {
       /* malformed package.json — skip the npm candidates */
     }
   }
-  let files: string[] = [];
-  try {
-    files = readdirSync(workdir).filter((f) => /\.(py|js|mjs|cjs)$/.test(f));
-  } catch {
-    /* unreadable workdir */
-  }
+  // Scan the root AND one or two levels down — the model routinely writes the server
+  // into src/ / app/ / backend/ (and its blast radius may FORCE that), so a root-only
+  // scan misses it entirely (the auth-api "no server file" halt). Relative paths so the
+  // candidate command boots the right file: `node src/auth-api.js`.
+  const files = listSourceFiles(workdir, 2);
   const KNOWN_PY = ["app.py", "main.py", "server.py", "api_server.py", "api.py", "run.py", "wsgi.py", "asgi.py", "manage.py"];
   const KNOWN_JS = ["server.js", "index.js", "app.js", "main.js"];
   const PY_SIG = /uvicorn|fastapi|flask|app\.run\(|http\.server|hypercorn|gunicorn|run\(host/i;
   const JS_SIG = /\.listen\(|createServer|express\(|fastify|new Server/i;
-  for (const f of KNOWN_PY) if (files.includes(f)) push(`python3 ${f}`);
-  for (const f of KNOWN_JS) if (files.includes(f)) push(`node ${f}`);
+  for (const f of files) if (f.endsWith(".py") && KNOWN_PY.includes(basename(f))) push(`python3 ${f}`);
+  for (const f of files) if (/\.(js|mjs|cjs)$/.test(f) && KNOWN_JS.includes(basename(f))) push(`node ${f}`);
   for (const f of files) {
     if (f.endsWith(".py") && PY_SIG.test(read(f))) push(`python3 ${f}`);
     else if (/\.(js|mjs|cjs)$/.test(f) && JS_SIG.test(read(f))) push(`node ${f}`);
