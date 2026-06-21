@@ -16,6 +16,9 @@ import {
   nodeRequirementIds,
   allocateNodeBudgets,
   overflowingNodes,
+  deriveUiGate,
+  extractDomHooks,
+  looksLikeUi,
 } from "../../src/contract/derive2.js";
 import { parseSpec } from "../../src/contract/spec.js";
 import { MockLlm } from "../../src/llm/mock.js";
@@ -567,5 +570,45 @@ describe("allocateNodeBudgets — floor + escalation reserve", () => {
 
   it("overflowingNodes ignores nodes with no context_globs (greenfield)", () => {
     expect(overflowingNodes(workdir, [{ id: "x", context_globs: [] }], 1000)).toEqual([]);
+  });
+});
+
+describe("harness-derived UI gate — deterministic DOM teeth without the planner selecting it", () => {
+  it("extracts pinned DOM hooks from a brief", () => {
+    expect(extractDomHooks("renders [data-testid=pot] and [data-action=raise], plus [data-card]")).toEqual([
+      "[data-testid=pot]",
+      "[data-action=raise]",
+      "[data-card]",
+    ]);
+    expect(extractDomHooks("a poker hand evaluator module, no DOM")).toEqual([]);
+  });
+
+  it("derives a dom-behavior presence gate when a brief pins hooks (planner-independent)", () => {
+    const g = deriveUiGate({ brief: "build the table: [data-testid=pot] and [data-action=raise]" });
+    expect(g).not.toBeNull();
+    if (!g) return;
+    expect(g.type).toBe("command");
+    expect(g.run).toContain("node .squire/dom-gate.mjs");
+    expect(g.run).toContain('"assert":"[data-testid=pot]"'); // asserts each pinned hook exists
+    expect(g.run).toContain('"assert":"[data-action=raise]"');
+    expect(g.run).toContain("--serve"); // boots the app to drive it
+  });
+
+  it("returns null for a non-UI node (no hooks → leave the planner's gate alone)", () => {
+    expect(deriveUiGate({ brief: "implement the poker hand evaluator and side-pot logic" })).toBeNull();
+  });
+
+  it("reads hooks from the shared CONTRACT, not just the node brief", () => {
+    const g = deriveUiGate({ brief: "build the table UI" }, "DOM CONTRACT: [data-testid=pot], [data-action=raise]");
+    expect(g).not.toBeNull();
+    if (!g) return;
+    expect(g.run).toContain('"assert":"[data-testid=pot]"');
+    expect(g.run).toContain('"assert":"[data-action=raise]"');
+  });
+
+  it("looksLikeUi detects a frontend node by its files, not a logic node", () => {
+    expect(looksLikeUi({ blast_radius: ["src/app/Table.tsx", "public/index.html"] })).toBe(true);
+    expect(looksLikeUi({ blast_radius: ["styles.css"] })).toBe(true);
+    expect(looksLikeUi({ blast_radius: ["src/poker-engine.js", "src/bot-ai.js"] })).toBe(false);
   });
 });

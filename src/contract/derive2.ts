@@ -439,6 +439,35 @@ export const LENSES: { id: string; instruction: string }[] = [
   },
 ];
 
+/** Pinned DOM hooks ([data-testid=x], [data-action=x], [data-card], …) a brief names. */
+const DOM_HOOK_RE = /\[data-[a-z][a-z0-9-]*(?:=[a-zA-Z0-9_-]+)?\]/g;
+export function extractDomHooks(text: string): string[] {
+  return [...new Set(text.match(DOM_HOOK_RE) ?? [])];
+}
+
+/**
+ * Harness-derived UI gate. The planner will NOT reliably SELECT the dom-behavior pattern
+ * (it stays anchored on curl/grep/vitest — measured 4×), so when a node's brief PINS DOM
+ * hooks we DERIVE a deterministic presence gate ourselves and attach it: assert each pinned
+ * hook renders. This is the "harness does, not coaxes" move — exit-code UI teeth without a
+ * VLM and without trusting the model's gate choice. Presence is the floor (an empty-but-present
+ * element still passes — that residual is the visual judge's job); behavior/quality is layered on top.
+ */
+export function deriveUiGate(node: { brief: string }, contract = ""): Gate | null {
+  // Hooks are pinned in the shared CONTRACT (per CONTRACT-FIRST), not always repeated in
+  // the node brief — so read both.
+  const hooks = extractDomHooks(`${node.brief}\n${contract}`);
+  if (hooks.length === 0) return null; // no pinned hooks → can't gate the DOM deterministically
+  const steps = hooks.map((h) => ({ assert: h, exists: true }));
+  return renderGate("dom-behavior", { url: "http://localhost:3000", steps, serve: "npm start" });
+}
+
+/** A node that renders a frontend surface — its blast_radius/context are UI files. */
+const UI_GLOB_RE = /\.(html|css|jsx|tsx|vue|svelte)\b|\bindex\.html\b|\bpublic\/|\bfrontend\/|\bsrc\/(app|components|ui|pages|styles)\b/i;
+export function looksLikeUi(node: { blast_radius?: string[]; context_globs?: string[] }): boolean {
+  return UI_GLOB_RE.test([...(node.blast_radius ?? []), ...(node.context_globs ?? [])].join(" "));
+}
+
 // --- the pipeline ---
 
 export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
@@ -634,6 +663,19 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     if ((g.type === "command" || g.type === "metric") && g.run) {
       gatesByNode.set(id, { ...g, run: bootstrapGreenfieldNodeGate(tractableGateRun(g.run)) });
     }
+  }
+
+  // 3b. Harness-ATTACH a deterministic DOM presence gate. The planner won't SELECT
+  // dom-behavior (measured 4×); rather than coax it, we derive the gate from the DOM
+  // contract the build conforms to and attach it to the LAST UI node — the one that
+  // assembles the most complete surface — so the served app must render every pinned
+  // hook. Real exit-code UI teeth, no VLM, no reliance on the model's gate choice.
+  // (v1: whole-app check on the final UI node; per-node hook scoping is a follow-on.)
+  const uiNodes = decomposed.nodes.filter(looksLikeUi);
+  if (uiNodes.length > 0) {
+    const target = uiNodes[uiNodes.length - 1]!;
+    const uiGate = deriveUiGate(target, decomposed.contract);
+    if (uiGate) gatesByNode.set(target.id, uiGate);
   }
 
   // 4. extract-claims (incl. implicit assumptions)
