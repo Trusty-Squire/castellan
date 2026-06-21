@@ -77,6 +77,8 @@ describe("gate-pattern library", () => {
       ["perf-threshold", { benchCmd: "node bench.js" }],
       ["metric-threshold", { metricCmd: "python eval.py --threshold 35" }],
       ["human-adjudication", { artifact: "a.png" }],
+      ["dom-behavior", { url: "http://localhost:3000", steps: '[{"assert":"#pot","exists":true}]' }],
+      ["slop-audit", { scope: "dist" }],
     ];
     for (const [id, params] of samples) {
       expect(() => GateSchema.parse(renderGate(id, params)), id).not.toThrow();

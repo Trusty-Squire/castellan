@@ -148,7 +148,39 @@ export const GATE_PATTERNS: GatePattern[] = [
     params: ["artifact"],
     render: (p) => ({ type: "human", artifact: str(p, "artifact"), soft: false }),
   },
+  {
+    id: "dom-behavior",
+    description:
+      "Drive the built page in a headless browser and assert a DOM BEHAVIOR a curl/grep can't see: " +
+      'steps is a JSON array of {goto|wait|read(sel,as,prop?)|click(sel)|press(key)|assert(sel,<op>)}, ' +
+      "where <op> is exists|count|gt|lt|changed|eq|includes|enabled|disabled|animated. Assert against STABLE " +
+      "hooks the brief tells the builder to emit (#pot, [data-action=raise], [data-face]). Use for UI behaviors " +
+      '(after clicking [data-action=raise] #pot increases; [data-face] flips on reveal), NOT for "looks good".',
+    bornFrom: "the strip dogfood — the frontend node fell back to `grep poker-table` and a text page false-passed 'immersive'",
+    params: ["url", "steps"],
+    render: (p) => command(`ser dom-gate ${sq(str(p, "url"))} ${sq(str(p, "steps"))}`),
+  },
+  {
+    id: "slop-audit",
+    description:
+      "Deterministic anti-AI-slop gate (no LLM, no browser): FAILS if the built CSS/HTML contains AI-design " +
+      "tells (gradient-clipped text, glassmorphism blur, the cliche 667eea/764ba2 purple gradient). The taste " +
+      "floor as RULES, not a VLM judge. params: scope (dir/path of built files). Extensible toward the full impeccable.style rule set.",
+    bornFrom: "the taste residual — anti-slop is deterministic rules (impeccable.style: 44 rules, no LLM), not a flaky visual judge",
+    params: ["scope"],
+    render: (p) =>
+      // grep finds a tell (exit 0) -> `!` flips to FAIL; no tell / no files -> PASS.
+      command(`! grep -rIEl --include='*.css' --include='*.html' '${SLOP_TELLS}' ${str(p, "scope")}`),
+  },
 ];
+
+/** A starter set of high-signal AI-slop tells (POSIX ERE). Extend toward impeccable.style's 44. */
+const SLOP_TELLS = "(-webkit-)?background-clip:[[:space:]]*text|backdrop-filter:[[:space:]]*blur|#?(667eea|764ba2)";
+
+/** Single-quote a shell argument (the steps JSON travels intact to `ser dom-gate`). */
+function sq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
 
 const byId = new Map(GATE_PATTERNS.map((g) => [g.id, g]));
 

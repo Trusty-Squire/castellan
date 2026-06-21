@@ -39,6 +39,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdDo(rest);
     case "fix":
       return cmdFix(rest);
+    case "dom-gate":
+      return cmdDomGate(rest);
     case "login":
       return cmdLogin(rest);
     case undefined: {
@@ -121,6 +123,28 @@ function loadChains(missionDir: string, explicit?: string): { chains: ChainsFile
   // One resolver for every command: explicit, cwd, workdir, global config,
   // then built-in defaults (ser runs anywhere — no chains.yaml required).
   return resolveChains(missionDir, explicit);
+}
+
+/** `ser dom-gate <url> <steps-json>` — a frontend behavioral gate (exit 0 = pass). */
+async function cmdDomGate(args: string[]): Promise<number> {
+  const url = args[0];
+  const stepsJson = args[1];
+  if (!url || !stepsJson) throw new SquireError("USAGE", `ser dom-gate <url> '<steps-json>'`);
+  let steps: import("./harness/dom-gate.js").DomStep[];
+  try {
+    steps = JSON.parse(stepsJson);
+    if (!Array.isArray(steps)) throw new Error("steps must be a JSON array");
+  } catch (e) {
+    throw new SquireError("DOM_GATE_STEPS", `invalid steps JSON: ${(e as Error).message}`);
+  }
+  const { runDomGate } = await import("./harness/dom-gate.js");
+  const r = await runDomGate(url, steps);
+  if (!r.ok) {
+    for (const f of r.failures) process.stderr.write(`dom-gate FAIL: ${f}\n`);
+    return 1;
+  }
+  process.stdout.write(`dom-gate OK (${r.ran} step(s) passed)\n`);
+  return 0;
 }
 
 async function cmdRun(args: string[]): Promise<number> {
