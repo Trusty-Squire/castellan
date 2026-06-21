@@ -129,7 +129,9 @@ export interface DeriveV2Input {
   spec?: Spec;
   workdir: string;
   llm: LlmClient;
-  /** Cheap executor model — runs the mechanical stages (decompose, infer-gates, extract-claims). */
+  /** The PLANNER model (chain.knight) — runs the AUTHORING stages (decompose, infer-gates,
+   *  extract-claims). Authoring is premium by design; cheap×reliable is the BUILD loop only.
+   *  Node sizing still targets the cheap `executorModel` envelope below. */
   model: string;
   /** Premium adversary (the knight) for the adversarial-review stage — a cheap model is an
    * incompetent adversary (it "refutes" trivially-true claims). Falls back to `model` if absent. */

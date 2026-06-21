@@ -147,13 +147,19 @@ You are the IDEA phase. Turn a one-line product prompt into a buildable shape.
      "data persists"    → write, kill the process, relaunch, diff the data
      "safe content"     → feed a banned phrase, assert it is blocked (grep -q)
      "card flips on reveal" → assert the element's rotation / visible face changes
-   SELF-CONTAINED GATES: a gate runs from a FRESH process against EMPTY stores, so it must
-   CREATE every precondition it then checks, in the SAME command. If it logs in, REGISTER
-   that user first; if it reads a stored record, WRITE it first; if it needs a server, START
-   it (and tear it down). NEVER assume seeded state — a gate that logs in as a "testuser"
-   nobody created, or reads a key nobody stored, is UNSATISFIABLE by any correct build (a
-   real auth rejects the unknown user) and halts the loop forever. Seed → exercise → assert,
-   all in one command.
+   SELF-CONTAINED GATES — two failure modes to avoid AT ONCE: a gate runs from a FRESH
+   process against EMPTY stores, so (A) it must CREATE every precondition it checks IN THE
+   SAME COMMAND, but (B) it must do so THROUGH THE BUILD'S OWN INTERFACE — never by
+   reimplementing the thing under test. If it logs in, first REGISTER that user by calling
+   the BUILT app's own register/signup endpoint, then log in; if it reads a stored record,
+   first WRITE it through the BUILT API, then read it; start the BUILT server, curl it, tear
+   it down. NEVER assume seeded state (a pre-existing "testuser", a key some other step
+   stored) — that is UNSATISFIABLE by a correct build (real auth rejects the unknown user)
+   and halts the loop forever. And NEVER echo a throwaway Flask/Express/script INTO the
+   gate and test THAT — a gate that writes its own server is a TAUTOLOGY that passes without
+   exercising the build at all. The gate must drive the ARTIFACT THE BUILD PRODUCES. Seed
+   (via the build) → exercise (the build) → assert — all in one command. (This requires the
+   contract to expose a registration/seed path; include one.)
    The ONLY things you may leave UNBUILT are the genuinely INFEASIBLE for this build
    (e.g. camera eye-tracking in a cheap webapp) or irreducibly SUBJECTIVE (a voice's
    "warmth") — and those you SURFACE AS A DECISION (a fork) or flag tier-4 PAIRED

@@ -403,7 +403,12 @@ async function cmdPipeline(argv: string[]): Promise<number> {
 
     layer(1, "spec — your idea → a buildable, gated spec");
     process.stdout.write(st.gray("mapping your idea to clear user stories…") + "\n");
-    const idea = await extractIdea(prompt!, llm, chain.executor);
+    // AUTHORING runs on the knight, not the cheap executor: the idea phase writes the
+    // acceptance GATES, and a cheap author produces gates that are unsatisfiable (logs in
+    // as a user nobody seeds) or tautological (echoes its own server) — the trustysquire
+    // auth_module wall. Per the strategy, cheap×reliable is the BUILD loop only; planning/
+    // authoring is premium. (decompose/infer-gates already use chain.knight.)
+    const idea = await extractIdea(prompt!, llm, chain.knight);
     process.stdout.write("\n" + st.bold("User stories:") + "\n");
     idea.stories.forEach((s, i) => process.stdout.write(`  ${i + 1}. ${s}\n`));
     const io = { print: (l: string) => process.stdout.write(l + "\n"), ask: yes ? (async () => "") : ask };
