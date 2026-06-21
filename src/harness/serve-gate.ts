@@ -24,18 +24,31 @@ export interface ServeGateResult {
   note: string;
 }
 
-/** Poll a TCP port until it accepts a connection (server booted) or the deadline. */
-function waitForPort(port: number, deadline: number): Promise<boolean> {
+/**
+ * Poll a TCP port until it accepts a connection (server booted), the deadline, OR the
+ * server process exits first — a candidate that runs and exits without listening (a
+ * factory-export module loaded by `node <file>`) is abandoned immediately, not waited out.
+ */
+function waitForPort(port: number, deadline: number, server?: ChildProcess): Promise<boolean> {
   return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: boolean): void => {
+      if (!done) {
+        done = true;
+        resolve(v);
+      }
+    };
+    server?.once("exit", () => finish(false));
     const attempt = (): void => {
+      if (done) return;
       const sock = connect(port, "127.0.0.1");
       sock.once("connect", () => {
         sock.destroy();
-        resolve(true);
+        finish(true);
       });
       sock.once("error", () => {
         sock.destroy();
-        if (Date.now() > deadline) resolve(false);
+        if (Date.now() > deadline) finish(false);
         else setTimeout(attempt, 200);
       });
     };
@@ -105,12 +118,23 @@ export function inferStartCommands(workdir: string): string[] {
   const KNOWN_PY = ["app.py", "main.py", "server.py", "api_server.py", "api.py", "run.py", "wsgi.py", "asgi.py", "manage.py"];
   const KNOWN_JS = ["server.js", "index.js", "app.js", "main.js"];
   const PY_SIG = /uvicorn|fastapi|flask|app\.run\(|http\.server|hypercorn|gunicorn|run\(host/i;
-  const JS_SIG = /\.listen\(|createServer|express\(|fastify|new Server/i;
+  // A factory export (createApp/makeApp) counts as a server file even with no top-level
+  // .listen — the contract often pins a testable factory, so we boot it ourselves below.
+  const JS_SIG = /\.listen\(|createServer|express\(|fastify|new Server|createApp|makeApp|buildApp/i;
+  // Boot a module that exports a factory (createApp) or an app but never calls listen():
+  // import it, resolve the app across CJS/ESM + factory/instance shapes, and listen. This
+  // is the harness BRIDGING the testable-factory contract to the live HTTP gate.
+  const factoryBoot = (f: string): string =>
+    `node -e "import('./${f}').then(m=>{const c=m.default??m;const a=(c&&c.createApp&&c.createApp())||(c&&c.makeApp&&c.makeApp())||(c&&c.app)||(typeof c==='function'&&c())||(m.createApp&&m.createApp());a&&a.listen?a.listen(process.env.PORT,'127.0.0.1'):process.exit(7)}).catch(e=>{console.error(String(e));process.exit(7)})"`;
+  const pushJs = (f: string): void => {
+    push(`node ${f}`); // self-listening entrypoint, preferred
+    push(factoryBoot(f)); // fallback: boot a factory/app export that doesn't self-listen
+  };
   for (const f of files) if (f.endsWith(".py") && KNOWN_PY.includes(basename(f))) push(`python3 ${f}`);
-  for (const f of files) if (/\.(js|mjs|cjs)$/.test(f) && KNOWN_JS.includes(basename(f))) push(`node ${f}`);
+  for (const f of files) if (/\.(js|mjs|cjs)$/.test(f) && KNOWN_JS.includes(basename(f))) pushJs(f);
   for (const f of files) {
     if (f.endsWith(".py") && PY_SIG.test(read(f))) push(`python3 ${f}`);
-    else if (/\.(js|mjs|cjs)$/.test(f) && JS_SIG.test(read(f))) push(`node ${f}`);
+    else if (/\.(js|mjs|cjs)$/.test(f) && JS_SIG.test(read(f))) pushJs(f);
   }
   return out;
 }
@@ -150,7 +174,7 @@ export async function runServeGate(opts: {
       detached: true,
       env: { ...process.env, PORT: String(opts.port) }, // nudge servers that read $PORT
     });
-    const up = await waitForPort(opts.port, deadline);
+    const up = await waitForPort(opts.port, deadline, server);
     if (!up) {
       tried.push(start);
       kill(server);

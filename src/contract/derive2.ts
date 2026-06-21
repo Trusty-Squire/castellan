@@ -2,7 +2,7 @@ import { z } from "zod";
 import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
-import { renderGate, serverGatePort, wrapWithServeGate } from "./gate-patterns.js";
+import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -808,18 +808,25 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     chain: input.chainName,
     workdir: ".",
     max_human_checks: input.maxHumanChecks ?? 3,
-    nodes: decomposed.nodes.map((n, i) => ({
-      id: n.id,
-      brief: contractBlock + n.brief + constraintBlock,
-      deps: n.deps,
-      context_globs: n.context_globs,
-      blast_radius: n.blast_radius,
-      gate: gatesByNode.get(n.id)!,
-      budget_usd: nodeBudgets[i]!,
-      // Size every node to the EXECUTOR's envelope (replaces the "1-12" count anchor):
-      // the planner sized the work to it; the runtime pack must honour the same bound.
-      max_context_tokens: envelopeTokens,
-    })),
+    nodes: decomposed.nodes.map((n, i) => {
+      const gate = gatesByNode.get(n.id)!;
+      // A node verified by a live serve-gate needs a runnable, listening server — the
+      // shared contract may have pinned a non-listening factory (the auth-api incoherence).
+      const servePort = gate.type === "command" && gate.run ? gate.run.match(/serve-gate\.mjs --port (\d+)/)?.[1] : undefined;
+      const serveNote = servePort ? `\n\n${serveGateBriefNote(Number(servePort))}` : "";
+      return {
+        id: n.id,
+        brief: contractBlock + n.brief + serveNote + constraintBlock,
+        deps: n.deps,
+        context_globs: n.context_globs,
+        blast_radius: n.blast_radius,
+        gate,
+        budget_usd: nodeBudgets[i]!,
+        // Size every node to the EXECUTOR's envelope (replaces the "1-12" count anchor):
+        // the planner sized the work to it; the runtime pack must honour the same bound.
+        max_context_tokens: envelopeTokens,
+      };
+    }),
   };
   const mission = MissionSchema.safeParse(missionObj);
   if (!mission.success) {

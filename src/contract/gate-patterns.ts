@@ -224,6 +224,24 @@ export function wrapWithServeGate(run: string, port: number): string {
   return `node .squire/serve-gate.mjs --port ${port} --check ${sq(run)}`;
 }
 
+/**
+ * Brief addendum for a node whose gate is a live serve-gate. The contract often pins a
+ * TESTABLE factory (export createApp(), no listen()), which is incoherent with a gate that
+ * curls a LIVE server — the build did exactly as told and the server never came up. Tell
+ * the node to ALSO be runnable as a listening process on the gate's port (the harness will
+ * also try to boot a factory export, but a self-listening entrypoint is the clean path).
+ */
+export function serveGateBriefNote(port: number): string {
+  return [
+    `RUNTIME GATE — this module is verified by STARTING it as a live server and curling it on port ${port}.`,
+    `It MUST be runnable as a process that LISTENS on the port from $PORT (default ${port}) when run directly.`,
+    `If you also export a factory (createApp/create_app) for tests, ADD a run-directly entrypoint that calls it and listens:`,
+    `  Node:   if (require.main === module) (module.exports.createApp ? module.exports.createApp() : module.exports).listen(process.env.PORT || ${port});`,
+    `  Python: if __name__ == "__main__": import os; app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "${port}")))`,
+    `Bind 127.0.0.1 (or 0.0.0.0). The same file may both export the factory AND self-listen — keep it in this node's allowed files.`,
+  ].join("\n");
+}
+
 const byId = new Map(GATE_PATTERNS.map((g) => [g.id, g]));
 
 export function getPattern(id: string): GatePattern {

@@ -94,6 +94,27 @@ describe("runServeGate — boot, wait for the port, run the check, tear down", (
     expect(r.code).toBe(0);
   });
 
+  it("boots a FACTORY export (createApp, no top-level listen) — the contract-coherence case", async () => {
+    const d = workdir();
+    const port = 8794;
+    // The contract pins a testable factory: export createApp(), never call listen().
+    // `node api.js` loads it and exits without serving; the harness must boot the factory.
+    writeFileSync(
+      join(d, "api.js"),
+      "module.exports.createApp = () => require('http').createServer((q,s)=>{s.writeHead(200);s.end('ok')});",
+    );
+    const cmds = inferStartCommands(d);
+    expect(cmds.some((c) => c.includes("import('./api.js')"))).toBe(true); // factory-boot candidate emitted
+    const r = await runServeGate({
+      port,
+      check: `curl -sf http://127.0.0.1:${port}/ -o /dev/null`,
+      workdir: d,
+      timeoutMs: 8000,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.note).toMatch(/import\(/); // booted via the factory fallback, not a self-listen
+  });
+
   it("reports code 3 (not a false pass) when no server can be booted", async () => {
     const d = workdir();
     const r = await runServeGate({ port: 8792, check: "true", workdir: d, timeoutMs: 1500 });
