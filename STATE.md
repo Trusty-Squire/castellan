@@ -128,8 +128,23 @@ it doesn't coax.
   gate. (#4, deferred) web-search spec enrichment via Exa, only if component-knowledge
   proves too stale.
 
+## Trusty Squire build probe (2026-06-21) — serve-gate shipped; contract-coherence is the next target
+Full cheap funnel built the owner's flagship vault against mock providers (3 runs).
+bot-client + secure-storage PASS real gates; auth-api honest-HALTS every run (jidoka
+held — never false-shipped). Peeled a stack of greenfield gaps:
+- serve-gate (src/harness/serve-gate.ts) — boots the built server for HTTP gates the
+  planner won't (boot/wait-port/check/teardown + start-inference; src/ scan). SHIPPED.
+- deps provisioned (owner chose provision over stdlib-nudge).
+- THE REAL WALL (unfixed, deliberate): CONTRACT/GATE INCOHERENCE. The shared contract
+  pins `export createApp(): Express` (testable factory, no listen()), but the harness
+  HTTP gate needs a LIVE server on :8000 — `node src/auth-api.js` exits without
+  listening → "server never came up". NEXT FIX: when a node's gate is a live serve-gate,
+  the contract must require a runnable entrypoint that listens on the gate's port
+  (reconcile factory-export ↔ live server). Even opus halts on this — harness vs itself.
+
 ## Next
-Live gates 2-3 (derive-bench, poker-bench, human/key). Then v0.3 centerpiece
+Contract-coherence fix above (highest-leverage — it's what blocks any full-stack server
+build). Then live gates 2-3 (derive-bench, poker-bench, human/key). Then v0.3 centerpiece
 per thesis: the standing-loop runtime (triggers, queue, recurring missions) —
 now genuinely unattended, since the credential boundary no longer needs a
 human-held key.
