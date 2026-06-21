@@ -160,6 +160,15 @@ You are the IDEA phase. Turn a one-line product prompt into a buildable shape.
    exercising the build at all. The gate must drive the ARTIFACT THE BUILD PRODUCES. Seed
    (via the build) → exercise (the build) → assert — all in one command. (This requires the
    contract to expose a registration/seed path; include one.)
+   SCOPE EACH GATE TO ITS OWN COMPONENT: assert the requirement's OWN output at the NARROWEST
+   boundary it controls. A data-PRODUCER (a bot, an extractor, a library, a storage layer) is
+   gated by checking the DATA it returns or stores directly — NOT by driving a DOWNSTREAM UI
+   or a separate service to observe it. Reaching downstream couples the gate to an artifact
+   ANOTHER node builds, so it cannot pass until that node exists (and a build orders nodes by
+   dependency — the producer runs first). Only the ONE requirement that OWNS an end-to-end
+   surface (the web UI, the public API endpoint) gates by driving that surface. So "the bot
+   extracts the key" is gated by the stored/returned key, NOT by curling the web app's
+   dashboard; "the dashboard shows the key" is the UI requirement's gate.
    The ONLY things you may leave UNBUILT are the genuinely INFEASIBLE for this build
    (e.g. camera eye-tracking in a cheap webapp) or irreducibly SUBJECTIVE (a voice's
    "warmth") — and those you SURFACE AS A DECISION (a fork) or flag tier-4 PAIRED
