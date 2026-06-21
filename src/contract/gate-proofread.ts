@@ -45,6 +45,68 @@ export function gateProofread(gate: string): string[] {
   return issues;
 }
 
+/** localhost/127.0.0.1 ports a gate HITS (curls), excluding external-service base URLs. */
+export function gateLocalPorts(gate: string): number[] {
+  const out = new Set<number>();
+  const re = /(\w*URL\s*=\s*['"]?)?https?:\/\/(?:localhost|127\.0\.0\.1):(\d{2,5})\b/g;
+  for (let m = re.exec(gate); m; m = re.exec(gate)) {
+    if (!m[1]) out.add(Number(m[2]));
+  }
+  return [...out];
+}
+
+/** Does this node build a runnable server (a server-entry file in its blast radius)? */
+export function buildsServer(blastRadius: string[]): boolean {
+  return /\b(server|app|main|index|api|wsgi|asgi)\.(js|mjs|cjs|ts|py)\b/i.test(blastRadius.join(" "));
+}
+
+export interface PortCheckNode {
+  id: string;
+  deps: string[];
+  blastRadius: string[];
+  gateRun: string;
+}
+
+/** Transitive dependency ids of a node. */
+function depClosure(id: string, all: PortCheckNode[]): Set<string> {
+  const byId = new Map(all.map((n) => [n.id, n]));
+  const seen = new Set<string>();
+  const stack = [...(byId.get(id)?.deps ?? [])];
+  while (stack.length) {
+    const d = stack.pop()!;
+    if (seen.has(d)) continue;
+    seen.add(d);
+    stack.push(...(byId.get(d)?.deps ?? []));
+  }
+  return seen;
+}
+
+/**
+ * PORT COHERENCE: a node whose gate boots a server (serve-gate-wrapped on a port) but that
+ * builds NO server itself can't boot it — at runtime serve-gate fails (exit 3) and the build
+ * halts (the bot-module wall: its gate curls :3000, the web app another node builds). Returns
+ * a deterministic repair (depend on the node that builds that server's files, so they exist
+ * when this gate runs and serve-gate can boot them) when acyclic, a warning when not, or null
+ * when the node is coherent (builds its own server, or already depends on the provider).
+ */
+export function portCoherence(
+  node: PortCheckNode,
+  all: PortCheckNode[],
+): { kind: "add-dep"; dep: string } | { kind: "warn"; issue: string } | null {
+  const m = node.gateRun.match(/serve-gate\.mjs --port (\d+)/);
+  if (!m || buildsServer(node.blastRadius)) return null; // not a serve-gate node, or builds its own
+  const port = Number(m[1]);
+  const provider = all.find((n) => n.id !== node.id && buildsServer(n.blastRadius) && gateLocalPorts(n.gateRun).includes(port));
+  if (!provider) {
+    return { kind: "warn", issue: `gate boots a server on :${port} but this node builds no server and no node serves :${port}` };
+  }
+  if (depClosure(node.id, all).has(provider.id)) return null; // provider's files already present at runtime
+  if (depClosure(provider.id, all).has(node.id)) {
+    return { kind: "warn", issue: `gate needs :${port} from "${provider.id}", but depending on it would create a cycle` };
+  }
+  return { kind: "add-dep", dep: provider.id };
+}
+
 /**
  * Repair an unsatisfiable gate via the PLANNER (knight): rewrite it to seed its
  * preconditions FIRST, through the build's own interface, then make the SAME assertion.

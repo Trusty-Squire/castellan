@@ -3,7 +3,7 @@ import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
 import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
-import { gateProofread, repairUnsatisfiableGate } from "./gate-proofread.js";
+import { gateProofread, portCoherence, repairUnsatisfiableGate } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -728,6 +728,21 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     if (g.type !== "command" || !g.run) continue;
     const port = serverGatePort(g.run);
     if (port !== null) gatesByNode.set(id, { ...g, run: wrapWithServeGate(g.run, port) });
+  }
+
+  // 3e. PORT COHERENCE — a node whose serve-gate boots a server it doesn't build can't boot
+  // it (the bot-module wall: its gate curls :3000, the web app ANOTHER node builds). Depend
+  // on the node that builds that server so its files exist when this gate runs (deterministic,
+  // acyclic); warn when a dep would cycle or no node serves the port.
+  {
+    const pnodes = () =>
+      decomposed.nodes.map((n) => ({ id: n.id, deps: n.deps, blastRadius: n.blast_radius, gateRun: gatesByNode.get(n.id)?.run ?? "" }));
+    for (const n of decomposed.nodes) {
+      const all = pnodes();
+      const verdict = portCoherence(all.find((p) => p.id === n.id)!, all);
+      if (verdict?.kind === "add-dep" && !n.deps.includes(verdict.dep)) n.deps.push(verdict.dep);
+      else if (verdict?.kind === "warn") gateWarnings.push({ node: n.id, issues: [verdict.issue] });
+    }
   }
 
   // 4. extract-claims (incl. implicit assumptions)
