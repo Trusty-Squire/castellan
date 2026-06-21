@@ -108,6 +108,19 @@ function firstNumber(v: unknown): number {
   return m ? Number(m[0].replace(/,/g, "")) : NaN;
 }
 
+/** Poll a URL until it responds (server booted) or the deadline; resolves true/false. */
+async function waitForUrl(url: string, deadline: number): Promise<boolean> {
+  for (;;) {
+    try {
+      await fetch(url);
+      return true;
+    } catch {
+      if (Date.now() > deadline) return false;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+}
+
 /** Poll until the selector matches (>0) or the deadline; resolves true/false. */
 async function waitFor(cdp: Cdp, sel: string, deadline: number): Promise<boolean> {
   for (;;) {
@@ -124,7 +137,7 @@ const readExpr = (sel: string, prop: string): string => {
 };
 
 /** Run a dom-behavior gate against a URL. Pure-ish: returns a verdict, never throws on assertion failure. */
-export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutMs?: number; chrome?: string } = {}): Promise<DomGateResult> {
+export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutMs?: number; chrome?: string; serve?: string } = {}): Promise<DomGateResult> {
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const deadline = Date.now() + timeoutMs;
   const chrome = opts.chrome ?? (await findChrome());
@@ -132,11 +145,19 @@ export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutM
 
   const userDir = mkdtempSync(join(tmpdir(), "ser-domgate-"));
   let proc: ChildProcess | undefined;
+  let server: ChildProcess | undefined;
   let cdp: Cdp | undefined;
   const vars = new Map<string, unknown>();
   const failures: string[] = [];
   let ran = 0;
   try {
+    // Optionally boot the app (detached, its own process group) and wait for the URL.
+    if (opts.serve) {
+      server = spawn("sh", ["-c", opts.serve], { stdio: "ignore", detached: true });
+      if (!(await waitForUrl(url, deadline))) {
+        return { ok: false, ran, failures: [`serve command did not make ${url} respond in time: ${opts.serve}`] };
+      }
+    }
     proc = spawn(chrome, [
       "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
       "--remote-debugging-port=0", `--user-data-dir=${userDir}`, url,
@@ -185,6 +206,10 @@ export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutM
   } finally {
     cdp?.close();
     proc?.kill("SIGKILL");
+    // Kill the whole serve process GROUP (npm -> node -> …); detached made it a leader.
+    if (server?.pid) {
+      try { process.kill(-server.pid, "SIGKILL"); } catch { try { server.kill("SIGKILL"); } catch { /* gone */ } }
+    }
     try { rmSync(userDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }
@@ -244,8 +269,12 @@ export function scaffoldDomGate(workdir: string): string {
 async function domGateMain(argv: string[]): Promise<number> {
   const [url, stepsJson] = argv;
   if (!url || !stepsJson) {
-    process.stderr.write("usage: dom-gate <url> '<steps-json>'\n");
+    process.stderr.write("usage: dom-gate <url> '<steps-json>' [--serve '<cmd>']\n");
     return 2;
+  }
+  let serve: string | undefined;
+  for (let i = 2; i < argv.length; i++) {
+    if (argv[i] === "--serve") serve = argv[++i];
   }
   let steps: DomStep[];
   try {
@@ -255,7 +284,7 @@ async function domGateMain(argv: string[]): Promise<number> {
     process.stderr.write(`invalid steps JSON: ${(e as Error).message}\n`);
     return 2;
   }
-  const r = await runDomGate(url, steps);
+  const r = await runDomGate(url, steps, { serve });
   if (!r.ok) {
     for (const f of r.failures) process.stderr.write(`dom-gate FAIL: ${f}\n`);
     return 1;

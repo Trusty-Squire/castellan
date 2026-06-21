@@ -23,6 +23,18 @@ describe("dom-behavior gate pattern", () => {
     expect(rel).toBe(pjoin(".squire", "dom-gate.mjs"));
     expect(existsSync(pjoin(dir, rel))).toBe(true);
   });
+
+  it("accepts steps as a native JSON array (no escaped string) + an optional serve", () => {
+    const g = renderGate("dom-behavior", {
+      url: "http://localhost:3000",
+      steps: [{ read: "[data-testid=pot]", as: "p0" }, { click: "[data-action=raise]" }, { assert: "[data-testid=pot]", gt: "p0" }],
+      serve: "npm start",
+    });
+    expect(g.run).toContain("node .squire/dom-gate.mjs");
+    expect(g.run).toContain('"gt":"p0"'); // the array was stringified into the command
+    expect(g.run).toContain("--serve");
+    expect(g.run).toContain("npm start");
+  });
 });
 
 // ---- real browser run (skipped when no Chrome is present) ----
@@ -104,6 +116,24 @@ describe("runDomGate (real headless Chrome)", () => {
       expect(r.failures.join(" ")).toMatch(/exists=true failed|not found/);
     } finally { s.close(); }
   }, 30000);
+
+  itBrowser("boots the app via `serve`, waits for the URL, drives it, then tears it down", async () => {
+    const port = 38317;
+    const dir = mkdtemp(pjoin(tmp(), "srv-"));
+    const srv = pjoin(dir, "server.mjs");
+    writeFileSync(
+      srv,
+      `import{createServer}from"node:http";const html=${JSON.stringify(PAGE)};` +
+        `createServer((q,s)=>{s.writeHead(200,{"content-type":"text/html"});s.end(html)}).listen(${port},"127.0.0.1");`,
+    );
+    const r = await runDomGate(
+      `http://127.0.0.1:${port}/`,
+      [{ read: "#pot", as: "p0" }, { click: "[data-action=raise]" }, { assert: "#pot", gt: "p0" }],
+      { chrome: chrome!, serve: `node ${srv}`, timeoutMs: 25000 },
+    );
+    expect(r.failures).toEqual([]);
+    expect(r.ok).toBe(true);
+  }, 40000);
 });
 
 // ---- slop-audit: deterministic anti-slop gate (no browser) ----

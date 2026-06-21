@@ -17,10 +17,10 @@ export interface GatePattern {
   params: string[];
   /** Optional parameter names. */
   optionalParams?: string[];
-  render: (p: Record<string, string | string[]>) => Gate;
+  render: (p: Record<string, unknown>) => Gate;
 }
 
-const str = (p: Record<string, string | string[]>, key: string): string => {
+const str = (p: Record<string, unknown>, key: string): string => {
   const v = p[key];
   if (typeof v !== "string" || v.length === 0) {
     throw new SquireError("GATE_PATTERN_PARAM", `pattern param "${key}" must be a non-empty string`);
@@ -28,12 +28,21 @@ const str = (p: Record<string, string | string[]>, key: string): string => {
   return v;
 };
 
-const list = (p: Record<string, string | string[]>, key: string): string[] => {
+const list = (p: Record<string, unknown>, key: string): string[] => {
   const v = p[key];
-  if (!Array.isArray(v) || v.length === 0) {
-    throw new SquireError("GATE_PATTERN_PARAM", `pattern param "${key}" must be a non-empty list`);
+  if (!Array.isArray(v) || v.length === 0 || !v.every((x) => typeof x === "string")) {
+    throw new SquireError("GATE_PATTERN_PARAM", `pattern param "${key}" must be a non-empty list of strings`);
   }
-  return v;
+  return v as string[];
+};
+
+/** dom-behavior steps may arrive as a native JSON array (preferred — the cheap model
+ *  emits it directly) OR a JSON string. Return the JSON string the runner consumes. */
+const stepsArg = (p: Record<string, unknown>, key: string): string => {
+  const v = p[key];
+  if (typeof v === "string" && v.length > 0) return v;
+  if (Array.isArray(v) && v.length > 0) return JSON.stringify(v);
+  throw new SquireError("GATE_PATTERN_PARAM", `pattern param "${key}" must be a non-empty steps array (or JSON string)`);
 };
 
 const command = (run: string): Gate => ({ type: "command", run, soft: false });
@@ -151,16 +160,22 @@ export const GATE_PATTERNS: GatePattern[] = [
   {
     id: "dom-behavior",
     description:
-      "Drive the built page in a headless browser and assert a DOM BEHAVIOR a curl/grep can't see: " +
-      'steps is a JSON array of {goto|wait|read(sel,as,prop?)|click(sel)|press(key)|assert(sel,<op>)}, ' +
-      "where <op> is exists|count|gt|lt|changed|eq|includes|enabled|disabled|animated. Assert against STABLE " +
-      "hooks the brief tells the builder to emit (#pot, [data-action=raise], [data-face]). Use for UI behaviors " +
-      '(after clicking [data-action=raise] #pot increases; [data-face] flips on reveal), NOT for "looks good".',
+      "Drive the built page in a headless browser and assert a DOM BEHAVIOR a curl/grep can't see. " +
+      'params: url; steps (a JSON ARRAY of {goto|wait|read(sel,as,prop?)|click(sel)|press(key)|assert(sel,<op>)} ' +
+      "where <op> is exists|count|gt|lt|changed|eq|includes|enabled|disabled|animated); and OPTIONAL serve (a shell " +
+      "command that boots the app on url, e.g. \"npm start\" — the runner waits for url then drives, then kills it). " +
+      "Assert against the STABLE hooks the contract pins ([data-testid=pot], [data-action=raise], [data-card]). " +
+      'Example params: {"url":"http://localhost:3000","serve":"npm start","steps":[{"read":"[data-testid=pot]","as":"p0"},' +
+      '{"click":"[data-action=raise]"},{"assert":"[data-testid=pot]","gt":"p0"}]}. Use for UI behaviors, NOT for "looks good".',
     bornFrom: "the strip dogfood — the frontend node fell back to `grep poker-table` and a text page false-passed 'immersive'",
     params: ["url", "steps"],
+    optionalParams: ["serve"],
     // The runner is scaffolded into .squire/ (git-clean-excluded) by the harness, so the
     // gate runs with bare `node` — no `ser` on PATH, no deps in the build env.
-    render: (p) => command(`node .squire/dom-gate.mjs ${sq(str(p, "url"))} ${sq(str(p, "steps"))}`),
+    render: (p) => {
+      const serve = typeof p.serve === "string" && p.serve.length > 0 ? ` --serve ${sq(p.serve)}` : "";
+      return command(`node .squire/dom-gate.mjs ${sq(str(p, "url"))} ${sq(stepsArg(p, "steps"))}${serve}`);
+    },
   },
   {
     id: "slop-audit",
@@ -198,7 +213,7 @@ export function getPattern(id: string): GatePattern {
 }
 
 /** Render a pattern into a Gate, validating required params. */
-export function renderGate(id: string, params: Record<string, string | string[]>): Gate {
+export function renderGate(id: string, params: Record<string, unknown>): Gate {
   const pattern = getPattern(id);
   for (const required of pattern.params) {
     if (!(required in params)) {
