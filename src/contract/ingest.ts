@@ -147,6 +147,13 @@ You are the IDEA phase. Turn a one-line product prompt into a buildable shape.
      "data persists"    → write, kill the process, relaunch, diff the data
      "safe content"     → feed a banned phrase, assert it is blocked (grep -q)
      "card flips on reveal" → assert the element's rotation / visible face changes
+   SELF-CONTAINED GATES: a gate runs from a FRESH process against EMPTY stores, so it must
+   CREATE every precondition it then checks, in the SAME command. If it logs in, REGISTER
+   that user first; if it reads a stored record, WRITE it first; if it needs a server, START
+   it (and tear it down). NEVER assume seeded state — a gate that logs in as a "testuser"
+   nobody created, or reads a key nobody stored, is UNSATISFIABLE by any correct build (a
+   real auth rejects the unknown user) and halts the loop forever. Seed → exercise → assert,
+   all in one command.
    The ONLY things you may leave UNBUILT are the genuinely INFEASIBLE for this build
    (e.g. camera eye-tracking in a cheap webapp) or irreducibly SUBJECTIVE (a voice's
    "warmth") — and those you SURFACE AS A DECISION (a fork) or flag tier-4 PAIRED

@@ -181,6 +181,19 @@ export const CONTRACT_FIRST =
   "FOR A UI PRODUCT, the contract MUST also include a DOM CONTRACT and behaviors must be OWNED, not split away: (1) pin STABLE selector hooks for the interactive elements as data-* attributes or ids (e.g. [data-testid=pot], [data-action=raise], [data-card], [data-disabled-when-not-turn]); (2) state each key INTERACTIVE BEHAVIOR as an observable cause→effect on those hooks (clicking [data-action=raise] increases [data-testid=pot]; [data-card] flips face-up on reveal; a control is disabled off-turn). Do NOT carve a UI into a render-only node plus a logic node such that NO node owns the interaction — the node that renders an interactive surface OWNS its behavior (wire it to the data/API it needs) so its gate can drive the page and assert the effect. A frontend brief that only 'renders DOM elements' with no named hooks and no cause→effect behavior is REJECTED — its gate decays to grepping for a class name. (3) The UI build MUST expose a START COMMAND — `npm start` that serves the app on a fixed localhost port — so the gate can boot it, drive it, and tear it down; name that port in the contract.";
 
 /**
+ * GATE/NODE COHERENCE — the auth_module failure: the decomposer mapped an INTEGRATION
+ * requirement (a gate that boots a live server and curls a login→keys→credential flow)
+ * onto a narrow LIBRARY node (build auth.py), with deps=[] and context=[] and a
+ * blast_radius that couldn't even write the server. No model — cheap OR frontier — can
+ * pass a gate whose acceptance exercises modules and state the node can neither build,
+ * see, nor seed. A node FAILS FOREVER (honest-halt, wasted ladder) when its acceptance
+ * is unsatisfiable within its own scope, so the decomposer must keep gate granularity
+ * and node granularity aligned.
+ */
+export const COHERENCE_RULE =
+  "GATE/NODE COHERENCE (a node can NEVER pass if its acceptance isn't satisfiable within its own scope — the worst plan bug): every requirement you map to a node (its `requirement` field) MUST be satisfiable BY THAT NODE ALONE — the node's brief + blast_radius + deps + context_globs must let ONE executor build and RUN everything that requirement's acceptance check exercises. A requirement whose check starts a LIVE SERVER and curls endpoints, or otherwise drives an END-TO-END flow spanning modules, is an INTEGRATION requirement: map it to ONE node that (a) builds the runnable server in its OWN blast_radius (it can write the server file), (b) DEPENDS ON (deps) and PACKS (context_globs) every module that flow wires together, and (c) whose own check sets up its preconditions. NEVER map a live-server / end-to-end requirement onto a narrow LIBRARY module (an auth helper, a storage helper) that cannot run the server or see the other modules — that node can never pass. A library module gets a requirement whose check is a UNIT test of that module's OWN exports. Requirements that only make sense together (a login and the keys it then returns) belong on the SAME integration node, not split across module nodes.";
+
+/**
  * Node SIZING — replaces the "1-12 nodes" count anchor. LLM outputs anchor hard to
  * an embedded number (~88% of the time per anchoring research, and prompt-softening
  * doesn't fix it), so we do NOT ask for a count: node count is whatever falls out of
@@ -507,7 +520,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         .join(", ")}"). Do NOT add nodes just to reach a one-node-per-requirement mapping; size nodes by the envelope rule above, not by the requirement count.`
     : "";
   const decomposeSystem =
-    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into a DAG of nodes. ${SIZING_RULE} ${envelopeRule(executor, envelopeTokens)} Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${CONTRACT_FIRST} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
+    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into a DAG of nodes. ${SIZING_RULE} ${envelopeRule(executor, envelopeTokens)} Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${CONTRACT_FIRST} ${COHERENCE_RULE} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
   const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
   let decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
 
