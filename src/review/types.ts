@@ -107,3 +107,26 @@ export const VisualChoiceSchema = z.object({
   rationale: z.string().default(""),
 });
 export type VisualChoice = z.infer<typeof VisualChoiceSchema>;
+
+/**
+ * Per-defect closure verdict from the ADVERSARIAL closure judge. Unlike the holistic
+ * visual judge, this rules on a FROZEN list of specific defects: is each one fixed?
+ * "unsure" is abstention — treated as not-fixed downstream, never a false pass. The
+ * preprocess maps the synonyms a model reaches for ("resolved", "open", "unknown").
+ */
+export const DefectClosureSchema = z.object({
+  id: z.string().min(1),
+  status: z.preprocess((v) => {
+    const s = typeof v === "string" ? v.toLowerCase().trim() : v;
+    if (s === "resolved" || s === "closed" || s === "ok" || s === "pass" || s === "done") return "fixed";
+    if (s === "open" || s === "still present" || s === "not fixed" || s === "unfixed" || s === "fail") return "present";
+    if (s === "unknown" || s === "uncertain" || s === "unclear" || s === "n/a" || s === "na") return "unsure";
+    return s;
+  }, z.enum(["fixed", "present", "unsure"])),
+  evidence: z.string().default(""),
+});
+export type DefectClosure = z.infer<typeof DefectClosureSchema>;
+
+export const DefectClosureListSchema = z.object({
+  defects: z.array(DefectClosureSchema).default([]),
+});

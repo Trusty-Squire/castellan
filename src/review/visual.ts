@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import { execa } from "execa";
 import type { LlmClient } from "../llm/types.js";
 import { tryParseJson } from "../contract/derive.js";
-import { VisualChoiceSchema, VisualVerdictSchema, type VisualVerdict } from "./types.js";
-import { VISUAL_COMPARISON_SYSTEM, VISUAL_JUDGE_SYSTEM } from "./prompts.js";
+import { DefectClosureListSchema, VisualChoiceSchema, VisualVerdictSchema, type DefectClosure, type VisualVerdict } from "./types.js";
+import { VISUAL_CLOSURE_SYSTEM, VISUAL_COMPARISON_SYSTEM, VISUAL_JUDGE_SYSTEM } from "./prompts.js";
 
 export interface RenderResult {
   ok: boolean;
@@ -266,6 +266,97 @@ export function blockingFixes(v: VisualVerdict): { note: string; fix: string }[]
     for (const f of highs) push(f.note, f.fix || f.note);
   }
   return out;
+}
+
+/**
+ * A load-bearing defect frozen at the FIRST blocking round. The rebuild loop must
+ * CLOSE this exact list; later rounds verify closure of THESE (adversarially) and do
+ * NOT get to invent fresh blockers — so a judge that "always finds a flaw" can't loop
+ * forever, and the load-bearing defect can't be lost under a pile of new nitpicks.
+ */
+export interface FrozenDefect {
+  id: string;
+  note: string;
+  fix: string;
+}
+
+/**
+ * PURE: freeze the fixes that actually blocked ship into a stable, id'd list. Takes
+ * the SAME `{note,fix}` list the audit blocked on (blockingFixes / visualAuditSummary)
+ * so the frozen list is exactly what blocked — no re-derivation drift.
+ */
+export function freezeDefects(fixes: { note: string; fix: string }[]): FrozenDefect[] {
+  return fixes.map((f, i) => ({ id: `d${i + 1}`, note: f.note, fix: f.fix }));
+}
+
+/**
+ * PURE: the frozen defects NOT proven fixed. "present" AND "unsure" both count as
+ * unresolved (abstention over false-pass), as does any defect the judge omitted or a
+ * null closure (the verifier couldn't run → nothing is proven fixed). Ship only when
+ * this returns [].
+ */
+export function unresolvedDefects(frozen: FrozenDefect[], closure: DefectClosure[] | null): FrozenDefect[] {
+  if (closure === null) return [...frozen];
+  const fixed = new Set(closure.filter((c) => c.status === "fixed").map((c) => c.id));
+  return frozen.filter((d) => !fixed.has(d.id));
+}
+
+/**
+ * The ADVERSARIAL closure check: shows the judge ONLY the frozen defect list + the
+ * latest screenshot and asks, per defect, whether it is fixed. Defaults to "present",
+ * abstains ("unsure") rather than guessing fixed, and raises no new issues — the fix
+ * for the loop that kept polishing while the load-bearing defect survived. Returns []
+ * for an empty list, null on persistent failure (caller treats null as "unresolved").
+ * Mirrors visualReview's retry/timeout machinery — a transient blip must not read as
+ * a real "couldn't verify".
+ */
+export async function reviewClosure(
+  shot: RenderResult,
+  frozen: FrozenDefect[],
+  llm: LlmClient,
+  model: string,
+  timeoutMs = DEFAULT_VISUAL_REVIEW_TIMEOUT_MS,
+  attempts = 3,
+): Promise<DefectClosure[] | null> {
+  if (frozen.length === 0) return [];
+  if (!shot.ok || (!shot.images?.length && !shot.dataUrl)) return null;
+  const images = shot.images?.length
+    ? shot.images
+    : [{ kind: "desktop" as const, screenshotPath: shot.screenshotPath ?? "", dataUrl: shot.dataUrl! }];
+  const user = [
+    "PREVIOUSLY-IDENTIFIED DEFECTS (rule on EACH; raise no new ones):",
+    frozen.map((d) => `  ${d.id}. ${d.note}${d.fix ? ` — expected fix: ${d.fix}` : ""}`).join("\n"),
+    `SCREENSHOTS: ${images.map((img, i) => `${i + 1}. ${img.kind} viewport`).join("  ")}`,
+    "The attached images are the LATEST rebuild. For each defect, decide whether the screenshot PROVES it fixed.",
+  ].join("\n\n");
+  const total = Math.max(1, attempts);
+  for (let attempt = 1; attempt <= total; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    timer.unref?.();
+    try {
+      const res = await llm.complete({
+        model,
+        system: VISUAL_CLOSURE_SYSTEM,
+        user,
+        json: true,
+        maxTokens: 1500,
+        signal: ac.signal,
+        images: images.map((img) => ({ dataUrl: img.dataUrl })),
+      });
+      const parsed = tryParseJson(res.text);
+      if (parsed.ok) {
+        const checked = DefectClosureListSchema.safeParse(parsed.value);
+        if (checked.success) return checked.data.defects;
+      }
+    } catch {
+      // network / 5xx / abort (timeout): transient — fall through to retry
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < total) await new Promise((r) => setTimeout(r, 400 * attempt).unref?.());
+  }
+  return null;
 }
 
 /** Non-blocking polish prompts: enough friction to keep searching, capped to stay cheap. */

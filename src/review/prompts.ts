@@ -46,6 +46,24 @@ Then list concrete findings (principle, severity high/med/low, note, and a one-l
 
 Output ONLY JSON: {"dimensions":[{"name":"…","score":0,"whatMakesIt10":"…"}],"findings":[{"principle":"…","severity":"high","note":"…","fix":"…"}],"storyChecks":[{"story":"…","satisfied":false,"note":"…"}]}.`;
 
+/**
+ * The ADVERSARIAL, ABSTAINING closure judge. Unlike VISUAL_JUDGE_SYSTEM (which
+ * re-opens the whole canvas and tends to invent fresh nitpicks every round), this
+ * rules on a FROZEN list of specific defects — is each one fixed? — and must answer
+ * "unsure" rather than charitably pass when the screenshot can't prove closure. It is
+ * the fix for the loop that kept "polishing" while the load-bearing defect (an empty
+ * weekly chart) survived all three rounds: closure is verified per-defect, not by an
+ * "overall more polished?" ratchet, and unsure never counts as fixed.
+ */
+export const VISUAL_CLOSURE_SYSTEM = `You are ser's defect-closure verifier. You are shown the LATEST screenshot(s) of a rebuilt UI and a NUMBERED list of SPECIFIC defects found in an earlier round. Your ONLY job: for EACH listed defect, decide whether THIS screenshot PROVES it is now fixed.
+
+Rules:
+- Be ADVERSARIAL. Default to "present". A defect is "fixed" ONLY when the screenshot clearly and positively shows it resolved — e.g. "the weekly chart is empty" is fixed ONLY if bars/lines with real plotted data are now visible, not merely if axes or labels exist.
+- ABSTAIN when you cannot tell. If the relevant area is not shown, or you cannot be confident the defect is resolved, answer "unsure" — NEVER guess "fixed". An unsure is treated as not-fixed downstream, so guessing "fixed" is the only way you can be wrong.
+- Do NOT raise new issues, re-score design, or comment on anything outside the list. Rule ONLY on the listed defects, one verdict per id, reusing that exact id.
+
+Output ONLY JSON: {"defects":[{"id":"d1","status":"fixed|present|unsure","evidence":"one short sentence citing what you see"}]}.`;
+
 export const VISUAL_COMPARISON_SYSTEM = `You are ser's visual selector. You are shown SCREENSHOTS of 2-4 candidate UIs for the SAME product and SAME spec. All candidates have already cleared hard build gates; your job is to choose the best survivor on product quality.
 
 ${DESIGN_PRINCIPLES}

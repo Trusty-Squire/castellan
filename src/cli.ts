@@ -12,7 +12,7 @@ import { SquireError } from "./errors.js";
 import type { Engine } from "./engine/types.js";
 import type { LlmClient } from "./llm/types.js";
 import type { Audit } from "./contract/review.js";
-import type { RenderResult } from "./review/visual.js";
+import type { FrozenDefect, RenderResult } from "./review/visual.js";
 import type { VisualVerdict } from "./review/types.js";
 import { validateMissionFile } from "./contract/validate.js";
 import { sanitizeInput } from "./term.js";
@@ -467,6 +467,11 @@ async function cmdPipeline(argv: string[]): Promise<number> {
 
   for (let outer = 1; outer <= maxOuterLoops; outer++) {
     let pendingChange: { stories: string[] } | undefined;
+    // The load-bearing defects frozen at the FIRST blocking round. Once set, later
+    // rebuilds VERIFY closure of this exact list (adversarially, abstaining) instead
+    // of re-deriving blockers from a fresh holistic verdict — so the judge can't
+    // invent new nitpicks each round and the loop converges or halts honestly.
+    let frozenDefects: FrozenDefect[] | null = null;
     const feasibleCandidates: Array<{
       attempt: number;
       snapshotDir: string;
@@ -563,7 +568,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     // duration library failed a "render a developer-tool UI" review). The gates
     // already verified its logic.
       let fixes: { note: string; fix: string }[] = [];
-      const { renderBuild, visualReview, polishFixes, qualityScore } = await import("./review/visual.js");
+      const { renderBuild, visualReview, polishFixes, qualityScore, freezeDefects, reviewClosure, unresolvedDefects } = await import("./review/visual.js");
       const { isExplicitlyNonVisual } = await import("./review/frontend-floor.js");
       // Gate off the STABLE thesis (a library/CLI/SDK has no UI), not the stories —
       // a rebuild can fold visual-fix stories into a library's spec and bogusly flip
@@ -597,7 +602,29 @@ async function cmdPipeline(argv: string[]): Promise<number> {
         for (const d of summary.lowDims) {
           process.stdout.write(`  ${st.yellow(`${d.score}/10`)} ${st.gray("design ")} ${d.name}\n`);
         }
-        fixes = summary.fixes;
+        if (frozenDefects === null) {
+          // Round 1: no frozen contract yet — the holistic judge establishes what
+          // blocks. (It freezes below if anything does.)
+          fixes = summary.fixes;
+        } else if (frozenDefects.length === 0) {
+          // The frozen list was already fully closed in an earlier round; we're only
+          // polishing now. Nothing blocks — a fresh holistic nitpick must NOT re-block
+          // an already-verified build (that was the never-converges bug).
+          fixes = [];
+        } else {
+          // Closing the frozen list: do NOT re-derive blockers holistically (that lets
+          // the judge invent fresh nitpicks and never converge). ADVERSARIALLY verify
+          // closure of THIS exact list — "unsure" counts as still-open (abstention over
+          // false-pass). New findings become polish, never blockers.
+          const closure = await reviewClosure(shot, frozenDefects, visualClient.llm, visualClient.model);
+          const open = unresolvedDefects(frozenDefects, closure);
+          for (const d of frozenDefects) {
+            const closed = !open.some((o) => o.id === d.id);
+            process.stdout.write(`  ${closed ? st.green("✓ closed") : st.yellow("✗ open  ")} ${st.gray(d.note)}\n`);
+          }
+          fixes = open.map((d) => ({ note: d.note, fix: d.fix }));
+          if (open.length === 0) frozenDefects = []; // load-bearing list closed → polish only from here
+        }
         if (fixes.length === 0) {
           const score = qualityScore(verdict);
           process.stdout.write(st.green(`  feasible UI candidate ${attempt} captured`) + st.gray(` (quality ${score})`) + "\n");
@@ -613,7 +640,10 @@ async function cmdPipeline(argv: string[]): Promise<number> {
         }
       }
 
-      // The audit blocks ship. LOOP if we have attempts left; halt only when spent.
+      // The audit blocks ship. Freeze the load-bearing defects on the FIRST block so
+      // every later round verifies closure of THIS exact list, not a fresh holistic
+      // re-judge. LOOP if we have attempts left; halt only when spent.
+      if (!frozenDefects) frozenDefects = freezeDefects(fixes);
       process.stdout.write(st.yellow(`\nvisual review blocks ship — the built UI doesn't deliver the spec yet:\n`));
       for (const f of fixes) process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
       if (attempt < maxRebuilds) {
