@@ -199,6 +199,28 @@ function sq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/** First localhost/127.0.0.1 port a command gate depends on, or null. */
+const LOCALHOST_PORT_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d{2,5})\b/;
+
+/**
+ * Does this command gate curl a localhost server it never boots? Returns the port to
+ * wrap, or null. Skips gates that ALREADY boot something (a serve/dom runner, an
+ * inline server launch, `&`-backgrounding) so we never double-boot, and gates that
+ * only hit EXTERNAL hosts (an env-var base URL, a real domain) — those need no server.
+ */
+export function serverGatePort(run: string): number | null {
+  if (/serve-gate\.mjs|dom-gate\.mjs|--serve\b|npm (run )?(start|dev)|uvicorn|flask run|gunicorn|hypercorn|\.listen\(|http\.server|&\s*(sleep|\w)|nohup/.test(run)) {
+    return null;
+  }
+  const m = run.match(LOCALHOST_PORT_RE);
+  return m ? Number(m[1]) : null;
+}
+
+/** Wrap a localhost-curl gate so the harness boots the built server, waits, checks, tears down. */
+export function wrapWithServeGate(run: string, port: number): string {
+  return `node .squire/serve-gate.mjs --port ${port} --check ${sq(run)}`;
+}
+
 const byId = new Map(GATE_PATTERNS.map((g) => [g.id, g]));
 
 export function getPattern(id: string): GatePattern {

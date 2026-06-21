@@ -2,7 +2,7 @@ import { z } from "zod";
 import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
-import { renderGate } from "./gate-patterns.js";
+import { renderGate, serverGatePort, wrapWithServeGate } from "./gate-patterns.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -676,6 +676,18 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     const target = uiNodes[uiNodes.length - 1]!;
     const uiGate = deriveUiGate(target, decomposed.contract);
     if (uiGate) gatesByNode.set(target.id, uiGate);
+  }
+
+  // 3c. Harness-BOOT any HTTP gate that curls a localhost server it never starts. The
+  // planner writes `curl localhost:8000/...` with no boot step, so the gate is
+  // un-passable by construction (connection refused) regardless of the built code — the
+  // trustysquire build honest-halted on exactly this. Same fix as the DOM gate's
+  // `--serve`, generalized to API gates: wrap so the harness boots the server, waits for
+  // the port, runs the curls, tears down. (DOM gates already serve-wrap → skipped here.)
+  for (const [id, g] of gatesByNode) {
+    if (g.type !== "command" || !g.run) continue;
+    const port = serverGatePort(g.run);
+    if (port !== null) gatesByNode.set(id, { ...g, run: wrapWithServeGate(g.run, port) });
   }
 
   // 4. extract-claims (incl. implicit assumptions)
