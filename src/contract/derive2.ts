@@ -3,6 +3,7 @@ import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
 import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
+import { gateProofread, repairUnsatisfiableGate } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -680,6 +681,30 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     }
   }
 
+  // 3d. PROOFREAD gate satisfiability — catch a gate that READS state it never seeds (an
+  // empty SELECT, a login as a user nobody registers) BEFORE the build burns its whole
+  // escalation ladder on an unwinnable check. Authored gates slip this even from the knight
+  // (measured across the trustysquire probe). Repair once via the planner (seed through the
+  // build's own interface); collect anything still broken to surface in the readback.
+  const gateWarnings: { node: string; issues: string[] }[] = [];
+  for (const [id, g] of gatesByNode) {
+    if (g.type !== "command" || !g.run) continue;
+    const issues = gateProofread(g.run);
+    if (issues.length === 0) continue;
+    const node = decomposed.nodes.find((n) => n.id === id);
+    const repaired = await repairUnsatisfiableGate(llm, model, {
+      brief: node?.brief ?? "",
+      contract: decomposed.contract,
+      gate: g.run,
+      issues,
+    });
+    if (repaired && gateProofread(repaired).length === 0) {
+      gatesByNode.set(id, { ...g, run: repaired });
+    } else {
+      gateWarnings.push({ node: id, issues });
+    }
+  }
+
   // 3b. Harness-ATTACH a deterministic DOM presence gate. The planner won't SELECT
   // dom-behavior (measured 4×); rather than coax it, we derive the gate from the DOM
   // contract the build conforms to and attach it to the LAST UI node — the one that
@@ -849,7 +874,12 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   }
 
   // 7. readback
-  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints);
+  const proofreadNote =
+    gateWarnings.length > 0
+      ? `\n\n⚠ gate proofreader could not repair ${gateWarnings.length} unsatisfiable gate(s) — these will halt the build honestly:\n` +
+        gateWarnings.map((w) => `  - ${w.node}: ${w.issues.join("; ")}`).join("\n")
+      : "";
+  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints) + proofreadNote;
   return {
     ok: true,
     mission: mission.data,

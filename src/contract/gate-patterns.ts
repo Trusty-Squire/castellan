@@ -199,9 +199,6 @@ function sq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-/** First localhost/127.0.0.1 port a command gate depends on, or null. */
-const LOCALHOST_PORT_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d{2,5})\b/;
-
 /**
  * Does this command gate curl a localhost server it never boots? Returns the port to
  * wrap, or null. Skips gates that ALREADY boot something (a serve/dom runner, an
