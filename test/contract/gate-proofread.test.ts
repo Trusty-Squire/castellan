@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gateProofread, portCoherence, buildsServer, gateLocalPorts, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, type PortCheckNode } from "../../src/contract/gate-proofread.js";
 
 describe("gateProofread — catch a gate that reads state it never seeds", () => {
   it("FLAGS a SELECT-WHERE with no seed (the crypto_storage halt)", () => {
@@ -73,5 +73,35 @@ describe("portCoherence — a node whose gate boots a server it doesn't build", 
     const v = portCoherence(a, [a, b]);
     expect(v?.kind).toBe("warn");
     expect((v as { issue: string }).issue).toMatch(/cycle/i);
+  });
+});
+
+describe("toolingCoherence — equip a node with the files/manifest its gate needs", () => {
+  it("extractGateFiles pulls scripts + required modules, skips harness scaffolds", () => {
+    expect(extractGateFiles("VOUCHFLOW_BASE_URL=x ./run-bot.sh vouchflow && curl http://localhost:3000/x")).toContain("run-bot.sh");
+    expect(extractGateFiles("node -e \"require('./storage'); require('./crypto')\"")).toEqual(expect.arrayContaining(["storage.js", "crypto.js"]));
+    expect(extractGateFiles("node .squire/serve-gate.mjs --port 3000 --check 'x'")).toEqual([]); // scaffold excluded
+  });
+
+  it("ADDS a missing script the gate runs but no node in scope builds (bot-module ./run-bot.sh)", () => {
+    const botModule: PortCheckNode = { id: "bot-module", deps: ["web-app"], blastRadius: ["bot.js", "test/bot.test.js"], gateRun: "node .squire/serve-gate.mjs --port 3000 --check 'VOUCHFLOW_BASE_URL=x ./run-bot.sh vouchflow a b && curl http://localhost:3000/api/keys'" };
+    const webApp: PortCheckNode = { id: "web-app", deps: [], blastRadius: ["app.js", "package.json"], gateRun: "node .squire/dom-gate.mjs 'http://localhost:3000' '[]'" };
+    expect(toolingCoherence(botModule, [botModule, webApp])).toContain("run-bot.sh");
+  });
+
+  it("ADDS package.json when a node runs its own JS but can't install a dep (crypto-storage SQLite trap)", () => {
+    const cs: PortCheckNode = { id: "crypto-storage", deps: [], blastRadius: ["crypto.js", "storage.js", "data/.gitkeep"], gateRun: "node -e \"require('./storage').create_user('a','b')\" && sqlite3 data/app.db 'SELECT 1'" };
+    expect(toolingCoherence(cs, [cs])).toContain("package.json");
+  });
+
+  it("ADDS nothing when the node already builds its files and has a manifest", () => {
+    const webApp: PortCheckNode = { id: "web-app", deps: [], blastRadius: ["app.js", "package.json"], gateRun: "node .squire/dom-gate.mjs 'http://localhost:3000' '[]'" };
+    expect(toolingCoherence(webApp, [webApp])).toEqual([]);
+  });
+
+  it("does NOT re-add a script a DEPENDENCY already builds", () => {
+    const integration: PortCheckNode = { id: "integration", deps: ["bot"], blastRadius: ["run-bot.sh", "test/i.test.js"], gateRun: "./run-bot.sh x && node -e \"1\"" };
+    const bot: PortCheckNode = { id: "bot", deps: [], blastRadius: ["bot.js"], gateRun: "node -e \"require('./bot')\"" };
+    expect(toolingCoherence(integration, [integration, bot])).not.toContain("run-bot.sh");
   });
 });

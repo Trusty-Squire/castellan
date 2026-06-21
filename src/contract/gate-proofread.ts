@@ -107,6 +107,54 @@ export function portCoherence(
   return { kind: "add-dep", dep: provider.id };
 }
 
+/** Local SOURCE files a gate runs/requires (scripts + modules), excluding harness scaffolds. */
+export function extractGateFiles(gate: string): string[] {
+  const out = new Set<string>();
+  const add = (f?: string): void => {
+    if (!f) return;
+    const x = f.replace(/^\.\//, "");
+    if (!x.startsWith(".squire/")) out.add(x);
+  };
+  for (const m of gate.matchAll(/\.\/([\w./-]+\.(?:sh|js|mjs|cjs|ts|py))\b/g)) add(m[1]);
+  for (const m of gate.matchAll(/\b(?:node|python3?|bash|sh)\s+([\w./-]+\.(?:sh|js|mjs|cjs|ts|py))\b/g)) add(m[1]);
+  for (const m of gate.matchAll(/require\((['"])\.\/([\w./-]+)\1\)/g)) {
+    const name = m[2];
+    if (name) add(name.includes(".") ? name : `${name}.js`);
+  }
+  return [...out];
+}
+
+/**
+ * TOOLING COHERENCE: a node can't pass a gate that runs a file it doesn't build (bot-module's
+ * `./run-bot.sh`, which lives in another node) or that needs a dependency it can't install (the
+ * crypto-storage SQLite trap — its gate writes a DB from Node but its blast_radius has no
+ * package.json to install a driver). Returns the files to ADD to the node's blast_radius so it
+ * is EQUIPPED to build/install what its own gate requires (widening a radius is safe — it
+ * permits, never forces). Empty array = already equipped.
+ */
+export function toolingCoherence(node: PortCheckNode, all: PortCheckNode[]): string[] {
+  const byId = new Map(all.map((n) => [n.id, n]));
+  const inScope = new Set<string>(node.blastRadius);
+  for (const dep of depClosure(node.id, all)) for (const f of byId.get(dep)?.blastRadius ?? []) inScope.add(f);
+  const basenames = new Set([...inScope].map((f) => f.split("/").pop()!));
+  const add = new Set<string>();
+
+  // 1. a source file the gate runs that no node in scope builds → equip this node to build it
+  const referenced = extractGateFiles(node.gateRun);
+  for (const f of referenced) {
+    if (!inScope.has(f) && !basenames.has(f.split("/").pop()!)) add.add(f);
+  }
+  // 2. runs its own code but has no manifest to install a dependency it might need
+  const runsOwnCode = referenced.length > 0;
+  const buildsJs = node.blastRadius.some((f) => /\.(js|mjs|cjs|ts)$/.test(f));
+  const buildsPy = node.blastRadius.some((f) => /\.py$/.test(f));
+  const hasPkg = [...inScope].some((f) => /(^|\/)package\.json$/.test(f));
+  const hasReq = [...inScope].some((f) => /(^|\/)requirements\.txt$/.test(f));
+  if (runsOwnCode && buildsJs && !hasPkg) add.add("package.json");
+  if (runsOwnCode && buildsPy && !hasReq) add.add("requirements.txt");
+  return [...add];
+}
+
 /**
  * Repair an unsatisfiable gate via the PLANNER (knight): rewrite it to seed its
  * preconditions FIRST, through the build's own interface, then make the SAME assertion.

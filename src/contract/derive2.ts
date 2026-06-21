@@ -3,7 +3,7 @@ import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
 import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
-import { gateProofread, portCoherence, repairUnsatisfiableGate } from "./gate-proofread.js";
+import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -742,6 +742,19 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       const verdict = portCoherence(all.find((p) => p.id === n.id)!, all);
       if (verdict?.kind === "add-dep" && !n.deps.includes(verdict.dep)) n.deps.push(verdict.dep);
       else if (verdict?.kind === "warn") gateWarnings.push({ node: n.id, issues: [verdict.issue] });
+    }
+  }
+
+  // 3f. TOOLING COHERENCE — equip a node to build/install what its OWN gate runs: a script it
+  // references (bot-module's ./run-bot.sh) or a manifest to install a dependency (the
+  // crypto-storage SQLite trap — gate writes a DB from Node, no package.json to add a driver).
+  // Widening the blast_radius is safe (it permits, never forces).
+  {
+    const tnodes = decomposed.nodes.map((n) => ({ id: n.id, deps: n.deps, blastRadius: n.blast_radius, gateRun: gatesByNode.get(n.id)?.run ?? "" }));
+    for (const n of decomposed.nodes) {
+      for (const f of toolingCoherence(tnodes.find((t) => t.id === n.id)!, tnodes)) {
+        if (!n.blast_radius.includes(f)) n.blast_radius.push(f);
+      }
     }
   }
 
