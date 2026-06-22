@@ -121,6 +121,32 @@ describe("runServeGate — boot, wait for the port, run the check, tear down", (
     expect(r.note).toMatch(/import\(/); // booted via the factory fallback, not a self-listen
   });
 
+  it("on a FAILED check, surfaces the requests it made (so the build sees a contract mismatch)", async () => {
+    const d = workdir();
+    const port = 8795;
+    // a server that 400s with a body unless the body has `name` (the build read the wrong field)
+    writeFileSync(
+      join(d, "server.js"),
+      `const http=require('http');http.createServer((q,s)=>{let b='';q.on('data',c=>b+=c);q.on('end',()=>{` +
+        `let ok=false;try{ok=!!JSON.parse(b||'{}').name}catch{}` +
+        `if(ok){s.writeHead(200);s.end('{"ok":true}')}else{s.writeHead(400);s.end('{"error":"name is required"}')}` +
+        `})}).listen(${port},'127.0.0.1')`,
+    );
+    const r = await runServeGate({
+      port,
+      // the gate POSTs `longUrl`, the server wants `name` → 400, curl -f hides the body
+      check: `curl -fsS -X POST http://127.0.0.1:${port}/api -H 'content-type: application/json' -d '{"longUrl":"https://x.com"}' | grep -q ok`,
+      workdir: d,
+      timeoutMs: 8000,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.note).toMatch(/the check FAILED/);
+    // the request the gate actually sent is now visible — enough for the build to spot that it read
+    // the wrong field (it POSTed `longUrl`, the handler expected something else)
+    expect(r.note).toContain("longUrl");
+    expect(r.note).toMatch(/curl/); // the failing request appears in the trace
+  });
+
   it("reports code 3 (not a false pass) when no server can be booted", async () => {
     const d = workdir();
     const r = await runServeGate({ port: 8792, check: "true", workdir: d, timeoutMs: 1500 });

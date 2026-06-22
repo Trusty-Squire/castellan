@@ -186,12 +186,62 @@ export async function runServeGate(opts: {
         c.on("exit", (x) => resolve(x ?? 1));
         c.on("error", () => resolve(1));
       });
-      return { ok: code === 0, code, note: `server booted via \`${start}\` on :${opts.port}` };
+      if (code !== 0) {
+        // The check FAILED but `curl -f` hides WHY (a 400/404 body is swallowed). While the server
+        // is still up, re-run the check traced (`sh -x`) and capture it: the build then SEES the
+        // exact requests the gate makes — e.g. `-d '{"longUrl":...}'` revealing the field name it
+        // misread — plus each curl's error. Without this the build is blind to a contract mismatch
+        // (it just sees "curl exit 22") and the repair rung can't fix what it can't see.
+        const diag = await traceCheck(opts.check, workdir, opts.port);
+        return {
+          ok: false,
+          code,
+          note: `server booted via \`${start}\` on :${opts.port}; the check FAILED. The requests it made (and their errors):\n${diag}`,
+        };
+      }
+      return { ok: true, code, note: `server booted via \`${start}\` on :${opts.port}` };
     } finally {
       kill(server);
     }
   }
   return { ok: false, code: 3, note: `server never came up on port ${opts.port}; tried: ${tried.join(" | ")}` };
+}
+
+/**
+ * Re-run a failed serve-gate check under `sh -x` (which echoes every command, expanded, to stderr)
+ * with curl bodies surfaced, and return a bounded tail. The server must still be up. Best-effort and
+ * time-boxed — its only job is to make the FAILURE CONTEXT show the gate's actual requests + errors.
+ * Re-issuing state-mutating curls is harmless: the server is torn down immediately after.
+ */
+async function traceCheck(check: string, workdir: string, port: number): Promise<string> {
+  // Run the check under `sh -x` so every command is echoed (expanded) to stderr: the build then
+  // sees the exact requests the gate makes — e.g. the `-d '{"longUrl":...}'` body that reveals the
+  // field it misread — plus each curl's own error line. We do NOT rewrite the curls (an earlier
+  // attempt to inject --fail-with-body to surface bodies conflicted with the gate's own -f/--fail
+  // and produced a useless "option badly used" error; the -x trace of the REQUEST is the signal).
+  return await new Promise<string>((resolve) => {
+    let out = "";
+    const c = spawn("sh", ["-xc", check], {
+      cwd: workdir,
+      env: { ...process.env, PORT: String(port) },
+    });
+    const cap = (d: Buffer): void => {
+      out += d.toString();
+      if (out.length > 12_000) out = out.slice(-12_000); // bound memory; we keep the TAIL
+    };
+    c.stdout?.on("data", cap);
+    c.stderr?.on("data", cap);
+    const done = (): void => {
+      const lines = out.split("\n").filter((l) => l.trim().length > 0);
+      resolve(lines.slice(-40).join("\n").slice(-2000) || "(no diagnostic output)");
+    };
+    c.on("exit", done);
+    c.on("error", done);
+    setTimeout(() => {
+      try { c.kill("SIGKILL"); } catch { /* gone */ }
+      done();
+    }, 15_000);
+  });
 }
 
 /**
