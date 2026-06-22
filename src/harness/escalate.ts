@@ -1,5 +1,20 @@
 import type { Chain } from "../contract/schema.js";
 
+/**
+ * Cap the prior-attempt diff attached on rung 4. Unbounded, a multi-file node's full diff
+ * (app.js + HTML views + tests) inflates the request past the provider's payload cap — the
+ * web-app node 413'd on exactly this. Keep the head (where the substantive changes start) and
+ * a tail, with a marker; the knight can re-read any file it needs from the packed context.
+ */
+const MAX_PRIOR_DIFF_CHARS = 12_000;
+export function boundDiff(diff: string, max = MAX_PRIOR_DIFF_CHARS): string {
+  if (diff.length <= max) return diff;
+  const head = Math.floor(max * 0.7);
+  const tail = max - head - 80;
+  const omitted = diff.length - head - tail;
+  return `${diff.slice(0, head)}\n    …[${omitted} chars of diff omitted to bound the request payload; re-read a file from context if needed]…\n${diff.slice(diff.length - tail)}`;
+}
+
 export interface Rung {
   /** 1-based rung number. */
   rung: number;
@@ -79,7 +94,7 @@ export function buildFailureContext(info: FailureInfo): string {
   );
   if (info.priorDiff && info.priorDiff.trim()) {
     lines.push("- previous attempt diff:");
-    lines.push(indent(info.priorDiff.trim(), "    "));
+    lines.push(indent(boundDiff(info.priorDiff.trim()), "    "));
   }
   lines.push("Start fresh from the current (reset) repository state. Do not assume any prior change persists.");
   lines.push("=== END FAILURE CONTEXT ===");

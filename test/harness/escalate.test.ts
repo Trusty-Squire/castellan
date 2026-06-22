@@ -81,4 +81,39 @@ describe("buildFailureContext", () => {
     expect(withDiff).toContain("previous attempt diff");
     expect(withDiff).toContain("+2");
   });
+
+  it("BOUNDS a huge prior diff so the request payload can't blow the provider cap (the web-app 413)", () => {
+    const huge = "+x".repeat(20_000); // ~40k chars, well over the cap
+    const block = buildFailureContext({
+      gateCommand: "true",
+      exitCode: 1,
+      timedOut: false,
+      stdoutTail: "",
+      stderrTail: "",
+      reconcileViolations: [],
+      confabulation: false,
+      changedFiles: [],
+      priorDiff: huge,
+    });
+    expect(block.length).toBeLessThan(16_000);
+    expect(block).toContain("chars of diff omitted to bound the request payload");
+  });
+});
+
+describe("boundDiff", () => {
+  it("passes a small diff through unchanged", async () => {
+    const { boundDiff } = await import("../../src/harness/escalate.js");
+    const d = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-1\n+2";
+    expect(boundDiff(d)).toBe(d);
+  });
+
+  it("keeps head and tail of an oversized diff with a marker", async () => {
+    const { boundDiff } = await import("../../src/harness/escalate.js");
+    const d = "HEAD_MARKER" + "z".repeat(30_000) + "TAIL_MARKER";
+    const out = boundDiff(d);
+    expect(out.length).toBeLessThan(d.length);
+    expect(out.startsWith("HEAD_MARKER")).toBe(true);
+    expect(out.endsWith("TAIL_MARKER")).toBe(true);
+    expect(out).toContain("chars of diff omitted");
+  });
 });
