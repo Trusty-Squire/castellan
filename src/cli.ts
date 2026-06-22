@@ -409,8 +409,16 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     // auth_module wall. Per the strategy, cheap×reliable is the BUILD loop only; planning/
     // authoring is premium. (decompose/infer-gates already use chain.knight.)
     const idea = await extractIdea(prompt!, llm, chain.knight);
+    // PRODUCT INSTINCT (cheap consensus): supply the table-stakes features a non-expert never
+    // states (a vault needs copy/reveal/delete; a shortener needs analytics/expiry). Diverse-lens
+    // recall + merge on the CHEAP model (chain.executor) — authoring no longer needs the premium.
+    const { specCompleteness } = await import("./contract/spec-completeness.js");
+    const missing = await specCompleteness(llm, chain.executor, { idea: prompt!, stated: idea.stories });
+    const added = missing.filter((f) => !idea.stories.some((s) => s.toLowerCase().includes(f.toLowerCase())));
+    idea.stories.push(...added);
     process.stdout.write("\n" + st.bold("User stories:") + "\n");
     idea.stories.forEach((s, i) => process.stdout.write(`  ${i + 1}. ${s}\n`));
+    if (added.length) process.stdout.write(st.gray(`  ↑ last ${added.length} added by product-instinct pass (cheap consensus)`) + "\n");
     const io = { print: (l: string) => process.stdout.write(l + "\n"), ask: yes ? (async () => "") : ask };
     const resolutions = await resolveBrief(idea.decisions, io, st);
     // The spec goes straight from authoring to the derive compile-check — the old
