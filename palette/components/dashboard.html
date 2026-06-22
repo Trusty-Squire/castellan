@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- PRIMITIVE: dashboard surface. Serve at GET /dashboard (session-gated; if not logged in,
+     redirect to /). Inject the user's keys into the [data-testid=api-keys-list] container: one
+     .row per provider, showing the provider name and the MASKED key (last 4 chars). Keep the
+     data-testid attributes. Styled by /theme.css. The {{...}} marks the one injection point. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="/theme.css" />
+  <style>
+    body { margin: 0; }
+    .topbar { display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 20px; border-bottom: 1px solid var(--border); }
+    .topbar h1 { font-size: var(--text-md, 15px); margin: 0; }
+    main { max-width: 720px; margin: 32px auto; padding: 0 20px; }
+    main h2 { font-size: var(--text-lg, 16px); margin: 0 0 4px; }
+    main p.sub { color: var(--text-muted); margin: 0 0 16px; font-size: var(--text-sm, 13px); }
+    .key { font-family: var(--font-mono, monospace); color: var(--text-secondary); }
+    .provider { font-weight: 600; }
+  </style>
+</head>
+<body data-testid="dashboard">
+  <header class="topbar">
+    <h1>Credentials</h1>
+    <form method="post" action="/logout" style="margin:0">
+      <button data-testid="logout-button" type="submit" class="btn-ghost">Log out</button>
+    </form>
+  </header>
+  <main>
+    <h2>API keys</h2>
+    <p class="sub">Your stored provider credentials, masked for safety.</p>
+    <div class="list" data-testid="api-keys-list">
+      <!-- INJECT one row per provider. Example row shape (repeat for each key): -->
+      <!-- {{#each keys}} -->
+      <div class="row">
+        <span class="provider">{{provider}}</span>
+        <span class="key">••••{{maskedLast4}}</span>
+      </div>
+      <!-- {{/each}} -->
+    </div>
+  </main>
+</body>
+</html>

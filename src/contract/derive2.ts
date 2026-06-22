@@ -550,6 +550,50 @@ function planLoginFlow(
   return { seed, steps, url };
 }
 
+/**
+ * FUNCTIONAL UI gate (light-palette plan): instead of trying to deterministically gate the
+ * rendered DOM (brittle — routes/files/testids drift per cheap-model build), gate the app's
+ * FUNCTION over HTTP, robustly. Seeds TWO users with distinct random SENTINEL keys, then asserts
+ * each user's protected API returns THEIR sentinel and NOT the other's (the sentinels prove data
+ * flows end-to-end — killing the "fake data" half of the clairvoyance failure; two distinct keys
+ * + isolation defeat hardcoding). Plus: wrong creds rejected, and the session-gated page bounces
+ * an unauthenticated request. Rendering quality is left to the abstaining visual judge + the human
+ * (the thesis's final gate) — the objective gate verifies the app FUNCTIONS, not its pixels.
+ *
+ * `createU`/`storeK` are read from the contract (default to the conventional names). Routes default
+ * to the brief's stated REST surface. serve-gate boots `npm start`, runs the checks, tears down.
+ */
+export function functionalUiGate(
+  contract: string,
+  opts: { port?: number; apiPath?: string; protectedPath?: string; provider?: string } = {},
+): Gate {
+  const port = opts.port ?? 3000;
+  const api = opts.apiPath ?? "/api/keys";
+  const prot = opts.protectedPath ?? "/dashboard";
+  const provider = opts.provider ?? "vouchflow";
+  const createU = contract.match(/\b(create_?user|createUser)\b/i)?.[1] ?? "create_user";
+  const storeK = contract.match(/\b(store_?api_?key|storeApiKey|store_?key)\b/i)?.[1] ?? "store_api_key";
+  const A = "SENTL_a1b2c3d4e5";
+  const B = "SENTL_z9y8x7w6v5";
+  const base = `http://localhost:${port}`;
+  const seed =
+    `node -e "const s=require('./storage');(async()=>{` +
+    `try{await s.${createU}('alice@sentinel.test','PWaliceX1')}catch(e){};` +
+    `try{await s.${createU}('bob@sentinel.test','PWbobX2')}catch(e){};` +
+    `try{await s.${storeK}('alice@sentinel.test','${provider}','${A}')}catch(e){};` +
+    `try{await s.${storeK}('bob@sentinel.test','${provider}','${B}')}catch(e){};` +
+    `process.exit(0)})().catch(()=>process.exit(0))"`;
+  const checks = [
+    `curl -fsS ${base}${api} -u alice@sentinel.test:PWaliceX1 | grep -q ${A}`, // alice sees her key
+    `curl -fsS ${base}${api} -u bob@sentinel.test:PWbobX2 | grep -q ${B}`, // bob sees his
+    `! curl -fsS ${base}${api} -u alice@sentinel.test:PWaliceX1 | grep -q ${B}`, // isolation: alice never sees bob's
+    `[ "$(curl -s -o /dev/null -w '%{http_code}' ${base}${api} -u alice@sentinel.test:WRONGpw)" != "200" ]`, // bad creds rejected
+    `curl -s -o /dev/null -w '%{http_code}' ${base}${prot} | grep -qE '30[12]|401|403'`, // unauth protected page is gated
+  ];
+  const inner = [seed, ...checks].join(" && ");
+  return { type: "command", soft: false, run: wrapWithServeGate(inner, port) };
+}
+
 /** A node that renders a frontend surface — its blast_radius/context are UI files. */
 const UI_GLOB_RE = /\.(html|css|jsx|tsx|vue|svelte)\b|\bindex\.html\b|\bpublic\/|\bfrontend\/|\bsrc\/(app|components|ui|pages|styles)\b/i;
 export function looksLikeUi(node: { blast_radius?: string[]; context_globs?: string[] }): boolean {

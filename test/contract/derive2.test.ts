@@ -17,6 +17,7 @@ import {
   allocateNodeBudgets,
   overflowingNodes,
   deriveUiGate,
+  functionalUiGate,
   extractDomHooks,
   looksLikeUi,
 } from "../../src/contract/derive2.js";
@@ -596,6 +597,25 @@ describe("harness-derived UI gate — deterministic DOM teeth without the planne
 
   it("returns null for a non-UI node (no hooks → leave the planner's gate alone)", () => {
     expect(deriveUiGate({ brief: "implement the poker hand evaluator and side-pot logic" })).toBeNull();
+  });
+
+  it("functionalUiGate seeds two sentinels and gates the HTTP function (not the pixels)", () => {
+    const g = functionalUiGate("storage.create_user(email,password); storage.store_api_key(email,provider,api_key)");
+    expect(g.type).toBe("command");
+    expect(g.soft).toBe(false);
+    const run = g.run ?? "";
+    expect(run).toContain("serve-gate.mjs --port 3000");
+    // two distinct sentinel keys (defeats hardcoding) + isolation
+    expect(run).toContain("SENTL_a1b2c3d4e5");
+    expect(run).toContain("SENTL_z9y8x7w6v5");
+    expect(run).toMatch(/alice@sentinel\.test/);
+    expect(run).toMatch(/bob@sentinel\.test/);
+    // seeds via the storage interface (satisfiable, not a vacuous pass)
+    expect(run).toContain("create_user");
+    expect(run).toContain("store_api_key");
+    // auth-rejection + session-gating checks present
+    expect(run).toContain("WRONGpw");
+    expect(run).toMatch(/30\[12\]\|401\|403/);
   });
 
   it("DRIVES the login flow for an auth-gated app instead of asserting post-auth hooks on the bare page", () => {

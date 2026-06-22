@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- PRIMITIVE: login surface. Serve this at GET / (the login page). Posts to POST /login.
+     Keep the data-testid attributes — they are part of the contract. Styled by /theme.css. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in</title>
+  <link rel="stylesheet" href="/theme.css" />
+  <style>
+    body { display: grid; place-items: center; min-height: 100vh; margin: 0; }
+    .auth-card { width: 100%; max-width: 360px; }
+    .auth-card h1 { font-size: var(--text-xl, 20px); margin: 0 0 4px; }
+    .auth-card p.sub { color: var(--text-muted); margin: 0 0 20px; font-size: var(--text-sm, 13px); }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .field label { font-size: var(--text-sm, 13px); color: var(--text-secondary); }
+    .auth-card button { width: 100%; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <main class="card auth-card">
+    <h1>Sign in</h1>
+    <p class="sub">Access your stored credentials.</p>
+    <form data-testid="login-form" method="post" action="/login">
+      <div class="field">
+        <label for="email">Email</label>
+        <input data-testid="email-input" id="email" name="email" type="email" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input data-testid="password-input" id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button data-testid="login-button" type="submit" class="btn-primary">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>
