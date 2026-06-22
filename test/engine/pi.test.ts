@@ -157,6 +157,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
 
   it("aborts an attempt that keeps rewriting the same path", async () => {
     const engine = new PiEngine({
+      maxMutationsPerPathPerAttempt: 5,
       streamFn: scriptedStreamFn([
         {
           tools: Array.from({ length: 6 }, (_, i) => ({
@@ -179,8 +180,9 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     });
   });
 
-  it("aborts a noisy attempt after the default tool-call ceiling", async () => {
+  it("aborts a noisy attempt after the tool-call ceiling", async () => {
     const engine = new PiEngine({
+      maxToolCallsPerAttempt: 12,
       streamFn: scriptedStreamFn([
         {
           tools: Array.from({ length: 13 }, (_, i) => ({
@@ -203,7 +205,10 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     });
   });
 
-  it("aborts an attempt immediately when it repeats identical file content", async () => {
+  it("treats a repeated identical write as a harmless no-op, not an abort", async () => {
+    // Models re-emit an identical file constantly to "make sure". The file already holds that
+    // content — aborting the whole rung for it guillotines good work (the secure-storage trap).
+    // It must be a no-op nudge: the attempt continues and finishes normally.
     const engine = new PiEngine({
       streamFn: scriptedStreamFn([
         {
@@ -215,16 +220,20 @@ describe("PiEngine (network-free via injected streamFn)", () => {
           in: 100,
           out: 20,
         },
-        { text: "should not finish", in: 10, out: 5 },
+        { text: "done — file written", in: 10, out: 5 },
       ]),
     });
 
     const events = await collect(engine, req());
 
-    expect(events).toContainEqual({
-      kind: "error",
-      message: "attempt aborted after duplicate write/edit content for src/repeat.ts",
-    });
+    // No abort for the duplicate.
+    expect(events.some((e) => e.kind === "error" && /duplicate/.test(e.message ?? ""))).toBe(false);
+    // The redundant writes are nudged, not punished.
+    expect(
+      events.some((e) => e.kind === "tool_result" && /already contains exactly this content/.test(e.output ?? "")),
+    ).toBe(true);
+    // And the attempt completes normally.
+    expect(events.some((e) => e.kind === "done")).toBe(true);
   });
 
   it("aborts a JavaScript write that imports cleanly but misses gate-required exports", async () => {
@@ -292,6 +301,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
   it("aborts an attempt that keeps failing edits on the same path", async () => {
     writeFileSync(join(cwd, "src", "repeat.ts"), "export const n = 0;");
     const engine = new PiEngine({
+      maxMutationsPerPathPerAttempt: 5,
       streamFn: scriptedStreamFn([
         {
           tools: Array.from({ length: 6 }, (_, i) => ({

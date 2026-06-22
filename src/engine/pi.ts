@@ -16,9 +16,19 @@ import type { AttemptRequest, Engine, EngineEvent, ModelRef, ToolName } from "./
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 const MAX_BLAST_VIOLATIONS = 3;
-const DEFAULT_MAX_TOOL_CALLS_PER_ATTEMPT = 12;
-const DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT = 5;
-const DEFAULT_ATTEMPT_TIMEOUT_MS = 45_000;
+// These are runaway-loop BACKSTOPS, not work budgets — the cost meter is the real stop.
+// They were originally tuned for single-file edits; once the builder was allowed to run
+// and iterate (install deps, run the gate, read the error, fix, re-run) a real node needs
+// many tool calls and minutes of wall-clock. Calibrated too tight, they abort legitimate
+// work — the cheap executor was being guillotined at 45s while the codex path gives a node
+// 600s ("generous for a real node"). Give the ordinary worker the same room; let the budget
+// meter and honest-halt do the real bounding.
+const DEFAULT_MAX_TOOL_CALLS_PER_ATTEMPT = 60;
+const DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT = 12;
+// Must comfortably exceed BASH_TIMEOUT_MS (120s) — a single `npm install` of native deps
+// (sqlite3/bcrypt → node-gyp) can eat that alone — AND leave room to iterate after. Parity
+// with CodexEngine's 600s so the cheap path isn't strangled relative to the premium one.
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
 /**
  * Bound the agent loop's conversation history. Every turn re-sends the full
  * transcript; without a cap a confused model that runs many tool calls (or one
@@ -160,12 +170,13 @@ export class PiEngine implements Engine {
       }
     };
 
-    const recordMutation = (path: string, content?: string): void => {
-      if (!path) return;
+    const recordMutation = (path: string, content?: string): MutationStatus => {
+      if (!path) return "ok";
+      // Re-writing identical content is a harmless no-op (models do it constantly to "make
+      // sure"). It must NOT abort the attempt — the file already holds that content. Signal
+      // "duplicate" so the tool nudges the model to move on, and don't count it as progress.
       if (content !== undefined && state.lastMutationContentByPath.get(path) === content) {
-        const reason = `attempt aborted after duplicate write/edit content for ${path}`;
-        abortAttempt(reason);
-        throw new Error(reason);
+        return "duplicate";
       }
       if (content !== undefined) state.lastMutationContentByPath.set(path, content);
       const count = (state.mutationsByPath.get(path) ?? 0) + 1;
@@ -175,6 +186,7 @@ export class PiEngine implements Engine {
         abortAttempt(reason);
         throw new Error(reason);
       }
+      return "ok";
     };
 
     const tools = makeTools(
@@ -309,7 +321,8 @@ function buildModel(ref: ModelRef): Model<"openai-completions"> {
 
 type DenyHook = (id: string, name: ToolName, path: string, reason: string) => void;
 type ToolLimitHook = () => void;
-type MutationHook = (path: string, content?: string) => void;
+type MutationStatus = "ok" | "duplicate";
+type MutationHook = (path: string, content?: string) => MutationStatus;
 type ExportValidationHook = (path: string) => Promise<void>;
 
 function makeTools(
@@ -346,13 +359,16 @@ function makeTools(
     execute: async (id, params) => {
       onToolStart();
       const r = await exec.execute("write", params);
-      if (r.denied) onDeny(id, "write", r.path ?? readPath(params), r.deniedReason ?? "denied");
-      else {
-        const path = r.path ?? readPath(params);
-        onMutation(path, readContent(params));
-        if (r.ok) {
-          await validateExports(path);
-        }
+      if (r.denied) {
+        onDeny(id, "write", r.path ?? readPath(params), r.deniedReason ?? "denied");
+        return text(r.output);
+      }
+      const path = r.path ?? readPath(params);
+      if (onMutation(path, readContent(params)) === "duplicate") {
+        return text(`${path} already contains exactly this content — no change needed. Move on to the next step (run the check, or edit a different file).`);
+      }
+      if (r.ok) {
+        await validateExports(path);
       }
       return text(r.output);
     },
@@ -372,7 +388,9 @@ function makeTools(
       onToolStart();
       const r = await exec.execute("edit", params);
       if (r.denied) onDeny(id, "edit", r.path ?? readPath(params), r.deniedReason ?? "denied");
-      else onMutation(r.path ?? readPath(params), readEditContent(params));
+      else if (onMutation(r.path ?? readPath(params), readEditContent(params)) === "duplicate") {
+        return text(`${r.path ?? readPath(params)} already reflects this edit — no change needed. Move on to the next step.`);
+      }
       return text(r.output);
     },
   };
