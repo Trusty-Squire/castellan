@@ -184,7 +184,14 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
     return runRaw(opts, chainName, chain.executor, chain.budget_scale);
   }
 
-  const rungs = ladder(chain);
+  let rungs = ladder(chain);
+  // SER_NO_KNIGHT: cap the ladder at the CHEAP rungs (drop any rung that runs the knight) so a
+  // test measures whether the cheap models pass ON THEIR OWN — a knight rescue isn't a
+  // cheap-model pass. Keep at least rung 1 so the node still runs.
+  if (process.env.SER_NO_KNIGHT && process.env.SER_NO_KNIGHT !== "0") {
+    const cheapRungs = rungs.filter((r) => r.model !== chain.knight);
+    rungs = cheapRungs.length > 0 ? cheapRungs : rungs.slice(0, 1);
+  }
 
   // Keep harness artifacts out of git: never staged by `git add -A`, never
   // removed by `git clean -fd` during a node reset.

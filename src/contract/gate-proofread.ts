@@ -124,8 +124,15 @@ export function idempotencyRepair(gate: string): string | null {
   const stores = [...new Set([...gate.matchAll(STORE_FILE_RE)].map((m) => m[1]!))];
   if (stores.length === 0) return null;
   const dirs = [...new Set(stores.map((s) => s.replace(/\/[^/]+$/, "")).filter((d) => d && d !== "."))];
-  const mkdir = dirs.length ? ` && mkdir -p ${dirs.join(" ")}` : "";
-  return `rm -f ${stores.join(" ")}${mkdir} && ${gate}`;
+  const steps = [`rm -f ${stores.join(" ")}`];
+  if (dirs.length) steps.push(`mkdir -p ${dirs.join(" ")}`);
+  // SCHEMA-PRESERVING: rm'ing the db file alone destroys schema a build may create out-of-band
+  // (a schema.sql applied once, with the storage module doing only CRUD) — the reset then yields
+  // "no such table" and fails CORRECT code (measured: deepseek built exactly this and the bare rm
+  // broke it). If a schema.sql exists, re-apply it after the wipe; a no-op when absent (a module
+  // that lazily CREATE TABLE IF NOT EXISTS needs no schema file). sqlite3 is already a gate dep here.
+  for (const s of stores) steps.push(`{ [ -f schema.sql ] && sqlite3 ${s} < schema.sql 2>/dev/null; true; }`);
+  return `${steps.join(" && ")} && ${gate}`;
 }
 
 /** localhost/127.0.0.1 ports a gate HITS (curls), excluding external-service base URLs. */

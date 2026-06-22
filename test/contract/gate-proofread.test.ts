@@ -8,6 +8,9 @@ describe("idempotencyRepair — a seeding gate that never clears its store fails
     expect(r).not.toBeNull();
     expect(r!.startsWith("rm -f data/app.db && mkdir -p data && ")).toBe(true);
     expect(r!.endsWith(g)).toBe(true);
+    // schema-preserving: re-applies schema.sql after the wipe so a separate-schema build isn't
+    // left with "no such table"
+    expect(r!).toContain("[ -f schema.sql ] && sqlite3 data/app.db < schema.sql");
   });
 
   it("is a no-op when the gate already resets its store", () => {

@@ -20,6 +20,29 @@ describe("ToolExecutor", () => {
     expect(exec.executedWrites).toEqual(["src/a.ts"]);
   });
 
+  it("REFUSES a malformed package.json (the silent gate-poisoner) with a corrective nudge", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["**"] });
+    const r = await exec.execute("write", {
+      path: "package.json",
+      content: '{\n  "name": "app",\n  "deps": { "sqlite3": "^5" },  // trailing comma + comment\n}',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.denied).toBe(false);
+    expect(r.output).toMatch(/not valid JSON/);
+    expect(r.output).toMatch(/STRICT JSON/);
+    expect(existsSync(join(cwd, "package.json"))).toBe(false); // broken manifest not persisted
+  });
+
+  it("accepts a valid package.json", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["**"] });
+    const r = await exec.execute("write", {
+      path: "package.json",
+      content: '{\n  "name": "app",\n  "dependencies": { "sqlite3": "^5.1.0" }\n}',
+    });
+    expect(r.ok).toBe(true);
+    expect(existsSync(join(cwd, "package.json"))).toBe(true);
+  });
+
   it("wraps top-level JavaScript data literals as CommonJS modules", async () => {
     const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
     const r = await exec.execute("write", {

@@ -110,6 +110,14 @@ export class ToolExecutor {
     const denial = this.checkRadius(located.rel, "write");
     if (denial) return denial;
     const content = normalizeWriteContent(located.rel, args.content ?? "");
+    // Poka-yoke: a malformed package.json is a SILENT gate-poisoner — Node parses it during
+    // every `require()` resolution, so one bad manifest makes every gate fail with a cryptic
+    // ERR_INVALID_PACKAGE_CONFIG and the model thrashes "fixing" the wrong file. Catch it at the
+    // point of the mistake with a clear nudge, and don't persist the broken manifest.
+    const manifestError = manifestJsonError(located.rel, content);
+    if (manifestError) {
+      return { ok: false, denied: false, path: located.rel, output: manifestError };
+    }
     try {
       mkdirSync(dirname(located.abs), { recursive: true });
       writeFileSync(located.abs, content);
@@ -195,6 +203,22 @@ export class ToolExecutor {
       };
     }
     return { abs, rel: rel.replace(/\\/g, "/") };
+  }
+}
+
+/**
+ * If `rel` is a strict-JSON manifest (package.json / package-lock.json) and `content` isn't
+ * valid JSON, return a corrective message; else null. Node chokes on a malformed package.json
+ * during module resolution, so this must be strict JSON — no comments, no trailing commas.
+ */
+export function manifestJsonError(rel: string, content: string): string | null {
+  const base = rel.split("/").pop();
+  if (base !== "package.json" && base !== "package-lock.json") return null;
+  try {
+    JSON.parse(content);
+    return null;
+  } catch (err) {
+    return `REFUSED to write ${rel}: it is not valid JSON (${(err as Error).message}). ${base} must be STRICT JSON — no comments, no trailing commas, no JS. Node parses it on every require(), so a malformed manifest breaks every check. Re-emit the full file as valid JSON.`;
   }
 }
 
