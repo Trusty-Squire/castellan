@@ -33,6 +33,7 @@ export function serverSkeleton(): string {
   return `const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;        // PLUMBING — the harness sets PORT; never hardcode it
 
@@ -40,6 +41,8 @@ const PORT = process.env.PORT || 3000;        // PLUMBING — the harness sets P
 const DATA = path.join('data', 'store.json');
 const load = () => { try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return {}; } };
 const save = (d) => { fs.mkdirSync('data', { recursive: true }); fs.writeFileSync(DATA, JSON.stringify(d, null, 2)); };
+// Random short id/code — use THIS, not nanoid (nanoid v4+ is ESM-only and breaks require()).
+const gen = (n = 7) => crypto.randomBytes(16).toString('base64url').slice(0, n);
 
 app.use(express.json());                       // PLUMBING — JSON request bodies parse into req.body
 app.use(express.static('public'));             // PLUMBING — serves ./public at GET / (if present)
@@ -47,9 +50,11 @@ app.use(express.static('public'));             // PLUMBING — serves ./public a
 // ============================================================================
 // ADD YOUR ROUTE HANDLERS HERE. The plumbing above is done — write only the
 // endpoints your brief requires (app.get / app.post / ...), using load()/save()
-// to persist. Return a 4xx for bad input; never let a handler throw (that 500s).
-// Keep any catch-all route LAST. Do NOT change the require lines, PORT, or
-// app.listen, and do NOT create a second server file.
+// to persist and gen() for ids/codes. Read request fields EXACTLY as the shared
+// contract names them. Return a 4xx for bad input; never let a handler throw
+// (that 500s). Keep any catch-all route LAST. Do NOT change the require lines,
+// PORT, or app.listen, and do NOT create a second server file.
+// Add deps with "npm install <pkg>" — but ONLY CommonJS (require-able) packages.
 // ============================================================================
 
 app.listen(PORT, () => console.log('listening on ' + PORT));  // PLUMBING — boots on the harness port
@@ -83,11 +88,12 @@ export function serverSkeletonNote(serverFile: string): string {
   return (
     `\`${serverFile}\` ALREADY EXISTS with the server PLUMBING written for you: it boots on ` +
     `process.env.PORT (the harness sets it — NEVER hardcode a port), parses JSON bodies ` +
-    `(express.json), serves ./public, and has a JSON-file store via load()/save(). ` +
-    `ADD ONLY YOUR ROUTE HANDLERS where the file says "ADD YOUR ROUTE HANDLERS HERE" — do NOT ` +
+    `(express.json), serves ./public, and has a JSON-file store via load()/save() plus gen() for ` +
+    `random short ids/codes. ADD ONLY YOUR ROUTE HANDLERS where the file says "ADD YOUR ROUTE ` +
+    `HANDLERS HERE", reading request fields EXACTLY as the shared contract names them — do NOT ` +
     `change the require lines, the PORT, or app.listen, and do NOT create a second server file. ` +
-    `For any handler dependency, add it to package.json and run \`npm install\`; run \`npm start\` ` +
-    `to confirm it boots before you finish.`
+    `Use gen() for codes — do NOT add nanoid (ESM-only, breaks require). For any other handler ` +
+    `dependency add a CommonJS package and \`npm install\` it; run \`npm start\` to confirm it boots.`
   );
 }
 

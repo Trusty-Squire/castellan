@@ -28,11 +28,14 @@ describe("serverSkeleton — the plumbing the cheap model must NOT improvise", (
     expect(s).toContain("process.env.PORT");
     expect(s).toContain("app.listen(PORT");
   });
-  it("wires JSON bodies, static, and a persistence helper", () => {
+  it("wires JSON bodies, static, persistence, and a code generator (so models don't grab ESM nanoid)", () => {
     expect(s).toContain("express.json()");
     expect(s).toContain("express.static('public')");
     expect(s).toContain("const load =");
     expect(s).toContain("const save =");
+    expect(s).toContain("const gen =");
+    expect(s).toContain("crypto");
+    expect(s).toMatch(/not nanoid/i); // explicit ESM-dep warning
   });
   it("leaves an explicit place for the model to add ONLY handlers", () => {
     expect(s).toContain("ADD YOUR ROUTE HANDLERS HERE");
