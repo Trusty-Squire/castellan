@@ -60,6 +60,9 @@ export interface NodeDispute {
 
 const DISPUTE_RE = /DISPUTE:\s*(gate|brief)\s*:\s*([^\n]+)/i;
 
+/** Max retries of a rung when the provider errors transiently before any work is done. */
+const MAX_TRANSIENT_RETRIES = 3;
+
 /** Parse a dispute the builder raised in its final message. Requires real evidence
  *  (not a bare "DISPUTE: gate:") so an empty cry-wolf doesn't register. */
 export function parseDispute(finalMessage: string): NodeDispute | null {
@@ -338,13 +341,43 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         doneCheck: gateCommandOf(node),
       };
 
-      const consumed = await consumeAttempt(engine.runAttempt(req), {
+      // Retry a TRANSIENT provider error (a 500/429/overload blip) that struck BEFORE the
+      // worker did any work — otherwise a momentary infra hiccup burns a whole escalation rung
+      // (measured: a provider 500 outage killed all 4 rungs of a node that passes when the
+      // provider is healthy — every model, opus included, so it's the provider, not the model).
+      // Only retry when no tool ran (zero side effects to duplicate); backoff between tries.
+      let consumed = await consumeAttempt(engine.runAttempt(req), {
         trace,
         nodeId: node.id,
         rungModel: rung.model,
         rungNumber: rung.rung,
         budget,
       });
+      for (
+        let retry = 1;
+        retry <= MAX_TRANSIENT_RETRIES &&
+        consumed.record.errored &&
+        consumed.record.toolCalls.length === 0 &&
+        isTransientProviderError(consumed.record.errorMessage) &&
+        !consumed.globalBudgetExceeded;
+        retry++
+      ) {
+        const backoffMs = 1000 * 2 ** (retry - 1);
+        trace.append("provider_retry", {
+          nodeId: node.id,
+          rung: rung.rung,
+          payload: { attempt: retry, error: consumed.record.errorMessage, backoffMs },
+          costUsdSoFar: budget.globalSpent(),
+        });
+        await sleep(backoffMs);
+        consumed = await consumeAttempt(engine.runAttempt(req), {
+          trace,
+          nodeId: node.id,
+          rungModel: rung.model,
+          rungNumber: rung.rung,
+          budget,
+        });
+      }
       const record = consumed.record;
       outcome.blastDenied += record.blastDeniedCount;
       outcome.costUsd = budget.nodeSpent();
@@ -882,6 +915,14 @@ async function consumeAttempt(
     return { record, globalBudgetExceeded, nodeBudgetExceeded };
   }
 }
+
+/** A provider/infra error that is worth RETRYING (transient), not a model/work failure. */
+export function isTransientProviderError(msg: string | undefined): boolean {
+  if (!msg) return false;
+  return /\b(429|500|502|503|504)\b|too many requests|rate.?limit|overloaded|internal server error|bad gateway|service unavailable|gateway time-?out|timed? out|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed/i.test(msg);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function readArg(args: unknown, key: string): string | undefined {
   if (typeof args === "object" && args !== null && key in args) {

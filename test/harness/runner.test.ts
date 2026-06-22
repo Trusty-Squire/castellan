@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EXECUTOR_SYSTEM_PROMPT, runMission, parseDispute } from "../../src/harness/runner.js";
+import { EXECUTOR_SYSTEM_PROMPT, runMission, parseDispute, isTransientProviderError } from "../../src/harness/runner.js";
 import { MockEngine, type ScriptResolver } from "../../src/engine/mock.js";
 import { initRepo, commitAll } from "../../src/harness/checkpoint.js";
 import { parseMission, parseChains } from "../../src/contract/schema.js";
@@ -57,10 +57,47 @@ nodes:
     budget_usd: 1
 `;
 
+describe("isTransientProviderError", () => {
+  it("flags 5xx / 429 / overload / connection blips as transient", () => {
+    for (const m of ['500 "Internal Server Error"', "429 Too Many Requests", "503 Service Unavailable", "provider overloaded", "ECONNRESET", "socket hang up", "fetch failed"]) {
+      expect(isTransientProviderError(m)).toBe(true);
+    }
+  });
+  it("does NOT flag a model/work failure or empty message", () => {
+    expect(isTransientProviderError("does not export required symbol(s): findArbitrage")).toBe(false);
+    expect(isTransientProviderError("content_filter")).toBe(false);
+    expect(isTransientProviderError(undefined)).toBe(false);
+  });
+});
+
 describe("runMission", () => {
   it("tells executors to write literal CommonJS source for JS files", () => {
     expect(EXECUTOR_SYSTEM_PROMPT).toContain("content argument is the exact file body");
     expect(EXECUTOR_SYSTEM_PROMPT).toContain("module.exports");
+  });
+
+  it("RETRIES a transient provider error (no work done) and still passes on the same rung", async () => {
+    // The provider 500s on the first call (before any tool ran); the retry succeeds. The node
+    // must pass on rung 1 — a transient blip must NOT burn an escalation rung.
+    let call = 0;
+    const result = await run(oneNode, () => {
+      call += 1;
+      if (call === 1) return { steps: [{ error: "500 \"Internal Server Error\"" }] };
+      return {
+        steps: [
+          { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
+          { usage: { in: 1000, out: 200 } },
+          { tool: "bash", args: { command: "bash check.sh" } },
+          { done: "fixed" },
+        ],
+      };
+    });
+    expect(result.completed).toBe(true);
+    expect(result.committedNodeIds).toEqual(["fix"]);
+    const trace = readTrace(result.tracePath);
+    expect(trace.some((e) => e.kind === "provider_retry")).toBe(true);
+    // It passed on rung 1 — no escalation to the fallback model.
+    expect(trace.some((e) => e.kind === "escalate")).toBe(false);
   });
 
   it("completes a node on rung 1, commits, and writes a trace", async () => {

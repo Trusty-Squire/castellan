@@ -22,6 +22,7 @@ export const TRACE_KINDS = [
   "dispute_review",
   "budget_stop",
   "engine_error",
+  "provider_retry",
   "node_pass",
   "node_fail",
   "mission_end",
