@@ -1,20 +1,23 @@
 /**
  * SPEC COMPLETENESS — supply the product instinct a non-expert lacks, with CHEAP models only.
  *
- * The problem: a thin idea ("a credential vault") omits the table-stakes features the user
- * expects but never states (reveal a key, copy it, delete one). The project already found a
- * cheap model is a poor single-shot ADVISOR (it can't tell load-bearing from cosmetic). So we
- * never ask it to JUDGE — we ask it to RECALL, from several DIVERSE LENSES, then keep only what
- * a majority of lenses INDEPENDENTLY name. Consensus over diverse cheap samples amplifies the
- * genuinely-canonical features and drowns out per-lens fluff (self-consistency), and divergence
- * is the signal (the project's own ambiguity research) — a feature one lens invents is noise; a
- * feature every lens names is real. This turns a JUDGMENT task (cheap models' weakness) into a
- * RECALL + COUNT task (their strength × aggregation), at ~half the cost of one Sonnet pass.
+ * The problem: a thin idea ("a URL shortener") omits the table-stakes features users expect but
+ * never state (copy the link, custom alias, click stats, expiry, delete). The project already
+ * found a cheap model is a poor single-shot ADVISOR (it can't tell load-bearing from cosmetic).
+ * So we never ask one to JUDGE — two cheap stages instead:
+ *   1. RECALL from several DIVERSE LENSES (security user, power user, first-timer, API dev, …).
+ *      Divergence is the signal (the project's own ambiguity research): a feature every lens
+ *      independently names is table-stakes; a feature one lens invents is noise.
+ *   2. MERGE — one cheap pass collapses synonymous phrasings ("link expiration" / "set expiry"
+ *      / "expiration settings" are ONE feature) and keeps only what ≥ quorum lenses agreed on.
+ * Recall is the cheap model's strength; merging synonyms is mechanical, not load-bearing
+ * judgment. Result: the funnel gains product instinct at ~half the cost of one Sonnet pass, with
+ * no premium model — so "authoring = premium" stops being a required exception.
  */
 import type { LlmClient } from "../llm/types.js";
 
-/** Distinct user viewpoints — each cheap call recalls essentials from one lens. Divergence is
- *  the point: only features that recur ACROSS lenses are table-stakes, not lens-specific. */
+/** Distinct user viewpoints. Each cheap call recalls essentials from one lens; only features that
+ *  recur ACROSS lenses are table-stakes, not lens-specific. */
 export const COMPLETENESS_LENSES = [
   "a security-conscious user",
   "a power user who manages many items daily",
@@ -24,101 +27,78 @@ export const COMPLETENESS_LENSES = [
   "a user on a phone",
 ];
 
-const SYSTEM =
+const RECALL_SYSTEM =
   "You name the MUST-HAVE, table-stakes features a user expects from this KIND of product but that " +
   "are NOT already in the spec. Output ONLY a JSON array of short feature names — lowercase " +
-  'verb-phrases, 2-5 words, e.g. ["copy value to clipboard","reveal a masked value","delete an item"]. ' +
+  'verb-phrases, 2-5 words, e.g. ["copy the link","set a custom alias","see click counts","delete a link"]. ' +
   "Only genuinely-expected essentials for this product category. No nice-to-haves, no speculative extras.";
 
-export interface CompletenessResult {
-  feature: string; // a representative phrasing
-  votes: number; // how many lenses named it
-}
-
 /**
- * Run the cheap-consensus completeness pass. Returns the missing table-stakes features that
- * ≥ quorum lenses independently named, most-agreed first. Pass a CHEAP model.
+ * Cheap-consensus completeness pass. Returns the missing table-stakes features, most-agreed first.
+ * Pass a CHEAP model — recall across lenses + a merge pass, no premium judgment.
  */
 export async function specCompleteness(
   llm: LlmClient,
   model: string,
   args: { idea: string; stated?: string[]; lenses?: string[]; quorum?: number },
-): Promise<CompletenessResult[]> {
+): Promise<string[]> {
   const lenses = args.lenses ?? COMPLETENESS_LENSES;
-  const quorum = args.quorum ?? Math.ceil(lenses.length / 2);
   const stated = (args.stated ?? []).join("; ") || "(nothing yet)";
 
-  const samples = await Promise.all(
+  // 1. RECALL from each diverse lens (independent cheap calls).
+  const lists = await Promise.all(
     lenses.map((lens) =>
       llm
         .complete({
           model,
-          system: SYSTEM,
+          system: RECALL_SYSTEM,
           user: `PRODUCT:\n${args.idea}\n\nALREADY IN THE SPEC (do NOT repeat these):\n${stated}\n\nThinking AS ${lens}, what ESSENTIAL features are missing?`,
           json: true,
           maxTokens: 400,
         })
-        .then((r) => r.text)
-        .catch(() => "[]"),
+        .then((r) => parseFeatures(r.text))
+        .catch(() => []),
     ),
   );
+  const pool = lists.filter((l) => l.length > 0);
+  if (pool.length === 0) return [];
 
-  // Tally with light clustering: phrasings that reduce to the same signature are one feature.
-  const tally = new Map<string, { canonical: string; votes: number }>();
-  for (const text of samples) {
-    const seen = new Set<string>(); // dedup WITHIN a lens so one lens = at most one vote per feature
-    for (const raw of parseFeatures(text)) {
-      const sig = signature(raw);
-      if (!sig || seen.has(sig)) continue;
-      seen.add(sig);
-      const e = tally.get(sig) ?? { canonical: raw, votes: 0 };
-      e.votes += 1;
-      tally.set(sig, e);
-    }
-  }
-  return [...tally.values()]
-    .filter((e) => e.votes >= quorum)
-    .sort((a, b) => b.votes - a.votes)
-    .map((e) => ({ feature: e.canonical, votes: e.votes }));
+  const quorum = args.quorum ?? Math.max(2, Math.ceil(pool.length / 2));
+
+  // 2. MERGE synonymous phrasings + keep only what ≥ quorum lenses agreed on (one cheap call).
+  const mergeSystem =
+    `You merge synonymous feature suggestions from ${pool.length} independent reviewers and report ONLY what they AGREE on. ` +
+    `Output ONLY a JSON array of canonical feature names — short lowercase verb-phrases — that AT LEAST ${quorum} of the reviewers suggested. ` +
+    `Treat differently-worded suggestions for the same capability as ONE (e.g. "link expiration", "set expiry date", and "expiration settings" are the SAME feature). ` +
+    `Order by how many reviewers agreed, most-agreed first. No descriptions, no extras.`;
+  const mergeUser = pool.map((l, i) => `Reviewer ${i + 1}: ${JSON.stringify(l)}`).join("\n");
+  const merged = await llm
+    .complete({ model, system: mergeSystem, user: mergeUser, json: true, maxTokens: 500 })
+    .then((r) => parseFeatures(r.text))
+    .catch(() => []);
+  return merged;
 }
 
-/** Pull a JSON array of feature strings out of a model reply (tolerant of fences / extra prose). */
+/** Feature names from a model reply — tolerant of a JSON array of strings OR a JSON object
+ *  ({feature_name: description}, which cheap models often return); object KEYS are humanized. */
 export function parseFeatures(text: string): string[] {
-  const m = text.match(/\[[\s\S]*\]/);
-  if (!m) return [];
-  try {
-    const arr: unknown = JSON.parse(m[0]);
-    if (!Array.isArray(arr)) return [];
-    return arr.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((s) => s.trim());
-  } catch {
-    return [];
+  const arrM = text.match(/\[[\s\S]*\]/);
+  if (arrM) {
+    try {
+      const arr: unknown = JSON.parse(arrM[0]);
+      if (Array.isArray(arr)) return arr.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((s) => s.trim());
+    } catch { /* fall through to object */ }
   }
-}
-
-// Common UI-verb synonyms collapse to one token so "reveal"/"show"/"unmask" cluster together.
-const VERB_CANON: Record<string, string> = {
-  show: "reveal", unmask: "reveal", unhide: "reveal", view: "reveal", display: "reveal",
-  remove: "delete", revoke: "delete", erase: "delete",
-  create: "add", new: "add", store: "add",
-  update: "edit", modify: "edit", rename: "edit",
-  find: "search", filter: "search", lookup: "search",
-  clipboard: "copy",
-};
-// Words that carry no distinguishing meaning for a feature (articles, fillers, generic nouns).
-const STOP = new Set([
-  "a", "an", "the", "to", "of", "for", "with", "and", "or", "your", "my", "this", "that", "into",
-  "able", "ability", "allow", "support", "can", "be", "is", "it", "on", "in", "from", "as", "per",
-  "user", "users", "item", "items", "entry", "entries", "value", "values", "data", "key", "keys",
-  "credential", "credentials", "api", "page", "feature", "option", "secret", "secrets", "field",
-]);
-
-/** Reduce a feature phrase to a content-word signature so near-phrasings cluster as one. */
-export function signature(raw: string): string {
-  const words = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, " ")
-    .split(/[\s-]+/)
-    .map((w) => VERB_CANON[w] ?? w)
-    .filter((w) => w && !STOP.has(w));
-  return [...new Set(words)].sort().join(" ");
+  const objM = text.match(/\{[\s\S]*\}/);
+  if (objM) {
+    try {
+      const obj: unknown = JSON.parse(objM[0]);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        return Object.keys(obj)
+          .map((k) => k.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase().trim())
+          .filter(Boolean);
+      }
+    } catch { /* none */ }
+  }
+  return [];
 }

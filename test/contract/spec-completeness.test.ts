@@ -1,60 +1,46 @@
 import { describe, it, expect } from "vitest";
-import { specCompleteness, signature, parseFeatures, COMPLETENESS_LENSES } from "../../src/contract/spec-completeness.js";
+import { specCompleteness, parseFeatures, COMPLETENESS_LENSES } from "../../src/contract/spec-completeness.js";
 import { MockLlm } from "../../src/llm/mock.js";
 
-describe("signature — near-phrasings cluster, distinct features don't", () => {
-  it("collapses verb synonyms + strips generic nouns", () => {
-    expect(signature("copy key to clipboard")).toBe(signature("copy value to clipboard"));
-    expect(signature("copy to clipboard")).toBe(signature("copy the api key"));
-    expect(signature("reveal masked key")).toBe(signature("show masked value")); // show -> reveal
-    expect(signature("delete a credential")).toBe(signature("remove a key")); // remove -> delete
-  });
-  it("keeps genuinely different features apart", () => {
-    expect(signature("copy key")).not.toBe(signature("delete key"));
-    expect(signature("reveal masked key")).not.toBe(signature("search for a key"));
-  });
-});
-
-describe("parseFeatures — tolerant of fences/prose", () => {
-  it("extracts the JSON array even with surrounding text", () => {
-    expect(parseFeatures('Sure! ["copy key","delete item"] done')).toEqual(["copy key", "delete item"]);
+describe("parseFeatures — array OR object replies (cheap models return both)", () => {
+  it("extracts a JSON array, tolerant of fences/prose", () => {
+    expect(parseFeatures('Sure! ["copy link","delete a link"] done')).toEqual(["copy link", "delete a link"]);
     expect(parseFeatures("```json\n[\"reveal value\"]\n```")).toEqual(["reveal value"]);
-    expect(parseFeatures("no array here")).toEqual([]);
+  });
+  it("falls back to a JSON OBJECT's humanized keys (the {feature: description} shape)", () => {
+    expect(parseFeatures('{"custom_aliases":"...","clickAnalytics":"..."}')).toEqual(["custom aliases", "click analytics"]);
+  });
+  it("returns [] on no JSON", () => {
+    expect(parseFeatures("no json here")).toEqual([]);
   });
 });
 
-describe("specCompleteness — cheap-consensus across diverse lenses", () => {
+describe("specCompleteness — diverse-lens RECALL then one cheap MERGE", () => {
   const arr = (xs: string[]) => ({ text: JSON.stringify(xs) });
-  // 6 lenses; copy/reveal/delete are named by most, export/audit are one-off noise.
-  const lensReplies = [
-    arr(["copy key to clipboard", "reveal masked key", "delete a credential"]),
-    arr(["copy value to clipboard", "show masked value", "delete an entry"]),
-    arr(["copy to clipboard", "unmask masked secret", "remove a key", "export all keys"]),
-    arr(["copy the api key", "delete item"]),
-    arr(["reveal masked credential", "delete a key"]),
-    arr(["copy key", "audit log", "reveal masked value"]),
-  ];
 
-  it("keeps features a majority of lenses independently name, drops one-offs", async () => {
-    const llm = new MockLlm(lensReplies);
-    const out = await specCompleteness(llm, "qwen/qwen3-coder", { idea: "a credential vault", stated: ["login", "masked dashboard"] });
-    const sigs = out.map((o) => signature(o.feature));
-    expect(sigs).toContain(signature("copy to clipboard"));
-    expect(sigs).toContain(signature("reveal masked value"));
-    expect(sigs).toContain(signature("delete an item"));
-    // one-off noise filtered out by the quorum
-    expect(sigs).not.toContain(signature("export all keys"));
-    expect(sigs).not.toContain(signature("audit log"));
-    // each survivor cleared quorum (>=3 of 6) and they're sorted most-agreed first
-    expect(out.every((o) => o.votes >= 3)).toBe(true);
-    expect(out[0]!.votes).toBeGreaterThanOrEqual(out[out.length - 1]!.votes);
-    // one cheap call per lens — no premium model anywhere
-    expect(llm.calls).toHaveLength(COMPLETENESS_LENSES.length);
+  it("recalls per lens, then the merge pass returns the agreed (synonym-collapsed) features", async () => {
+    // 6 lens recalls (varied phrasings of the same few capabilities) + 1 merge reply.
+    const llm = new MockLlm([
+      arr(["copy the short link", "set link expiration", "view click counts"]),
+      arr(["copy url to clipboard", "expiry date for links", "click analytics"]),
+      arr(["custom alias", "expiration settings", "delete a link"]),
+      arr(["custom short code", "track clicks", "qr code"]),
+      arr(["copy link", "delete link", "custom alias"]),
+      arr(["click stats", "delete a short link", "set expiry"]),
+      // the MERGE pass output (synonyms collapsed, ordered by agreement):
+      arr(["copy the link", "delete a link", "click analytics", "link expiration", "custom alias"]),
+    ]);
+    const out = await specCompleteness(llm, "qwen/qwen3-coder", { idea: "a URL shortener", stated: ["shorten a url", "redirect"] });
+    expect(out).toEqual(["copy the link", "delete a link", "click analytics", "link expiration", "custom alias"]);
+    // 6 lens calls + 1 merge call — all cheap, no premium model
+    expect(llm.calls).toHaveLength(COMPLETENESS_LENSES.length + 1);
+    // the merge call was given each reviewer's list
+    expect(llm.calls[6]!.user).toContain("Reviewer 1:");
+    expect(llm.calls[6]!.user).toContain("Reviewer 6:");
   });
 
-  it("a higher quorum is stricter (only unanimous-ish features survive)", async () => {
-    const llm = new MockLlm(lensReplies);
-    const out = await specCompleteness(llm, "qwen/qwen3-coder", { idea: "a credential vault", quorum: 6 });
-    expect(out.length).toBe(0); // nothing was named by ALL 6 lenses in this fixture
+  it("returns [] when every lens comes back empty (nothing to merge)", async () => {
+    const llm = new MockLlm([arr([]), arr([]), arr([]), arr([]), arr([]), arr([])]);
+    expect(await specCompleteness(llm, "qwen/qwen3-coder", { idea: "x" })).toEqual([]);
   });
 });
