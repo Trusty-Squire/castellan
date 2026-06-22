@@ -6,6 +6,7 @@ import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } fro
 import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair, briefFileCoherence } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
+import { scaffoldServerNode, serverSkeletonNote } from "./server-scaffold.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
 import { packContext } from "../harness/context.js";
 
@@ -152,6 +153,12 @@ export interface DeriveV2Input {
    * Sizes each node at decompose time and is copied into every node's max_context_tokens.
    */
   nodeContextBudget?: number;
+  /**
+   * Seed a runnable server-plumbing skeleton into the workdir for greenfield HTTP-server nodes
+   * (the cheap model then fills only the route handlers). On for the real build path; off by
+   * default so judge/dry-run/test callers don't write source into a workdir they only inspect.
+   */
+  scaffoldServers?: boolean;
 }
 
 export interface DirectMissionItem {
@@ -885,6 +892,28 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     if (port !== null) gatesByNode.set(id, { ...g, run: wrapWithServeGate(g.run, port) });
   }
 
+  // 3c2. SERVER PLUMBING SCAFFOLD — for a greenfield node whose gate now boots an HTTP server,
+  // seed a runnable Express plumbing skeleton (boot on process.env.PORT, json, static, a JSON
+  // store) with the routes stubbed, so the cheap model fills only the HANDLERS instead of
+  // improvising the boot/port/persistence floor it reliably slips on (no-boot/500). The harness
+  // owns this floor, exactly like the npm scaffold. Greenfield-only; package.json joins the
+  // node's radius so the model can add its own handler deps. (Proven by hand on the shortener.)
+  const seededServers: string[] = [];
+  if (input.scaffoldServers) {
+    for (const [id, g] of gatesByNode) {
+      if (g.type !== "command" || !g.run || !/serve-gate\.mjs --port/.test(g.run)) continue;
+      const node = decomposed.nodes.find((n) => n.id === id);
+      if (!node) continue;
+      const { seeded, serverFile } = scaffoldServerNode({ workdir: input.workdir, blastRadius: node.blast_radius });
+      if (!seeded) continue;
+      for (const f of [serverFile, "package.json"]) if (!node.blast_radius.includes(f)) node.blast_radius.push(f);
+      if (!node.context_globs.includes(serverFile)) node.context_globs.push(serverFile);
+      if (!node.blast_radius.includes("data/**")) node.blast_radius.push("data/**");
+      node.brief += "\n\n" + serverSkeletonNote(serverFile);
+      seededServers.push(`${id}→${serverFile}`);
+    }
+  }
+
   // 3e. PORT COHERENCE — a node whose serve-gate boots a server it doesn't build can't boot
   // it (the bot-module wall: its gate curls :3000, the web app ANOTHER node builds). Depend
   // on the node that builds that server so its files exist when this gate runs (deterministic,
@@ -1072,7 +1101,11 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       ? `\n\n⚠ gate proofreader could not repair ${gateWarnings.length} unsatisfiable gate(s) — these will halt the build honestly:\n` +
         gateWarnings.map((w) => `  - ${w.node}: ${w.issues.join("; ")}`).join("\n")
       : "";
-  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints) + proofreadNote;
+  const scaffoldNote =
+    seededServers.length > 0
+      ? `\n\nseeded server plumbing (boot/port/json/static/store) for ${seededServers.length} node(s) — the build fills only the handlers: ${seededServers.join(", ")}`
+      : "";
+  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints) + proofreadNote + scaffoldNote;
   return {
     ok: true,
     mission: mission.data,
@@ -1313,6 +1346,8 @@ export async function runDeriveV2(args: string[]): Promise<number> {
     // Size nodes to the RUNTIME executor's envelope, not the knight that plans them.
     executorModel: chain.executor,
     nodeContextBudget: chain.node_context_budget,
+    // The real build path: seed server plumbing into the workdir so the cheap loop fills handlers.
+    scaffoldServers: true,
   });
 
   if (!result.ok) {

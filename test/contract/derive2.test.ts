@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -77,6 +77,43 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(llm.calls).toHaveLength(5);
     // no provider-reported cost in this script → estimation territory
     expect(r.costUsd).toBeUndefined();
+  });
+
+  it("seeds server plumbing for a greenfield serve-gate node (scaffoldServers) and wires the node", async () => {
+    const decompose = JSON.stringify({
+      contract: "GET/POST /api/items over an HTTP server on :8090",
+      nodes: [
+        { id: "api", brief: "build the items HTTP API", deps: [], context_globs: [], blast_radius: ["server.js", "data/**"], budget_usd: 1.0 },
+      ],
+    });
+    // a freeform localhost-curl gate → serverGatePort detects :8090 → wrapWithServeGate → a server node
+    const gates = JSON.stringify({ gates: [{ node: "api", freeform: "curl -fsS http://localhost:8090/api/items | grep -q ok" }] });
+    const llm = new MockLlm([{ text: decompose }, { text: gates }, { text: JSON.stringify({ claims: [] }) }]);
+    const r = await deriveV2({ ...base(llm), goal: "an items HTTP API", scaffoldServers: true });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const node = r.mission.nodes[0]!;
+    // the gate boots the server; the harness seeded a runnable skeleton the model only fills
+    expect(node.gate!.run).toContain("serve-gate.mjs --port 8090");
+    expect(readFileSync(join(workdir, "server.js"), "utf8")).toContain("app.listen(PORT");
+    expect(existsSync(join(workdir, "server.js"))).toBe(true);
+    // node is wired to fill (not improvise) the server: brief note + radius covers the seeded files
+    expect(node.brief).toContain("ADD ONLY YOUR ROUTE HANDLERS");
+    expect(node.blast_radius).toContain("package.json");
+    expect(node.context_globs).toContain("server.js");
+    expect(r.readback).toContain("seeded server plumbing");
+  });
+
+  it("does NOT seed when scaffoldServers is off (judge/dry-run callers only inspect)", async () => {
+    const decompose = JSON.stringify({
+      contract: "HTTP server on :8090",
+      nodes: [{ id: "api", brief: "build the API", deps: [], context_globs: [], blast_radius: ["server.js"], budget_usd: 1.0 }],
+    });
+    const gates = JSON.stringify({ gates: [{ node: "api", freeform: "curl -fsS http://localhost:8090/ | grep -q ok" }] });
+    const llm = new MockLlm([{ text: decompose }, { text: gates }, { text: JSON.stringify({ claims: [] }) }]);
+    const r = await deriveV2({ ...base(llm), goal: "an API" }); // scaffoldServers omitted
+    expect(r.ok).toBe(true);
+    expect(existsSync(join(workdir, "server.js"))).toBe(false);
   });
 
   it("trimSurveyForDecompose caps an oversized survey, passes a small one through (domain-agnostic)", () => {
