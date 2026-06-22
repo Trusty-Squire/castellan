@@ -33,6 +33,18 @@ describe("reconcile", () => {
     expect(r.confabulation).toBe(false);
   });
 
+  it("does NOT fail a working app for runtime stores or backup residue (the JSON-store + .bak case)", () => {
+    // gate exit 0 (app works), but the model's testing wrote data/store.json + a package.json.bak.
+    const r = reconcile({
+      blastRadius: ["app.js", "package.json"],
+      doneCheck: "node .squire/serve-gate.mjs --port 3000 --check 'true'",
+      changedFiles: ["app.js", "package.json", "data/store.json", "package.json.bak", "data/app.db"],
+      record: record({ executedWrites: ["app.js"], finalMessage: "copied the server skeleton" }),
+    });
+    expect(r.outOfRadius).toEqual([]); // runtime store + backup are byproducts, not violations
+    expect(r.violations).toEqual([]);
+  });
+
   it("does NOT fail a node for the byproducts of doing the work (the secure-storage rung-2 case)", () => {
     // qwen built correct encryption (the gate passed), but wrote the DB its gate reads +
     // installed a dep — byproducts, never another node's source. Must not be a violation.

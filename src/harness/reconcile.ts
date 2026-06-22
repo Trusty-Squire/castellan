@@ -94,8 +94,10 @@ function isPlumbing(p: string): boolean {
  * changedFiles don't always respect it.
  */
 const BYPRODUCT_DIR_RE =
-  /(^|\/)(node_modules|dist|build|out|coverage|\.next|\.nuxt|\.cache|\.turbo|\.vite|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.venv|venv|target|\.git)\//;
-const BYPRODUCT_FILE_RE = /\.(db|sqlite|sqlite3|db-journal|log|pyc|pyo|tsbuildinfo)$|(^|\/)\.DS_Store$|(^|\/)[\w.-]+\.egg-info(\/|$)/;
+  /(^|\/)(node_modules|dist|build|out|coverage|\.next|\.nuxt|\.cache|\.turbo|\.vite|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.venv|venv|target|\.git|data|tmp|\.tmp)\//;
+// Runtime stores (a JSON/db file the app or gate writes), editor/backup residue (.bak/.tmp/.orig/.swp),
+// and the usual caches/logs — never another node's source, so never a reconcile failure.
+const BYPRODUCT_FILE_RE = /\.(db|sqlite|sqlite3|db-journal|log|pyc|pyo|tsbuildinfo|bak|tmp|orig|swp|swo)$|(^|\/)\.DS_Store$|(^|\/)[\w.-]+\.egg-info(\/|$)|(^|\/)data\/[\w.-]+\.json$/;
 function isByproduct(p: string): boolean {
   return BYPRODUCT_DIR_RE.test(p) || BYPRODUCT_FILE_RE.test(p);
 }
