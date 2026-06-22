@@ -13,6 +13,14 @@ describe("runGate", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  it("chmod +x's a model-authored .sh so ./script.sh runs (no execute bit from the write tool)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "squire-gate-sh-"));
+    writeFileSync(join(dir, "run-bot.sh"), "#!/bin/sh\necho ok\n"); // written WITHOUT +x (mode 0644)
+    const r = await runGate("./run-bot.sh | grep -q ok", dir);
+    expect(r.passed).toBe(true); // would be exit 126 (Permission denied) before the chmod
+    expect(r.exitCode).toBe(0);
+  });
+
   it("fails when the command exits nonzero and captures stderr", async () => {
     const r = await runGate("echo boom 1>&2; exit 3", cwd);
     expect(r.passed).toBe(false);

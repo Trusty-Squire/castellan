@@ -109,6 +109,17 @@ export async function runGate(
   timeoutMs: number = DEFAULT_GATE_TIMEOUT_MS,
 ): Promise<GateResult> {
   const started = Date.now();
+  // Equip the worker's shell scripts to run: the write tool can't set the execute bit, so a
+  // model-authored run-bot.sh is correct content but `./run-bot.sh` fails with "Permission
+  // denied" (exit 126). chmod +x every .sh in the workdir (outside node_modules/.git) before the
+  // gate — the harness equips its output, the same spirit as the package.json/manifest fixes.
+  try {
+    await execa(
+      "sh",
+      ["-c", `find . -path ./node_modules -prune -o -path ./.git -prune -o -name '*.sh' -type f -exec chmod +x {} + 2>/dev/null || true`],
+      { cwd, timeout: 10_000, reject: false },
+    );
+  } catch { /* best effort */ }
   // The gate runs an arbitrary shell command (npm test → vitest, npm install, …)
   // that can spawn grandchildren which hold the stdout pipe open — a vitest worker
   // with an unclosed handle, a dev server. execa's `timeout` SIGTERMs the `sh -c`

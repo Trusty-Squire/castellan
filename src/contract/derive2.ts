@@ -590,8 +590,10 @@ export function functionalUiGate(
     `[ "$(curl -s -o /dev/null -w '%{http_code}' ${base}${api} -u alice@sentinel.test:WRONGpw)" != "200" ]`, // bad creds rejected
     `curl -s -o /dev/null -w '%{http_code}' ${base}${prot} | grep -qE '30[12]|401|403'`, // unauth protected page is gated
   ];
-  const inner = [seed, ...checks].join(" && ");
-  return { type: "command", soft: false, run: wrapWithServeGate(inner, port) };
+  // Seed BEFORE serve-gate boots the app: an app that loads users at startup must already see
+  // them, and a freshly-booted server reads the same persistent store. (Measured: seeding inside
+  // --check, i.e. AFTER boot, 401'd because the app had already loaded an empty user set.)
+  return { type: "command", soft: false, run: `${seed} && ${wrapWithServeGate(checks.join(" && "), port)}` };
 }
 
 /** A node that renders a frontend surface — its blast_radius/context are UI files. */
