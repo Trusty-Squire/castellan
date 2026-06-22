@@ -120,45 +120,56 @@ describe("runMission", () => {
     expect(kinds).toContain("mission_end");
   });
 
-  it("escalates when rung 1 fails the gate, then passes on rung 2", async () => {
+  it("rung 1 fails the gate; the SAME model REPAIRS in place on rung 2 (stays cheap, no escalation)", async () => {
     const result = await run(oneNode, (_id, rung) => {
       if (rung === 1) {
         // does nothing useful — gate will fail
         return { steps: [{ text: "I think it's fine" }, { done: "all good" }] };
       }
+      // rung 2 is the executor's REPAIR turn — same model, gate error in context, fixes it
       return {
         steps: [
           { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
           { tool: "bash", args: { command: "bash check.sh" } },
-          { done: "fixed on retry" },
+          { done: "fixed on repair" },
         ],
       };
     });
     expect(result.completed).toBe(true);
     const node = result.nodes[0]!;
-    expect(node.maxRung).toBe(2);
-    const kinds = readTrace(result.tracePath).map((e) => e.kind);
+    expect(node.maxRung).toBe(2); // recovered on the repair rung — never reached the fallback model
+    const trace = readTrace(result.tracePath);
+    const kinds = trace.map((e) => e.kind);
     expect(kinds).toContain("node_fail");
-    expect(kinds).toContain("escalate");
-    expect(kinds).toContain("reset");
+    expect(kinds).toContain("repair"); // a same-model repair ran (not a reset to green)
+    // the rung-2 repair ran the SAME (executor) model, not the fallback
+    expect(trace.find((e) => e.kind === "node_start" && e.rung === 2)!.payload).toMatchObject({
+      model: "qwen/qwen3-coder",
+    });
   });
 
-  it("escalates a failed gate to a fresh rung-2 attempt (one retry concept: the ladder)", async () => {
+  it("when the repair also fails, escalates to a FRESH fallback model that resets and passes", async () => {
     const result = await run(oneNode, (_id, rung) => {
-      if (rung === 1) return { steps: [{ done: "still wrong" }] };
+      // rungs 1 & 2 are both the executor (attempt + its repair) — both useless here
+      if (rung <= 2) return { steps: [{ done: "still wrong" }] };
+      // rung 3 is the fallback model, a FRESH attempt (reset to green) that fixes it
       return {
         steps: [
           { tool: "edit", args: { path: "src/target.ts", oldString: "v = 0", newString: "v = 1" } },
-          { done: "fixed on rung 2" },
+          { done: "fixed on the fallback" },
         ],
       };
     });
     expect(result.completed).toBe(true);
-    expect(result.nodes[0]!.maxRung).toBe(2);
-    const kinds = readTrace(result.tracePath).map((e) => e.kind);
-    expect(kinds).toContain("escalate");
-    // no in-rung repair: failure goes straight to a reset + fresh next rung
-    expect(kinds).not.toContain("repair_start");
+    expect(result.nodes[0]!.maxRung).toBe(3); // executor + its repair exhausted, then the fallback
+    const trace = readTrace(result.tracePath);
+    const kinds = trace.map((e) => e.kind);
+    expect(kinds).toContain("repair"); // the rung-2 repair was attempted first
+    expect(kinds).toContain("escalate"); // then escalated to the fallback
+    expect(kinds).toContain("reset"); // the fresh fallback rung reset to green
+    expect(trace.find((e) => e.kind === "node_start" && e.rung === 3)!.payload).toMatchObject({
+      model: "deepseek/deepseek-chat",
+    });
   });
 
   it("resets after a failed attempt so a bad edit does not persist", async () => {
@@ -191,7 +202,7 @@ describe("runMission", () => {
     expect(result.completed).toBe(false);
     expect(result.halted).toBe(true);
     expect(result.haltReason).toMatch(/ladder/);
-    expect(result.nodes[0]!.maxRung).toBe(4);
+    expect(result.nodes[0]!.maxRung).toBe(6); // executor, exec-repair, fallback, fallback-repair, knight, knight+diff
   });
 
   it("halts honestly when a node's pack TRUNCATES at run time (over-scoped node, not DAG surgery)", async () => {

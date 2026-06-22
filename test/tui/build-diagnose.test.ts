@@ -83,7 +83,7 @@ describe("honest-halt diagnosis (readHaltFacts over a real halted trace)", () =>
     expect(facts.failingNodeId).toBe("report");
     expect(facts.gateCommand).toBe("grep -q OK src/report.txt");
     expect(facts.gateExitCode).toBe(1);
-    expect(facts.maxRung).toBe(4);
+    expect(facts.maxRung).toBe(6); // ladder now interleaves a same-model repair rung before each escalation
     expect(facts.confabulation).toBe(false);
     expect(facts.haltReason).toMatch(/exhausted the escalation ladder/);
   });

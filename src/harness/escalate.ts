@@ -24,22 +24,34 @@ export interface Rung {
   addFailureContext: boolean;
   /** Append the prior attempt's diff (rung 4 only). */
   addPriorDiff: boolean;
+  /**
+   * REPAIR rung: re-run the SAME model on its OWN failed attempt — do NOT reset to the last
+   * green checkpoint first, so the model edits the broken file it just wrote and fixes only what
+   * the gate reported (e.g. "ReferenceError: code is not defined at line 54"). A fresh escalation
+   * rung resets and rewrites from scratch, discarding a nearly-correct attempt over a one-line
+   * slip; a repair rung keeps the work and patches it. This is the cheap×reliable loop: a cheap
+   * model that ALMOST passed gets one targeted fix before we spend a pricier model.
+   */
+  repair?: boolean;
 }
 
 /**
- * The escalation ladder (SPEC §9). Rung 5 = MISSION_HALTED, represented by
- * exhausting this 4-element array (the runner halts when no rung remains).
+ * The escalation ladder (SPEC §9). Each model gets a same-model REPAIR rung (fix your own
+ * gate failure in place) before we escalate to the next, pricier model. Exhausting the array =
+ * MISSION_HALTED (the runner halts when no rung remains).
  */
 export function ladder(chain: Chain): Rung[] {
   return [
     { rung: 1, model: chain.executor, addFailureContext: false, addPriorDiff: false },
-    { rung: 2, model: chain.fallback, addFailureContext: true, addPriorDiff: false },
-    { rung: 3, model: chain.knight, addFailureContext: true, addPriorDiff: false },
-    { rung: 4, model: chain.knight, addFailureContext: true, addPriorDiff: true },
+    { rung: 2, model: chain.executor, addFailureContext: true, addPriorDiff: false, repair: true },
+    { rung: 3, model: chain.fallback, addFailureContext: true, addPriorDiff: false },
+    { rung: 4, model: chain.fallback, addFailureContext: true, addPriorDiff: false, repair: true },
+    { rung: 5, model: chain.knight, addFailureContext: true, addPriorDiff: false },
+    { rung: 6, model: chain.knight, addFailureContext: true, addPriorDiff: true },
   ];
 }
 
-export const MAX_RUNGS = 4;
+export const MAX_RUNGS = 6;
 
 export interface FailureInfo {
   gateCommand: string;
@@ -55,6 +67,8 @@ export interface FailureInfo {
   changedFiles: string[];
   /** Prior attempt's unified diff (only attached on rung 4). */
   priorDiff?: string;
+  /** REPAIR rung: the previous attempt's files are STILL in the tree — fix them in place. */
+  repair?: boolean;
 }
 
 /**
@@ -96,7 +110,11 @@ export function buildFailureContext(info: FailureInfo): string {
     lines.push("- previous attempt diff:");
     lines.push(indent(boundDiff(info.priorDiff.trim()), "    "));
   }
-  lines.push("Start fresh from the current (reset) repository state. Do not assume any prior change persists.");
+  lines.push(
+    info.repair
+      ? "YOUR previous attempt's files are STILL IN PLACE (not reset). Read them and FIX ONLY what the gate reported above — edit the offending lines; do NOT rewrite from scratch or re-create files that are already correct."
+      : "Start fresh from the current (reset) repository state. Do not assume any prior change persists.",
+  );
   lines.push("=== END FAILURE CONTEXT ===");
   return lines.join("\n");
 }

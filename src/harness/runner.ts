@@ -270,16 +270,27 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         costUsdSoFar: budget.globalSpent(),
       });
 
-      // Each attempt is preceded by a reset to the last green checkpoint.
+      // Each FRESH attempt is preceded by a reset to the last green checkpoint.
       // For rung > 1 this reverts the previous failed attempt (RESET state).
-      await resetTo(workdir, lastGreen);
-      if (rung.rung > 1) {
-        trace.append("reset", {
+      // A REPAIR rung is the exception: it KEEPS the prior attempt's (failed) working tree so the
+      // same model can fix only what the gate reported, instead of rewriting from scratch.
+      if (rung.repair) {
+        trace.append("repair", {
           nodeId: node.id,
           rung: rung.rung,
-          payload: { to: lastGreen },
+          payload: { model: rung.model, keptWorkdir: true },
           costUsdSoFar: budget.globalSpent(),
         });
+      } else {
+        await resetTo(workdir, lastGreen);
+        if (rung.rung > 1) {
+          trace.append("reset", {
+            nodeId: node.id,
+            rung: rung.rung,
+            payload: { to: lastGreen },
+            costUsdSoFar: budget.globalSpent(),
+          });
+        }
       }
 
       const pack = packContext({
@@ -332,6 +343,7 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
           buildFailureContext({
             ...failure,
             priorDiff: rung.addPriorDiff ? priorDiff : undefined,
+            repair: rung.repair,
           });
       }
 

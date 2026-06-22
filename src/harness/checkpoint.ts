@@ -58,7 +58,11 @@ export async function resetTo(cwd: string, sha: string): Promise<void> {
 
 /** Files changed in the working tree relative to a sha (staged + unstaged + untracked). */
 export async function changedFilesSince(cwd: string, sha: string): Promise<string[]> {
-  const tracked = await git(cwd, ["diff", "--name-only", sha]);
+  // `-c core.fileMode=false`: ignore executable-bit-only changes. The gate harness `chmod +x`es a
+  // node's *.sh check scripts before running them; on a REPAIR rung (which keeps the working tree
+  // rather than resetting) that mode flip would otherwise surface as a phantom "changed file outside
+  // blast_radius" for a script the model never wrote. A mode change is not a model content edit.
+  const tracked = await git(cwd, ["-c", "core.fileMode=false", "diff", "--name-only", sha]);
   const untracked = await git(cwd, ["ls-files", "--others", "--exclude-standard"]);
   const set = new Set<string>();
   for (const f of [...tracked.split("\n"), ...untracked.split("\n")]) {

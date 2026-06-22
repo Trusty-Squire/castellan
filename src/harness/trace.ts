@@ -18,6 +18,7 @@ export const TRACE_KINDS = [
   "judge_flag",
   "checkpoint",
   "reset",
+  "repair",
   "escalate",
   "dispute_review",
   "budget_stop",

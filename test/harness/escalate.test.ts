@@ -11,19 +11,31 @@ const chain = {
 };
 
 describe("ladder", () => {
-  it("produces the 4-rung escalation plan per SPEC §9", () => {
+  it("interleaves a same-model REPAIR rung before each escalation (SPEC §9)", () => {
     const rungs = ladder(chain);
     expect(rungs).toHaveLength(MAX_RUNGS);
+    // executor, executor-repair, fallback, fallback-repair, knight, knight+diff
     expect(rungs.map((r) => r.model)).toEqual([
       "qwen/qwen3-coder",
+      "qwen/qwen3-coder",
+      "deepseek/deepseek-chat",
       "deepseek/deepseek-chat",
       "anthropic/claude-opus-4",
       "anthropic/claude-opus-4",
     ]);
+    // a repair rung re-runs the SAME model on its own failed attempt, with failure context
+    expect(rungs.map((r) => r.repair ?? false)).toEqual([false, true, false, true, false, false]);
     expect(rungs[0]!.addFailureContext).toBe(false);
-    expect(rungs[1]!.addFailureContext).toBe(true);
-    expect(rungs[3]!.addPriorDiff).toBe(true);
-    expect(rungs[2]!.addPriorDiff).toBe(false);
+    expect(rungs[1]!.addFailureContext).toBe(true); // the repair rung needs the gate error to fix it
+    expect(rungs[5]!.addPriorDiff).toBe(true);
+    expect(rungs[4]!.addPriorDiff).toBe(false);
+  });
+
+  it("a repair rung always pairs with the model it repairs (no cross-model repair)", () => {
+    for (const r of ladder(chain).filter((x) => x.repair)) {
+      // repair rungs carry failure context (you can't fix what you can't see)
+      expect(r.addFailureContext).toBe(true);
+    }
   });
 });
 
