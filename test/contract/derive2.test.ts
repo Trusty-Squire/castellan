@@ -612,7 +612,7 @@ describe("harness-derived UI gate — deterministic DOM teeth without the planne
     expect(g.run).toContain('"fill":"[data-testid=password-input]"');
     expect(g.run).toContain('"click":"[data-testid=login-button]"');
     // dashboard hooks are asserted AFTER the click, not before it
-    const runStr = g.run;
+    const runStr = g.run ?? "";
     expect(runStr.indexOf('"click":"[data-testid=login-button]"')).toBeLessThan(runStr.indexOf('"assert":"[data-testid=dashboard]"'));
   });
 

@@ -3,7 +3,7 @@ import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
 import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
-import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair } from "./gate-proofread.js";
+import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair, briefFileCoherence } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -521,10 +521,12 @@ function planLoginFlow(
   // from the contract, defaulting to the conventional ones.
   const createU = contract.match(/\b(create_?user|createUser)\b/i)?.[1] ?? "create_user";
   const storeK = contract.match(/\b(store_?api_?key|storeApiKey|store_?key)\b/i)?.[1] ?? "store_api_key";
+  // JS string literals are SINGLE-quoted because the whole script is in a double-quoted
+  // `node -e "…"` (double quotes inside would close it) — same convention as the storage gate.
   const seed =
     `node -e "const s=require('./storage');(async()=>{` +
-    `try{await s.${createU}(${JSON.stringify(TEST_EMAIL)},${JSON.stringify(TEST_PW)})}catch(e){};` +
-    `try{await s.${storeK}(${JSON.stringify(TEST_EMAIL)},'vouchflow','vouchflow_key_demo0001112223')}catch(e){};` +
+    `try{await s.${createU}('${TEST_EMAIL}','${TEST_PW}')}catch(e){};` +
+    `try{await s.${storeK}('${TEST_EMAIL}','vouchflow','vouchflow_key_demo0001112223')}catch(e){};` +
     `process.exit(0)})().catch(()=>process.exit(0))"`;
 
   const steps: Array<Record<string, unknown>> = [];
@@ -853,6 +855,16 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       for (const f of toolingCoherence(tnodes.find((t) => t.id === n.id)!, tnodes)) {
         if (!n.blast_radius.includes(f)) n.blast_radius.push(f);
       }
+    }
+  }
+
+  // 3g. BRIEF↔RADIUS COHERENCE — let a node write the files its own brief tells it to create.
+  // A brief that says "Create login.html" while blast_radius only permits views/login.html denies
+  // the model's correct write (measured: web-app's login.html/dashboard.html denied). Widen the
+  // radius to cover brief-named files (permits, never forces).
+  for (const n of decomposed.nodes) {
+    for (const f of briefFileCoherence(n.brief, n.blast_radius)) {
+      if (!n.blast_radius.includes(f)) n.blast_radius.push(f);
     }
   }
 

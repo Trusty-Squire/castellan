@@ -12,6 +12,26 @@
  * working build, which is worse than missing one.
  */
 import type { LlmClient } from "../llm/types.js";
+import { makeMatcher } from "../harness/globs.js";
+
+/** Files a brief explicitly instructs the worker to CREATE/WRITE/ADD (by name + extension). */
+const BRIEF_CREATE_RE =
+  /\b(?:create|write|add|generate|implement)\s+(?:an?\s+|the\s+)?([\w-]+(?:\/[\w-]+)*\.(?:html|css|jsx?|tsx?|mjs|cjs|json|vue|svelte|py|sql|sh|md))\b/gi;
+export function briefNamedFiles(brief: string): string[] {
+  return [...new Set([...brief.matchAll(BRIEF_CREATE_RE)].map((m) => m[1]!))];
+}
+
+/**
+ * BRIEF↔RADIUS COHERENCE: the worker must be ALLOWED to write the files its own brief tells it
+ * to create. When a brief says "Create login.html" but blast_radius only permits views/login.html,
+ * the model follows the brief and its write is DENIED — it cannot win, and no hooks ever render
+ * (measured: deepseek's web-app login.html/dashboard.html denied). Returns the brief-named files
+ * the radius does not cover, to ADD to it. Widening a radius only permits, never forces.
+ */
+export function briefFileCoherence(brief: string, blastRadius: string[]): string[] {
+  const inRadius = makeMatcher(blastRadius);
+  return briefNamedFiles(brief).filter((f) => !inRadius(f) && !inRadius(`./${f}`));
+}
 
 /** A gate that can plausibly seed its own state — if so, we trust it and don't proofread further. */
 function canSeedItself(gate: string): boolean {

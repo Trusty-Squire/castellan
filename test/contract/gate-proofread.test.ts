@@ -1,5 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, interfaceCoherence, idempotencyRepair, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, interfaceCoherence, idempotencyRepair, briefFileCoherence, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+
+describe("briefFileCoherence — a node must be able to write the files its brief names", () => {
+  it("flags a brief-named file the blast_radius does not cover (the login.html denial)", () => {
+    const brief = "Create app.js (Express server). Create login.html with the form. Create dashboard.html showing keys.";
+    const radius = ["app.js", "views/login.html", "views/dashboard.html", "package.json"];
+    const add = briefFileCoherence(brief, radius);
+    expect(add).toContain("login.html");
+    expect(add).toContain("dashboard.html");
+    expect(add).not.toContain("app.js"); // already covered
+  });
+
+  it("returns nothing when the radius already covers brief-named files (incl. via glob)", () => {
+    const brief = "Create src/login.html and write src/app.js";
+    expect(briefFileCoherence(brief, ["src/**"])).toEqual([]);
+  });
+});
 
 describe("idempotencyRepair — a seeding gate that never clears its store fails on re-run", () => {
   it("PREPENDS a store reset to a create_user gate that reads a .db (the secure-storage poison)", () => {

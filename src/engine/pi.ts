@@ -30,7 +30,11 @@ const MAX_BLAST_VIOLATIONS = 25;
 // 600s ("generous for a real node"). Give the ordinary worker the same room; let the budget
 // meter and honest-halt do the real bounding.
 const DEFAULT_MAX_TOOL_CALLS_PER_ATTEMPT = 60;
-const DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT = 12;
+// A substantial file (an Express server with several routes) legitimately takes many
+// write→run→fix passes; 12 guillotined a node mid-build. Identical rewrites are already a free
+// no-op (the dup-write nudge), so this only counts DISTINCT versions — a real iterate-to-green
+// loop needs the headroom. The tool-call ceiling + cost meter are the real runaway guards.
+const DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT = 30;
 // Must comfortably exceed BASH_TIMEOUT_MS (120s) — a single `npm install` of native deps
 // (sqlite3/bcrypt → node-gyp) can eat that alone — AND leave room to iterate after. Parity
 // with CodexEngine's 600s so the cheap path isn't strangled relative to the premium one.
