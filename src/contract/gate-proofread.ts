@@ -30,7 +30,18 @@ export function briefNamedFiles(brief: string): string[] {
  */
 export function briefFileCoherence(brief: string, blastRadius: string[]): string[] {
   const inRadius = makeMatcher(blastRadius);
-  return briefNamedFiles(brief).filter((f) => !inRadius(f) && !inRadius(`./${f}`));
+  const add: string[] = [];
+  for (const f of briefNamedFiles(brief)) {
+    if (inRadius(f) || inRadius(`./${f}`)) continue;
+    // Permit the file by BASENAME in any directory — the model legitimately chooses where to put
+    // its own view/static files (public/, views/, templates/, root), and a strict path denies the
+    // correct write (measured: public/login.html denied → no hooks ever served). It's the node's
+    // OWN brief-named file, so a basename glob is safe (it never clobbers another node's work).
+    const base = f.split("/").pop()!;
+    const glob = `**/${base}`;
+    if (!inRadius(`x/${base}`) && !add.includes(glob)) add.push(glob);
+  }
+  return add;
 }
 
 /** A gate that can plausibly seed its own state — if so, we trust it and don't proofread further. */

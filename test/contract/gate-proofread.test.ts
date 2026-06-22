@@ -6,9 +6,10 @@ describe("briefFileCoherence — a node must be able to write the files its brie
     const brief = "Create app.js (Express server). Create login.html with the form. Create dashboard.html showing keys.";
     const radius = ["app.js", "views/login.html", "views/dashboard.html", "package.json"];
     const add = briefFileCoherence(brief, radius);
-    expect(add).toContain("login.html");
-    expect(add).toContain("dashboard.html");
-    expect(add).not.toContain("app.js"); // already covered
+    // permits the brief-named files by basename in any directory (public/, views/, root, …)
+    expect(add).toContain("**/login.html");
+    expect(add).toContain("**/dashboard.html");
+    expect(add.some((g) => g.includes("app.js"))).toBe(false); // already covered
   });
 
   it("returns nothing when the radius already covers brief-named files (incl. via glob)", () => {
