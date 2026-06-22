@@ -483,7 +483,7 @@ export function deriveUiGate(node: { brief: string }, contract = ""): Gate | nul
   // post-auth surface. (The line must test the behavior asked for, not an impossible page state.)
   const flow = planLoginFlow(hooks, text);
   if (flow) {
-    const gate = renderGate("dom-behavior", { url: "http://localhost:3000", steps: flow.steps, serve: "npm start" });
+    const gate = renderGate("dom-behavior", { url: flow.url, steps: flow.steps, serve: "npm start" });
     return { ...gate, run: `${flow.seed} && ${gate.run}` };
   }
 
@@ -507,7 +507,7 @@ function hookName(h: string): string {
 function planLoginFlow(
   hooks: string[],
   contract: string,
-): { seed: string; steps: Array<Record<string, unknown>> } | null {
+): { seed: string; steps: Array<Record<string, unknown>>; url: string } | null {
   const inputs = hooks.filter((h) => /(^|[-_])(input|email|password|username|user)([-_]|$)/.test(hookName(h)));
   const passwordInput = inputs.find((h) => /password/.test(hookName(h)));
   const submit = hooks.find((h) => /(login|log-?in|sign-?in|signin|submit)/.test(hookName(h)) && /(button|btn|submit)/.test(hookName(h)));
@@ -529,6 +529,13 @@ function planLoginFlow(
     `try{await s.${storeK}('${TEST_EMAIL}','vouchflow','vouchflow_key_demo0001112223')}catch(e){};` +
     `process.exit(0)})().catch(()=>process.exit(0))"`;
 
+  // Load the login surface at the route the brief mandates. The form usually lives at /login
+  // (the brief's "redirects to /login"), NOT the bare root — measured: every login hook was
+  // "not found" at root because the app served them at /login. Default to /login when the text
+  // references it; else the root.
+  const loginPath = /\/log[-_]?in\b/i.test(contract) ? "/login" : "";
+  const url = `http://localhost:3000${loginPath}`;
+
   const steps: Array<Record<string, unknown>> = [];
   // 1. login surface renders (teeth: not an empty shell)
   for (const h of [...loginSurface]) steps.push({ assert: h, exists: true });
@@ -538,7 +545,7 @@ function planLoginFlow(
   steps.push({ wait: 1500 }); // allow the redirect to /dashboard
   // 3. the post-auth surface is reachable and renders
   for (const h of postAuth) steps.push({ assert: h, exists: true });
-  return { seed, steps };
+  return { seed, steps, url };
 }
 
 /** A node that renders a frontend surface — its blast_radius/context are UI files. */
