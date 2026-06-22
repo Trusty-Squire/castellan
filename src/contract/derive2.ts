@@ -529,12 +529,14 @@ function planLoginFlow(
     `try{await s.${storeK}('${TEST_EMAIL}','vouchflow','vouchflow_key_demo0001112223')}catch(e){};` +
     `process.exit(0)})().catch(()=>process.exit(0))"`;
 
-  // Load the login surface at the route the brief mandates. The form usually lives at /login
-  // (the brief's "redirects to /login"), NOT the bare root — measured: every login hook was
-  // "not found" at root because the app served them at /login. Default to /login when the text
-  // references it; else the root.
-  const loginPath = /\/log[-_]?in\b/i.test(contract) ? "/login" : "";
-  const url = `http://localhost:3000${loginPath}`;
+  // Reaching the login surface robustly: cheap models serve the login form at inconsistent paths
+  // (/, /login, /index.html — measured both ways across runs), so guessing one URL is brittle.
+  // Instead load the PROTECTED route while unauthenticated — the brief guarantees it redirects to
+  // login ("GET /dashboard … else redirects to /login"), so the browser lands on the login page
+  // wherever it lives. After login, the same route serves the authed surface. One URL, any layout.
+  const protectedRoute = (postAuth.map(hookName).find((n) => /(dashboard|home|account|app)/.test(n)) ?? "").replace(/[-_].*/, "");
+  const entry = /\/dashboard\b/i.test(contract) ? "/dashboard" : protectedRoute ? `/${protectedRoute}` : "";
+  const url = `http://localhost:3000${entry}`;
 
   const steps: Array<Record<string, unknown>> = [];
   // 1. login surface renders (teeth: not an empty shell)
