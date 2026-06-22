@@ -33,3 +33,4 @@ to avoid bloat). If a dir is cleaned up, its row's finding still stands via memo
 When you run an experiment worth remembering: add a row here (question + 1-line
 finding + data path), and if the conclusion is durable, also write/update a memory
 file. Don't move the raw data into the repo — index it.
+| 2026-06-21 | **full build, all 3 guards** (the real verdict) | with seeding+port+tooling guards, is the halt finally the model? | YES, ruled out every harness explanation: gate FAIR (correct async base64+sqlite storage passes, exit 0), node EQUIPPED (package.json present), code RAN (no crash), code WRONG (trace shows qwen stored keys in PLAINTEXT `vouchflow_key_123` ×4, + wasted rungs installing `base64-js` instead of built-in Buffer). Genuine cheap-model-capability halt — harness correctly refused to ship plaintext creds = jidoka. The owner's skepticism drove ruling out 4 harness gaps before this verdict was earned. | `squire-c10/` (build.log, trace) |
