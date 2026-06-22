@@ -30,6 +30,9 @@ export interface FailureInfo {
   gateCommand: string;
   exitCode: number;
   timedOut: boolean;
+  /** The gate's STDOUT tail — for an assertion gate (grep/jq/test/SELECT) the diagnostic
+   *  lives HERE, not in stderr: the value that printed is what the check rejected. */
+  stdoutTail: string;
   stderrTail: string;
   reconcileViolations: string[];
   confabulation: boolean;
@@ -50,6 +53,14 @@ export function buildFailureContext(info: FailureInfo): string {
   lines.push("The previous attempt did not pass the gate. Facts:");
   lines.push(`- gate command: ${info.gateCommand}`);
   lines.push(`- gate exit code: ${info.exitCode}${info.timedOut ? " (timed out)" : ""}`);
+  if (info.stdoutTail.trim()) {
+    // The single most useful signal for an assertion gate: WHAT the check saw. A grep/jq/
+    // test failure is silent on stderr; the value it rejected is right here on stdout.
+    // READ IT to diagnose (e.g. a stored value that is still plaintext when it had to be
+    // encrypted, a number that's off, a field that's missing) — don't just retry blindly.
+    lines.push("- gate output (stdout tail) — THE DIAGNOSTIC; read it to see exactly what the check rejected:");
+    lines.push(indent(info.stdoutTail.trim(), "    "));
+  }
   if (info.stderrTail.trim()) {
     lines.push("- gate stderr (tail):");
     lines.push(indent(info.stderrTail.trim(), "    "));

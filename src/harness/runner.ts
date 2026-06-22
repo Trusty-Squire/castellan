@@ -452,6 +452,7 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         gateCommand: gate.command,
         exitCode: gate.exitCode,
         timedOut: gate.timedOut,
+        stdoutTail: gate.stdoutTail,
         stderrTail: gate.stderrTail,
         reconcileViolations: rec.violations,
         confabulation: rec.confabulation,

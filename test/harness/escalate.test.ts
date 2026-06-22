@@ -33,6 +33,7 @@ describe("buildFailureContext", () => {
       gateCommand: "pnpm test",
       exitCode: 1,
       timedOut: false,
+      stdoutTail: "",
       stderrTail: "AssertionError: expected 1 to be 2",
       reconcileViolations: ['changed file "x.ts" is outside blast_radius'],
       confabulation: true,
@@ -47,11 +48,30 @@ describe("buildFailureContext", () => {
     expect(block).toContain("src/a.ts");
   });
 
+  it("surfaces the gate STDOUT as the diagnostic — the worker can SEE what the check rejected", () => {
+    // The secure-storage failure: a grep gate is silent on stderr; the plaintext value it
+    // rejected is on stdout. Without this, qwen failed identically 4× because it was blind.
+    const block = buildFailureContext({
+      gateCommand: "sqlite3 app.db 'SELECT api_keys' | grep -v key_",
+      exitCode: 1,
+      timedOut: false,
+      stdoutTail: '{"vouchflow":"vouchflow_key_123"}',
+      stderrTail: "",
+      reconcileViolations: [],
+      confabulation: false,
+      changedFiles: ["storage.js"],
+    });
+    expect(block).toContain("gate output (stdout tail)");
+    expect(block).toContain("THE DIAGNOSTIC");
+    expect(block).toContain("vouchflow_key_123"); // the worker now sees the plaintext leak
+  });
+
   it("includes the prior diff only when provided", () => {
     const withDiff = buildFailureContext({
       gateCommand: "true",
       exitCode: 1,
       timedOut: false,
+      stdoutTail: "",
       stderrTail: "",
       reconcileViolations: [],
       confabulation: false,
