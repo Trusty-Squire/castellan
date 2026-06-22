@@ -324,6 +324,29 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     });
   });
 
+  it("NUDGES the model to finish a missing required module instead of ending the rung incomplete", async () => {
+    // Turn 1 writes only crypto.js and says done — storage.create_user (gate-required) is missing.
+    // The completeness nudge must re-prompt; turn 2 writes storage.js; the attempt then completes.
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        { tools: [{ id: "w1", name: "write", arguments: { path: "crypto.js", content: "module.exports={encrypt:()=>'x'}" } }], in: 100, out: 20 },
+        { text: "done (crypto only)", in: 10, out: 5 },
+        { tools: [{ id: "w2", name: "write", arguments: { path: "storage.js", content: "module.exports={create_user:()=>({})}" } }], in: 100, out: 20 },
+        { text: "storage added", in: 10, out: 5 },
+      ]),
+    });
+    const events = await collect(
+      engine,
+      req({
+        tools: { blastRadius: ["**"] },
+        doneCheck: "node -e \"const s=require('./storage');const c=require('./crypto');s.create_user();c.encrypt()\"",
+      }),
+    );
+    expect(existsSync(join(cwd, "storage.js"))).toBe(true); // written on the nudge
+    expect(events.some((e) => e.kind === "done")).toBe(true);
+    expect(events.some((e) => e.kind === "error")).toBe(false);
+  });
+
   it("does NOT count a refused write (invalid package.json) as executed — tool_result is an error", async () => {
     // The poka-yoke refuses invalid JSON; the failed write must surface as an error result so the
     // runner doesn't tally it as an executed write (which would falsely fail reconcile).

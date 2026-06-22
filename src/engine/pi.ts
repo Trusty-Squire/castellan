@@ -48,6 +48,10 @@ const DEFAULT_ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
 // (120s) so a maxed-out single command — which emits no events while it runs — isn't mistaken
 // for a stall; the tool_execution_end then bumps it.
 const DEFAULT_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
+// How many times to re-prompt the SAME model with what's still missing before giving up on the
+// attempt. The line telling a worker "not done — storage.js is missing create_user" and letting
+// it continue beats failing the whole rung and rebuilding from scratch on the next model.
+const MAX_COMPLETENESS_NUDGES = 2;
 /**
  * Bound the agent loop's conversation history. Every turn re-sends the full
  * transcript; without a cap a confused model that runs many tool calls (or one
@@ -222,7 +226,10 @@ export class PiEngine implements Engine {
       enforceToolLimit,
       recordMutation,
       async (path) => {
-        const validation = await validateRequiredCommonJsExports(exec, path, requiredExportsByPath.get(path) ?? []);
+        // Match the written path against required exports keyed by the REQUIRE path — which may
+        // be extensionless (require('./storage') → "storage" for a written "storage.js").
+        const required = requiredExportsByPath.get(path) ?? requiredExportsByPath.get(path.replace(/\.(c?js|mjs)$/, "")) ?? [];
+        const validation = await validateRequiredCommonJsExports(exec, path, required);
         if (validation.importError) {
           const reason = `attempt aborted because ${path} cannot be required for gate export validation`;
           abortAttempt(reason);
@@ -297,6 +304,27 @@ export class PiEngine implements Engine {
         ? `${req.brief}\n\n=== CONTEXT FILES (read-only unless writable) ===\n${renderPackedFiles(req.files)}`
         : req.brief;
 
+    // Gate-required modules the build does NOT yet satisfy. Uses Node's OWN resolution (so an
+    // extensionless require('./storage') matches storage.js), checked outside the agent's tools
+    // so it doesn't burn the tool-call ceiling. Returns human-readable gaps for the nudge.
+    const missingRequiredArtifacts = async (): Promise<string[]> => {
+      const gaps: string[] = [];
+      for (const [path, symbols] of requiredExportsByPath) {
+        if (symbols.length === 0) continue;
+        const script =
+          `try{const m=require(${JSON.stringify("./" + path)});` +
+          `const miss=${JSON.stringify(symbols)}.filter(s=>m==null||typeof m[s]==="undefined");` +
+          `if(miss.length){console.log("MISSING:"+miss.join(","));process.exit(2)}process.exit(0)}` +
+          `catch(e){console.log("IMPORT_ERROR");process.exit(3)}`;
+        const r = await exec.execute("bash", { command: `node -e ${shellQuote(script)}` });
+        if (r.ok) continue;
+        const o = r.output.trim();
+        if (o.includes("IMPORT_ERROR")) gaps.push(`require('./${path}') fails — the file does not exist or cannot load (it must export: ${symbols.join(", ")})`);
+        else if (o.includes("MISSING:")) gaps.push(`./${path} is missing export(s): ${o.split("MISSING:")[1]!.split(",").join(", ")}`);
+      }
+      return gaps;
+    };
+
     const run = (async () => {
       const timer = setTimeout(() => {
         abortAttempt(`attempt timed out after ${this.attemptTimeoutMs}ms`);
@@ -317,6 +345,23 @@ export class PiEngine implements Engine {
       try {
         const prompt = agent.prompt(userPrompt);
         await Promise.race([prompt, aborted]);
+        // Completeness nudge: if the model declared done while a gate-required module is still
+        // missing, tell it EXACTLY what's absent and let it keep going on the SAME attempt —
+        // rather than passing an incomplete part to a cryptic gate failure and rebuilding from
+        // scratch on the next rung (measured: deepseek finished with storage.js never written).
+        if (!state.aborted && !providerError && requiredExportsByPath.size > 0) {
+          let gaps = await missingRequiredArtifacts();
+          for (let i = 0; i < MAX_COMPLETENESS_NUDGES && gaps.length > 0 && !state.aborted && !providerError; i++) {
+            bumpIdle();
+            const p2 = agent.prompt(
+              `NOT DONE — the acceptance check still fails because:\n- ${gaps.join("\n- ")}\n` +
+                `Keep working: create/fix these now (write each file at the repo root with the EXACT exports named), then finish. Do not stop while they are missing.`,
+            );
+            await Promise.race([p2, aborted]);
+            if (state.aborted) { void p2.catch(() => undefined); break; }
+            gaps = await missingRequiredArtifacts();
+          }
+        }
         if (state.aborted) {
           void prompt.catch(() => undefined);
           out.push({ kind: "error", message: state.abortReason ?? "attempt aborted" });
