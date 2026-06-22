@@ -269,7 +269,9 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     expect(events.some((e) => e.kind === "done")).toBe(true);
   });
 
-  it("aborts a JavaScript write that imports cleanly but misses gate-required exports", async () => {
+  it("NUDGES (not aborts) a JavaScript write that misses gate-required exports — destructured form", async () => {
+    // Modules are written incrementally; aborting because it isn't complete YET kills a working
+    // build. The write succeeds with an immediate nudge naming the missing export.
     const engine = new PiEngine({
       streamFn: scriptedStreamFn([
         {
@@ -279,7 +281,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
           in: 100,
           out: 20,
         },
-        { text: "should not finish", in: 10, out: 5 },
+        { text: "stop", in: 10, out: 5 },
       ]),
     });
 
@@ -292,15 +294,11 @@ describe("PiEngine (network-free via injected streamFn)", () => {
       }),
     );
 
-    expect(events).toContainEqual({
-      kind: "error",
-      message: "attempt aborted because src/opportunities.js does not export required symbol(s): findArbitrage",
-    });
+    expect(events.some((e) => e.kind === "error" && /attempt aborted because/.test(e.message ?? ""))).toBe(false);
+    expect(events.some((e) => e.kind === "tool_result" && /does not yet export findArbitrage/.test(e.output ?? ""))).toBe(true);
   });
 
-  it("catches a missing export via the MEMBER-CALL gate pattern, not just destructuring", async () => {
-    // Gate uses `const o = require('./mod'); o.findArbitrage(...)` — the wrong-interface module
-    // (no findArbitrage) must be caught at write time, like the destructured form.
+  it("nudges via the MEMBER-CALL gate pattern too (const o = require('./mod'); o.findArbitrage())", async () => {
     const engine = new PiEngine({
       streamFn: scriptedStreamFn([
         {
@@ -308,7 +306,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
           in: 100,
           out: 20,
         },
-        { text: "should not finish", in: 10, out: 5 },
+        { text: "stop", in: 10, out: 5 },
       ]),
     });
     const events = await collect(
@@ -318,10 +316,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
         doneCheck: "node -e \"const o=require('./src/opportunities.js'); o.findArbitrage(); process.exit(0)\"",
       }),
     );
-    expect(events).toContainEqual({
-      kind: "error",
-      message: "attempt aborted because src/opportunities.js does not export required symbol(s): findArbitrage",
-    });
+    expect(events.some((e) => e.kind === "tool_result" && /does not yet export findArbitrage/.test(e.output ?? ""))).toBe(true);
   });
 
   it("NUDGES the model to finish a missing required module instead of ending the rung incomplete", async () => {
@@ -366,7 +361,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     expect(result && "output" in result && /not valid JSON/.test(result.output ?? "")).toBe(true);
   });
 
-  it("aborts a malformed JavaScript write when the gate requires CommonJS exports", async () => {
+  it("nudges (not aborts) a malformed JavaScript write when the gate requires CommonJS exports", async () => {
     const engine = new PiEngine({
       streamFn: scriptedStreamFn([
         {
@@ -380,7 +375,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
           in: 100,
           out: 20,
         },
-        { text: "should not finish", in: 10, out: 5 },
+        { text: "stop", in: 10, out: 5 },
       ]),
     });
 
@@ -393,10 +388,8 @@ describe("PiEngine (network-free via injected streamFn)", () => {
       }),
     );
 
-    expect(events).toContainEqual({
-      kind: "error",
-      message: "attempt aborted because src/opportunities.js cannot be required for gate export validation",
-    });
+    expect(events.some((e) => e.kind === "error" && /attempt aborted/.test(e.message ?? ""))).toBe(false);
+    expect(events.some((e) => e.kind === "tool_result" && /cannot be loaded yet/.test(e.output ?? ""))).toBe(true);
   });
 
   it("aborts an attempt that keeps failing edits on the same path", async () => {

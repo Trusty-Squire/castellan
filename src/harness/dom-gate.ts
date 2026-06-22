@@ -225,7 +225,7 @@ export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutM
         const diag = await evalExpr(
           cdp,
           `(()=>{const ids=[...document.querySelectorAll('[data-testid]')].map(e=>e.getAttribute('data-testid'));` +
-            `return JSON.stringify({url:location.href,title:document.title,bodyLen:(document.body?document.body.innerHTML.length:0),testids:ids.slice(0,30)})})()`,
+            `return JSON.stringify({url:location.href,title:document.title,body:(document.body?document.body.innerText.slice(0,200):''),testids:ids.slice(0,30)})})()`,
         );
         failures.push(`[diag] ${diag}`);
       } catch { /* best effort */ }

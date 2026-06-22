@@ -230,16 +230,17 @@ export class PiEngine implements Engine {
         // be extensionless (require('./storage') → "storage" for a written "storage.js").
         const required = requiredExportsByPath.get(path) ?? requiredExportsByPath.get(path.replace(/\.(c?js|mjs)$/, "")) ?? [];
         const validation = await validateRequiredCommonJsExports(exec, path, required);
+        // NUDGE, never abort: a module is often written incrementally (create_user now, get_user_keys
+        // next), so aborting the whole attempt because it isn't complete YET guillotines a working
+        // build. Give immediate feedback and let the worker keep going; the done-time completeness
+        // check is the real backstop. (MODULE_NOT_FOUND is already swallowed as transient upstream.)
         if (validation.importError) {
-          const reason = `attempt aborted because ${path} cannot be required for gate export validation`;
-          abortAttempt(reason);
-          throw new Error(reason);
+          return `note: ${path} cannot be loaded yet (a syntax error, or a dependency/sibling not ready) — the check needs it to export ${required.join(", ")}.`;
         }
         if (validation.missing.length > 0) {
-          const reason = `attempt aborted because ${path} does not export required symbol(s): ${validation.missing.join(", ")}`;
-          abortAttempt(reason);
-          throw new Error(reason);
+          return `note: ${path} does not yet export ${validation.missing.join(", ")} — the acceptance check requires these; add them before you finish.`;
         }
+        return null;
       },
       (id, name, path, reason) => {
         state.denied += 1;
@@ -413,7 +414,7 @@ type DenyHook = (id: string, name: ToolName, path: string, reason: string) => vo
 type ToolLimitHook = () => void;
 type MutationStatus = "ok" | "duplicate";
 type MutationHook = (path: string, content?: string) => MutationStatus;
-type ExportValidationHook = (path: string) => Promise<void>;
+type ExportValidationHook = (path: string) => Promise<string | null>;
 
 function makeTools(
   exec: ToolExecutor,
@@ -468,8 +469,8 @@ function makeTools(
       if (status === "duplicate") {
         return text(`${path} already contains exactly this content — no change needed. Move on to the next step (run the check, or edit a different file).`);
       }
-      await validateExports(path);
-      return text(r.output);
+      const nudge = await validateExports(path);
+      return text(nudge ? `${r.output}\n${nudge}` : r.output);
     },
   };
 
