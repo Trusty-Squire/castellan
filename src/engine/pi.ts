@@ -377,6 +377,13 @@ function makeTools(
     content: [{ type: "text", text: s || "(no output)" }],
     details: null,
   });
+  // A write/edit that did NOT persist (failed or refused, e.g. the package.json poka-yoke) must
+  // surface as a tool ERROR so it isn't tallied as an executed write — pi-agent-core only flags a
+  // result isError when the tool THROWS (a returned isError field is ignored), so we throw. This
+  // is a per-tool error (the model sees the message and continues), NOT an attempt abort.
+  const failTool = (msg: string): never => {
+    throw new Error(msg || "tool failed");
+  };
 
   const read: AgentTool<any> = {
     name: "read",
@@ -405,12 +412,14 @@ function makeTools(
         return text(r.output);
       }
       const path = r.path ?? readPath(params);
-      if (onMutation(path, readContent(params)) === "duplicate") {
+      const status = onMutation(path, readContent(params)); // count the attempt (runaway guard)
+      // A refused/failed write (the package.json poka-yoke) did NOT persist — surface it as an
+      // error so reconcile doesn't see a write that "isn't in the diff" and falsely fail the node.
+      if (!r.ok) failTool(r.output);
+      if (status === "duplicate") {
         return text(`${path} already contains exactly this content — no change needed. Move on to the next step (run the check, or edit a different file).`);
       }
-      if (r.ok) {
-        await validateExports(path);
-      }
+      await validateExports(path);
       return text(r.output);
     },
   };
@@ -428,8 +437,13 @@ function makeTools(
     execute: async (id, params) => {
       onToolStart();
       const r = await exec.execute("edit", params);
-      if (r.denied) onDeny(id, "edit", r.path ?? readPath(params), r.deniedReason ?? "denied");
-      else if (onMutation(r.path ?? readPath(params), readEditContent(params)) === "duplicate") {
+      if (r.denied) {
+        onDeny(id, "edit", r.path ?? readPath(params), r.deniedReason ?? "denied");
+        return text(r.output);
+      }
+      const status = onMutation(r.path ?? readPath(params), readEditContent(params)); // count the attempt
+      if (!r.ok) failTool(r.output); // failed edit didn't persist — error, not an executed write
+      if (status === "duplicate") {
         return text(`${r.path ?? readPath(params)} already reflects this edit — no change needed. Move on to the next step.`);
       }
       return text(r.output);
@@ -476,14 +490,27 @@ function readEditContent(params: unknown): string | undefined {
 
 function requiredCommonJsExportsByPath(doneCheck: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  const re = /const\s*\{\s*([^}]+?)\s*\}\s*=\s*require\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
-  for (const match of doneCheck.matchAll(re)) {
-    const names = match[1]!
-      .split(",")
-      .map((s) => s.trim().split(":")[0]!.trim())
-      .filter((s) => /^[A-Za-z_$][\w$]*$/.test(s));
-    const path = match[2]!;
-    out.set(path, [...new Set([...(out.get(path) ?? []), ...names])]);
+  const add = (path: string, names: string[]): void => {
+    const clean = names.filter((s) => /^[A-Za-z_$][\w$]*$/.test(s));
+    if (clean.length) out.set(path, [...new Set([...(out.get(path) ?? []), ...clean])]);
+  };
+
+  // 1. destructured: const { create_user, store_api_key } = require('./storage')
+  const destructureRe = /const\s*\{\s*([^}]+?)\s*\}\s*=\s*require\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
+  for (const match of doneCheck.matchAll(destructureRe)) {
+    add(match[2]!, match[1]!.split(",").map((s) => s.trim().split(":")[0]!.trim()));
+  }
+
+  // 2. member-call: const storage = require('./storage'); … storage.create_user(…)
+  //    The gate calls these as functions, so they MUST be exported — catch a wrong-interface
+  //    module at write time (an instant nudge) instead of a cryptic "X is not a function" gate
+  //    failure 30 tool calls later. (measured: qwen shipped a storage.js missing create_user.)
+  const bindRe = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
+  for (const bind of doneCheck.matchAll(bindRe)) {
+    const varName = bind[1]!;
+    const path = bind[2]!;
+    const callRe = new RegExp(`\\b${varName}\\.([A-Za-z_$][\\w$]*)\\s*\\(`, "g");
+    add(path, [...doneCheck.matchAll(callRe)].map((m) => m[1]!));
   }
   return out;
 }

@@ -298,6 +298,51 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     });
   });
 
+  it("catches a missing export via the MEMBER-CALL gate pattern, not just destructuring", async () => {
+    // Gate uses `const o = require('./mod'); o.findArbitrage(...)` — the wrong-interface module
+    // (no findArbitrage) must be caught at write time, like the destructured form.
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: [{ id: "w1", name: "write", arguments: { path: "src/opportunities.js", content: "module.exports = {};" } }],
+          in: 100,
+          out: 20,
+        },
+        { text: "should not finish", in: 10, out: 5 },
+      ]),
+    });
+    const events = await collect(
+      engine,
+      req({
+        tools: { blastRadius: ["src/**"] },
+        doneCheck: "node -e \"const o=require('./src/opportunities.js'); o.findArbitrage(); process.exit(0)\"",
+      }),
+    );
+    expect(events).toContainEqual({
+      kind: "error",
+      message: "attempt aborted because src/opportunities.js does not export required symbol(s): findArbitrage",
+    });
+  });
+
+  it("does NOT count a refused write (invalid package.json) as executed — tool_result is an error", async () => {
+    // The poka-yoke refuses invalid JSON; the failed write must surface as an error result so the
+    // runner doesn't tally it as an executed write (which would falsely fail reconcile).
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: [{ id: "w1", name: "write", arguments: { path: "package.json", content: "{ bad json, }" } }],
+          in: 100,
+          out: 20,
+        },
+        { text: "tried", in: 10, out: 5 },
+      ]),
+    });
+    const events = await collect(engine, req({ tools: { blastRadius: ["**"] } }));
+    const result = events.find((e) => e.kind === "tool_result");
+    expect(result && "ok" in result && result.ok).toBe(false);
+    expect(result && "output" in result && /not valid JSON/.test(result.output ?? "")).toBe(true);
+  });
+
   it("aborts a malformed JavaScript write when the gate requires CommonJS exports", async () => {
     const engine = new PiEngine({
       streamFn: scriptedStreamFn([
