@@ -34,6 +34,7 @@ export type DomStep =
   | { wait: number }
   | { read: string; as: string; prop?: string } // prop: "text" (default) | "value" | <attribute>
   | { click: string }
+  | { fill: string; value: string } // type text into an input/textarea (native setter + input/change)
   | { press: string } // a KeyboardEvent.key, e.g. "ArrowRight", " ", "Enter"
   | ({ assert: string; prop?: string } & AssertOp); // prop: "text" (default) | "value" | <attribute>, for the value ops
 
@@ -195,6 +196,12 @@ export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutM
       } else if ("press" in step) {
         await evalExpr(cdp, `(()=>{const t=document.activeElement||document.body;['keydown','keyup'].forEach(ty=>t.dispatchEvent(new KeyboardEvent(ty,{key:${jstr(step.press)},bubbles:true})));return true;})()`);
         await new Promise((r) => setTimeout(r, 150));
+      } else if ("fill" in step) {
+        if (!(await waitFor(cdp, step.fill, deadline))) { failures.push(`fill: selector not found: ${step.fill}`); continue; }
+        // Set value via the native setter so React/controlled inputs see the change, then fire
+        // input+change so any framework state updates. Without this you can't test ANY form.
+        await evalExpr(cdp, `(()=>{const el=document.querySelector(${jstr(step.fill)});if(!el)return false;const proto=el instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;const set=Object.getOwnPropertyDescriptor(proto,'value')&&Object.getOwnPropertyDescriptor(proto,'value').set;el.focus();if(set){set.call(el,${jstr(step.value)})}else{el.value=${jstr(step.value)}}['input','change'].forEach(t=>el.dispatchEvent(new Event(t,{bubbles:true})));return true;})()`);
+        await new Promise((r) => setTimeout(r, 120));
       } else if ("assert" in step) {
         const f = await runAssert(cdp, step, vars, deadline);
         if (f) failures.push(f);

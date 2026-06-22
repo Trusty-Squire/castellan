@@ -598,6 +598,24 @@ describe("harness-derived UI gate — deterministic DOM teeth without the planne
     expect(deriveUiGate({ brief: "implement the poker hand evaluator and side-pot logic" })).toBeNull();
   });
 
+  it("DRIVES the login flow for an auth-gated app instead of asserting post-auth hooks on the bare page", () => {
+    const contract =
+      "DOM HOOKS: [data-testid=login-form], [data-testid=email-input], [data-testid=password-input], [data-testid=login-button], [data-testid=dashboard], [data-testid=api-keys-list], [data-testid=logout-button]. " +
+      "MODULE EXPORTS: storage.create_user(email, password); storage.store_api_key(email, provider, api_key)";
+    const g = deriveUiGate({ brief: "login-protected dashboard" }, contract);
+    expect(g).not.toBeNull();
+    if (!g) return;
+    // seeds a user through the storage module so login has valid credentials
+    expect(g.run).toContain("create_user");
+    expect(g.run).toContain("test@example.com");
+    // fills the form and submits, THEN asserts the dashboard surface (not on the bare load)
+    expect(g.run).toContain('"fill":"[data-testid=password-input]"');
+    expect(g.run).toContain('"click":"[data-testid=login-button]"');
+    // dashboard hooks are asserted AFTER the click, not before it
+    const runStr = g.run;
+    expect(runStr.indexOf('"click":"[data-testid=login-button]"')).toBeLessThan(runStr.indexOf('"assert":"[data-testid=dashboard]"'));
+  });
+
   it("reads hooks from the shared CONTRACT, not just the node brief", () => {
     const g = deriveUiGate({ brief: "build the table UI" }, "DOM CONTRACT: [data-testid=pot], [data-action=raise]");
     expect(g).not.toBeNull();

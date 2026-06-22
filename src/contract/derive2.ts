@@ -472,10 +472,71 @@ export function extractDomHooks(text: string): string[] {
 export function deriveUiGate(node: { brief: string }, contract = ""): Gate | null {
   // Hooks are pinned in the shared CONTRACT (per CONTRACT-FIRST), not always repeated in
   // the node brief — so read both.
-  const hooks = extractDomHooks(`${node.brief}\n${contract}`);
+  const text = `${node.brief}\n${contract}`;
+  const hooks = extractDomHooks(text);
   if (hooks.length === 0) return null; // no pinned hooks → can't gate the DOM deterministically
+
+  // If the hooks describe an AUTH-GATED app (a password field + a submit + hooks that only
+  // appear post-login), asserting every hook on the bare landing page is UNSATISFIABLE — the
+  // dashboard hooks live behind the session the brief itself mandates. Drive the real flow the
+  // brief specifies instead: seed a user, load the login surface, fill + submit, then assert the
+  // post-auth surface. (The line must test the behavior asked for, not an impossible page state.)
+  const flow = planLoginFlow(hooks, text);
+  if (flow) {
+    const gate = renderGate("dom-behavior", { url: "http://localhost:3000", steps: flow.steps, serve: "npm start" });
+    return { ...gate, run: `${flow.seed} && ${gate.run}` };
+  }
+
   const steps = hooks.map((h) => ({ assert: h, exists: true }));
   return renderGate("dom-behavior", { url: "http://localhost:3000", steps, serve: "npm start" });
+}
+
+const TEST_EMAIL = "test@example.com";
+const TEST_PW = "password123";
+
+/** The bare name inside a hook: "[data-testid=email-input]" → "email-input". */
+function hookName(h: string): string {
+  return (h.match(/=([a-zA-Z0-9_-]+)\]/)?.[1] ?? "").toLowerCase();
+}
+
+/**
+ * If the hooks describe a login-gated surface, return the seed command + DOM steps that drive
+ * it; else null. Detection: a password input + a submit control + ≥1 hook that is neither part
+ * of the login form (a "post-auth" hook). Generic — keyed on hook-name shape, not app specifics.
+ */
+function planLoginFlow(
+  hooks: string[],
+  contract: string,
+): { seed: string; steps: Array<Record<string, unknown>> } | null {
+  const inputs = hooks.filter((h) => /(^|[-_])(input|email|password|username|user)([-_]|$)/.test(hookName(h)));
+  const passwordInput = inputs.find((h) => /password/.test(hookName(h)));
+  const submit = hooks.find((h) => /(login|log-?in|sign-?in|signin|submit)/.test(hookName(h)) && /(button|btn|submit)/.test(hookName(h)));
+  if (!passwordInput || !submit) return null;
+  const loginSurface = new Set<string>([...inputs, submit, ...hooks.filter((h) => /form/.test(hookName(h)))]);
+  const postAuth = hooks.filter((h) => !loginSurface.has(h));
+  if (postAuth.length === 0) return null; // no gated surface → the flat presence gate is fine
+
+  // Seed a user through the storage module (web-app depends on it, so it's present), idempotently
+  // (try/catch so a re-run's duplicate insert is harmless — no schema wipe). Method names are read
+  // from the contract, defaulting to the conventional ones.
+  const createU = contract.match(/\b(create_?user|createUser)\b/i)?.[1] ?? "create_user";
+  const storeK = contract.match(/\b(store_?api_?key|storeApiKey|store_?key)\b/i)?.[1] ?? "store_api_key";
+  const seed =
+    `node -e "const s=require('./storage');(async()=>{` +
+    `try{await s.${createU}(${JSON.stringify(TEST_EMAIL)},${JSON.stringify(TEST_PW)})}catch(e){};` +
+    `try{await s.${storeK}(${JSON.stringify(TEST_EMAIL)},'vouchflow','vouchflow_key_demo0001112223')}catch(e){};` +
+    `process.exit(0)})().catch(()=>process.exit(0))"`;
+
+  const steps: Array<Record<string, unknown>> = [];
+  // 1. login surface renders (teeth: not an empty shell)
+  for (const h of [...loginSurface]) steps.push({ assert: h, exists: true });
+  // 2. fill + submit
+  for (const h of inputs) steps.push({ fill: h, value: /password/.test(hookName(h)) ? TEST_PW : /email|user/.test(hookName(h)) ? TEST_EMAIL : "test" });
+  steps.push({ click: submit });
+  steps.push({ wait: 1500 }); // allow the redirect to /dashboard
+  // 3. the post-auth surface is reachable and renders
+  for (const h of postAuth) steps.push({ assert: h, exists: true });
+  return { seed, steps };
 }
 
 /** A node that renders a frontend surface — its blast_radius/context are UI files. */

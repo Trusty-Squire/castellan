@@ -108,6 +108,28 @@ describe("runDomGate (real headless Chrome)", () => {
     } finally { s.close(); }
   }, 30000);
 
+  itBrowser("fills an input then clicks — the dashboard appears only if the typed value was set", async () => {
+    const loginPage = `<!doctype html><html><body>
+      <form data-testid="login-form">
+        <input data-testid="password-input" />
+        <button type="button" data-testid="login-button"
+          onclick="if(document.querySelector('[data-testid=password-input]').value==='password123'){const d=document.createElement('div');d.setAttribute('data-testid','dashboard');document.body.appendChild(d);}">go</button>
+      </form>
+    </body></html>`;
+    const s = await serve(loginPage);
+    try {
+      const r = await runDomGate(s.url, [
+        { assert: "[data-testid=login-form]", exists: true },
+        { fill: "[data-testid=password-input]", value: "password123" },
+        { click: "[data-testid=login-button]" },
+        { wait: 300 },
+        { assert: "[data-testid=dashboard]", exists: true }, // only present if fill set the value
+      ], { chrome: chrome!, timeoutMs: 20000 });
+      expect(r.failures).toEqual([]);
+      expect(r.ok).toBe(true);
+    } finally { s.close(); }
+  }, 30000);
+
   itBrowser("returns a clear failure when a selector is missing", async () => {
     const s = await serve(PAGE);
     try {
