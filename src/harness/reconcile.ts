@@ -52,7 +52,7 @@ export function reconcile(opts: {
   // config, the html entry) to run anything at all. These are shared infrastructure,
   // not another node's work, so they're never a blast-radius violation. Pure
   // byproducts (node_modules, dist, caches) are handled by .gitignore upstream.
-  const outOfRadius = changedFiles.map(norm).filter((p) => !inRadius(p) && !isPlumbing(p));
+  const outOfRadius = changedFiles.map(norm).filter((p) => !inRadius(p) && !isPlumbing(p) && !isByproduct(p));
   for (const p of outOfRadius) {
     violations.push(`changed file "${p}" is outside blast_radius`);
   }
@@ -83,6 +83,21 @@ const PLUMBING_RE =
   /^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|tsconfig(\.[\w-]+)?\.json|(vitest|vite|jest|playwright|eslint|tailwind|postcss)\.config\.[\w]+|\.gitignore|index\.html|pyproject\.toml|setup\.(py|cfg)|requirements\.txt|go\.(mod|sum)|Cargo\.toml)$/;
 function isPlumbing(p: string): boolean {
   return PLUMBING_RE.test(p);
+}
+
+/**
+ * Pure BYPRODUCTS of doing the work — dependency installs, build output, caches, and runtime
+ * data/DB/log files. These are residue, never another node's source, so a node must never FAIL
+ * its reconcile for producing them (the worker built the part correctly; punishing it for the
+ * `data/app.db` its own gate writes, or the `node_modules/` its `npm install` created, is the
+ * line failing a good worker for sawdust). Mirrors .gitignore but enforced HERE too, since
+ * changedFiles don't always respect it.
+ */
+const BYPRODUCT_DIR_RE =
+  /(^|\/)(node_modules|dist|build|out|coverage|\.next|\.nuxt|\.cache|\.turbo|\.vite|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.venv|venv|target|\.git)\//;
+const BYPRODUCT_FILE_RE = /\.(db|sqlite|sqlite3|db-journal|log|pyc|pyo|tsbuildinfo)$|(^|\/)\.DS_Store$|(^|\/)[\w.-]+\.egg-info(\/|$)/;
+function isByproduct(p: string): boolean {
+  return BYPRODUCT_DIR_RE.test(p) || BYPRODUCT_FILE_RE.test(p);
 }
 
 function norm(p: string): string {

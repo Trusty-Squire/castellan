@@ -33,6 +33,18 @@ describe("reconcile", () => {
     expect(r.confabulation).toBe(false);
   });
 
+  it("does NOT fail a node for the byproducts of doing the work (the secure-storage rung-2 case)", () => {
+    // qwen built correct encryption (the gate passed), but wrote the DB its gate reads +
+    // installed a dep — byproducts, never another node's source. Must not be a violation.
+    const r = reconcile({
+      blastRadius: ["crypto.js", "storage.js", "data/.gitkeep"],
+      doneCheck: "node -e require('./storage')",
+      changedFiles: ["storage.js", "crypto.js", "data/app.db", "node_modules/.bin/node-gyp", "package-lock.json"],
+      record: record({ executedWrites: ["storage.js", "crypto.js"], finalMessage: "encrypted and stored" }),
+    });
+    expect(r.violations).toEqual([]);
+  });
+
   it("allows standard project plumbing the builder creates to run its own checks", () => {
     const r = reconcile({
       blastRadius: ["src/**"],
