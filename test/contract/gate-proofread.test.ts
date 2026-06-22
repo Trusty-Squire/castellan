@@ -1,5 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, interfaceCoherence, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+
+describe("interfaceCoherence — a gate that reaches around the build's interface with a foreign DB tool", () => {
+  it("FLAGS a gate that drives the module to write but shells out to sqlite3 to read (the crypto-storage trap)", () => {
+    const g = `node -e "const s=require('./storage'); s.create_user('t@e.com','pw').then(()=>s.store_api_key('t@e.com','vouchflow_key_1'))" && echo 'SELECT api_keys FROM users' | sqlite3 data/app.db | grep -qv plaintext`;
+    expect(interfaceCoherence(g)).toMatch(/around the build's interface/i);
+  });
+
+  it("does NOT flag a gate that verifies through the module's own read API (round-trip + plaintext-absence grep)", () => {
+    const g = `node -e "const s=require('./storage'); s.create_user('t@e.com','pw').then(()=>s.store_api_key('t@e.com','K')).then(()=>s.get_api_key('t@e.com','pw')).then(v=>{if(v!=='K')process.exit(1)})" && ! grep -rqF 'K' data/`;
+    expect(interfaceCoherence(g)).toBeNull();
+  });
+
+  it("does NOT flag a sqlite3 gate when no build module is in play (the tool IS the contract)", () => {
+    const g = `echo 'SELECT count(*) FROM users' | sqlite3 data/app.db | grep -q '^1$'`;
+    expect(interfaceCoherence(g)).toBeNull();
+  });
+
+  it("returns null on an empty gate", () => {
+    expect(interfaceCoherence("")).toBeNull();
+  });
+});
 
 describe("gateProofread — catch a gate that reads state it never seeds", () => {
   it("FLAGS a SELECT-WHERE with no seed (the crypto_storage halt)", () => {

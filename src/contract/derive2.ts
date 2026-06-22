@@ -3,7 +3,7 @@ import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
 import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
-import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate } from "./gate-proofread.js";
+import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -702,6 +702,30 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       gatesByNode.set(id, { ...g, run: repaired });
     } else {
       gateWarnings.push({ node: id, issues });
+    }
+  }
+
+  // 3d2. INTERFACE COHERENCE — a gate that drives the build's own module but reads back by
+  // reaching AROUND it with a foreign DB tool (sqlite3/psql on the raw store) silently dictates
+  // the storage mechanism and traps the worker on driver/native-build/DB-path errors (the
+  // crypto-storage wall: qwen burned 8 rungs on SQLITE_CANTOPEN / node-gyp, none of it about the
+  // actual requirement). Repair to verify THROUGH the module's read API (round-trip + a
+  // mechanism-agnostic plaintext-absence check); re-check and only adopt a clean rewrite.
+  for (const [id, g] of gatesByNode) {
+    if (g.type !== "command" || !g.run) continue;
+    const issue = interfaceCoherence(g.run);
+    if (!issue) continue;
+    const node = decomposed.nodes.find((n) => n.id === id);
+    const repaired = await repairInterfaceGate(llm, model, {
+      brief: node?.brief ?? "",
+      contract: decomposed.contract,
+      gate: g.run,
+      issue,
+    });
+    if (repaired && interfaceCoherence(repaired) === null && gateProofread(repaired).length === 0) {
+      gatesByNode.set(id, { ...g, run: repaired });
+    } else {
+      gateWarnings.push({ node: id, issues: [issue] });
     }
   }
 

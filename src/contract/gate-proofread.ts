@@ -45,6 +45,57 @@ export function gateProofread(gate: string): string[] {
   return issues;
 }
 
+/** A foreign persistence inspector — a DB engine/CLI used to read state the BUILD owns. */
+const FOREIGN_DB_READER_RE =
+  /\|\s*sqlite3\b|\bsqlite3\s+[\w./-]+\.(?:db|sqlite\d?)\b|\bpsql\b|\bmysql\s+-|\bmongosh?\b|\bredis-cli\b/i;
+
+/** The gate drives the build's OWN module (so an interface EXISTS to verify through). */
+const DRIVES_BUILD_MODULE_RE = /require\(['"]\.\/|\bfrom\s+['"]\.\/|\bimport\s+['"]\.\//i;
+
+/**
+ * INTERFACE COHERENCE: a gate that drives the build's own module but READS BACK by reaching
+ * AROUND it with a foreign persistence tool (sqlite3/psql/redis-cli on the raw store). That
+ * foreign reader silently DICTATES the storage mechanism — the worker must now produce a file
+ * THAT tool can open (the crypto-storage trap: qwen fought node-gyp / SQLITE_CANTOPEN for 8
+ * rungs, none of it about the actual requirement: key stored, not plaintext, readable back).
+ * The property should be verified through the module's OWN read API, leaving persistence the
+ * worker's choice. Returns an issue string, or null when coherent (no foreign reader, or the
+ * build exposes no module interface to verify through, so the tool IS the contract).
+ */
+export function interfaceCoherence(gate: string): string | null {
+  if (!gate) return null;
+  if (!FOREIGN_DB_READER_RE.test(gate)) return null;
+  if (!DRIVES_BUILD_MODULE_RE.test(gate)) return null;
+  return "verifies persistence by reaching AROUND the build's interface with a foreign DB tool (sqlite3/psql/…), which forces a specific storage mechanism on the worker — verify through the module's own read API instead (round-trip the value, then assert the plaintext is absent from the persisted store)";
+}
+
+/**
+ * Repair an interface-incoherent gate via the PLANNER (knight): rewrite it to verify the
+ * property THROUGH the module's own interface (round-trip + mechanism-agnostic plaintext
+ * absence) instead of reaching around it with a DB engine. Returns the corrected command, or
+ * null. The caller re-checks interfaceCoherence and only adopts a clean result.
+ */
+export async function repairInterfaceGate(
+  llm: LlmClient,
+  model: string,
+  args: { brief: string; contract: string; gate: string; issue: string },
+): Promise<string | null> {
+  const system =
+    "You fix ONE shell gate (exit 0 = pass) that verifies a data-producing module by reaching AROUND its interface with a foreign DB tool (sqlite3/psql/redis-cli on the raw store). That tool DICTATES the storage mechanism and traps the worker on driver/native-build/DB-path errors. Rewrite it to verify the SAME property THROUGH THE MODULE'S OWN API, in ONE shell command (chain with &&): (1) drive the build's interface to create/seed the user and STORE a known key; (2) read it back via the module's getter and assert it ROUND-TRIPS (equals what was stored); (3) assert the key is NOT stored in plaintext by checking the plaintext bytes are ABSENT from the persisted store with a mechanism-AGNOSTIC reader — `! grep -rqF '<the-key>' <data-dir>/` — NOT a DB engine. Do NOT shell out to sqlite3/psql/mongo/redis or any DB CLI. Do NOT install a driver. NEVER weaken to a vacuous pass. Output ONLY the corrected shell command, no prose, no code fences.";
+  const user = `SHARED CONTRACT:\n${args.contract}\n\nNODE BRIEF:\n${args.brief}\n\nINTERFACE-INCOHERENT GATE:\n${args.gate}\n\nWHY IT TRAPS THE WORKER:\n- ${args.issue}`;
+  try {
+    const res = await llm.complete({ model, system, user, json: false, maxTokens: 900 });
+    const cmd = res.text
+      .trim()
+      .replace(/^```[\w-]*\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim();
+    return cmd.length > 0 ? cmd : null;
+  } catch {
+    return null;
+  }
+}
+
 /** localhost/127.0.0.1 ports a gate HITS (curls), excluding external-service base URLs. */
 export function gateLocalPorts(gate: string): number[] {
   const out = new Set<number>();
