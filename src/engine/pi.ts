@@ -577,6 +577,10 @@ async function validateRequiredCommonJsExports(
     "  if (missing.length > 0) { console.log(missing.join(',')); process.exit(2); }",
     "  process.exit(0);",
     "} catch (err) {",
+    // A missing dependency or not-yet-written sibling (MODULE_NOT_FOUND) is TRANSIENT — the deps
+    // get installed and siblings written later in the build. Treat it as "not ready", NOT a
+    // malformed file, so we don't abort a correct module just because npm install hasn't run yet.
+    "  if (err && err.code === 'MODULE_NOT_FOUND') { process.exit(0); }",
     "  console.log('__IMPORT_ERROR__');",
     "  process.exit(3);",
     "}",
