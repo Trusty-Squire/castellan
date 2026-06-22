@@ -31,6 +31,7 @@ export async function findChrome(): Promise<string | null> {
 /** One driven step. Exactly one verb key per object. */
 export type DomStep =
   | { goto: string }
+  | { gotoAny: string[]; until: string } // load each URL until `until` selector is present (routing is non-deterministic)
   | { wait: number }
   | { read: string; as: string; prop?: string } // prop: "text" (default) | "value" | <attribute>
   | { click: string }
@@ -184,6 +185,16 @@ export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutM
       if ("goto" in step) {
         await cdp.send("Page.navigate", { url: step.goto });
         await new Promise((r) => setTimeout(r, 500));
+      } else if ("gotoAny" in step) {
+        // Routing across cheap-model builds is non-deterministic (login at /, /login, /index.html…).
+        // Load each candidate until the target selector actually renders; stay on the first match.
+        let found = false;
+        for (const u of step.gotoAny) {
+          await cdp.send("Page.navigate", { url: u });
+          await new Promise((r) => setTimeout(r, 500));
+          if (await evalExpr(cdp, `!!document.querySelector(${jstr(step.until)})`)) { found = true; break; }
+        }
+        if (!found) failures.push(`gotoAny: ${step.until} not found at any of ${step.gotoAny.join(", ")}`);
       } else if ("wait" in step) {
         await new Promise((r) => setTimeout(r, Math.min(step.wait, Math.max(0, deadline - Date.now()))));
       } else if ("read" in step) {
@@ -206,6 +217,18 @@ export async function runDomGate(url: string, steps: DomStep[], opts: { timeoutM
         const f = await runAssert(cdp, step, vars, deadline);
         if (f) failures.push(f);
       }
+    }
+    // Diagnostic on failure: WHERE did we end up and WHAT testids actually exist? Distinguishes
+    // "wrong page / login didn't redirect" from "hooks missing" without guessing (andon-cord).
+    if (failures.length > 0) {
+      try {
+        const diag = await evalExpr(
+          cdp,
+          `(()=>{const ids=[...document.querySelectorAll('[data-testid]')].map(e=>e.getAttribute('data-testid'));` +
+            `return JSON.stringify({url:location.href,title:document.title,bodyLen:(document.body?document.body.innerHTML.length:0),testids:ids.slice(0,30)})})()`,
+        );
+        failures.push(`[diag] ${diag}`);
+      } catch { /* best effort */ }
     }
     return { ok: failures.length === 0, ran, failures };
   } catch (e) {

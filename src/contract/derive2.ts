@@ -529,16 +529,16 @@ function planLoginFlow(
     `try{await s.${storeK}('${TEST_EMAIL}','vouchflow','vouchflow_key_demo0001112223')}catch(e){};` +
     `process.exit(0)})().catch(()=>process.exit(0))"`;
 
-  // Reaching the login surface robustly: cheap models serve the login form at inconsistent paths
-  // (/, /login, /index.html — measured both ways across runs), so guessing one URL is brittle.
-  // Instead load the PROTECTED route while unauthenticated — the brief guarantees it redirects to
-  // login ("GET /dashboard … else redirects to /login"), so the browser lands on the login page
-  // wherever it lives. After login, the same route serves the authed surface. One URL, any layout.
-  const protectedRoute = (postAuth.map(hookName).find((n) => /(dashboard|home|account|app)/.test(n)) ?? "").replace(/[-_].*/, "");
-  const entry = /\/dashboard\b/i.test(contract) ? "/dashboard" : protectedRoute ? `/${protectedRoute}` : "";
-  const url = `http://localhost:3000${entry}`;
+  // Reaching the login surface robustly: cheap models serve the login form at inconsistent paths,
+  // and their internal redirects can point at routes they never built (measured: /dashboard →
+  // /login → an error page, while the form actually lives at /). Guessing one URL is hopeless —
+  // PROBE: load each candidate until the login form actually renders, then drive from there.
+  const formHook = hooks.find((h) => /form/.test(hookName(h))) ?? inputs[0]!;
+  const candidates = ["http://localhost:3000/", "http://localhost:3000/login", "http://localhost:3000/index.html", "http://localhost:3000/login.html"];
+  const url = candidates[0]!;
 
   const steps: Array<Record<string, unknown>> = [];
+  steps.push({ gotoAny: candidates, until: formHook });
   // 1. login surface renders (teeth: not an empty shell)
   for (const h of [...loginSurface]) steps.push({ assert: h, exists: true });
   // 2. fill + submit
