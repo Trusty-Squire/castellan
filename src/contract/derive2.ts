@@ -2,11 +2,13 @@ import { z } from "zod";
 import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
-import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
-import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair, briefFileCoherence } from "./gate-proofread.js";
+import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate, stripSelfBootForServeGate } from "./gate-patterns.js";
+import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair, briefFileCoherence, importsServerModule, repairWebAppServerGate } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { scaffoldServerNode, serverSkeletonNote } from "./server-scaffold.js";
+import { classifyArchetype, WEB_APP_STACK_RULE, WEB_APP_GATE_RULE, type Archetype } from "./archetype.js";
+import { vendorPalette, paletteNote } from "./palette-scaffold.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
 import { packContext } from "../harness/context.js";
 
@@ -647,8 +649,18 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         .map((r) => r.id)
         .join(", ")}"). Do NOT add nodes just to reach a one-node-per-requirement mapping; size nodes by the envelope rule above, not by the requirement count.`
     : "";
+  // 1b. ARCHETYPE — classify the product so we author the stack the cheap loop can BUILD and the
+  // harness can SCAFFOLD/GATE. Only on the real build path (scaffoldServers); a cheap classifier.
+  // A web app is steered to Node+Express+static-UI (the scaffold-supported stack); every other
+  // archetype keeps the planner's free choice (library/CLI/pipeline already ride the test floor).
+  let archetype: Archetype = "other";
+  let stackRule = "";
+  if (input.scaffoldServers) {
+    archetype = await classifyArchetype(llm, executor, input.spec ? input.spec.thesis : (input.goal ?? ""));
+    if (archetype === "web-app") stackRule = ` ${WEB_APP_STACK_RULE}`;
+  }
   const decomposeSystem =
-    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into a DAG of nodes. ${SIZING_RULE} ${envelopeRule(executor, envelopeTokens)} Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule} ${CONTRACT_FIRST} ${COHERENCE_RULE} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
+    `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into a DAG of nodes. ${SIZING_RULE} ${envelopeRule(executor, envelopeTokens)} Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule}${stackRule} ${CONTRACT_FIRST} ${COHERENCE_RULE} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
   const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
   let decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
 
@@ -736,7 +748,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   });
 
   if (needsInference.length > 0) {
-    const inferSystem = `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). TRACTABILITY: a gate must be satisfiable by ONE cheap attempt from a fresh checkout using the AVAILABLE TOOLS in the survey. Do NOT emit a project-wide e2e SUITE ("npm run test:e2e"/"npm run e2e", a cypress run) or a project-wide npm script that may not exist. But a UI node's BEHAVIOR must be gated with TEETH, not a "grep for a class name" stub. For anything the user must SEE happen (a value updates on a click, a card flips on reveal, a control disables off-turn), PREFER a SINGLE-FILE PLAYWRIGHT behavioral spec: gate it as "npx playwright test <one .spec.ts>" and have the build write that one spec to drive the page and assert the [data-testid=...]/[data-action=...] behaviors the CONTRACT pins (the harness installs playwright + chromium on demand). ONE focused spec per node — never a whole suite. (The zero-dep "dom-behavior" pattern is an alternative when a browser is present but playwright is not.) Reserve "npm run build --if-present" + grep ONLY for "the page renders at all"; for logic/data use a unit test or node -e assertion. Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`;
+    const inferSystem = `${CASTELLAN_IDENTITY}\n\nYour role: select objective gates for plan nodes.\n\n${GATE_LADDER_DOC}\n\n${gatePatternDoc()}\n\nSTRONGLY prefer selecting a pattern (free-form shell is flagged to the user). TRACTABILITY: a gate must be satisfiable by ONE cheap attempt from a fresh checkout using the AVAILABLE TOOLS in the survey. Do NOT emit a project-wide e2e SUITE ("npm run test:e2e"/"npm run e2e", a cypress run) or a project-wide npm script that may not exist. But a UI node's BEHAVIOR must be gated with TEETH, not a "grep for a class name" stub. For anything the user must SEE happen (a value updates on a click, a card flips on reveal, a control disables off-turn), PREFER a SINGLE-FILE PLAYWRIGHT behavioral spec: gate it as "npx playwright test <one .spec.ts>" and have the build write that one spec to drive the page and assert the [data-testid=...]/[data-action=...] behaviors the CONTRACT pins (the harness installs playwright + chromium on demand). ONE focused spec per node — never a whole suite. (The zero-dep "dom-behavior" pattern is an alternative when a browser is present but playwright is not.) Reserve "npm run build --if-present" + grep ONLY for "the page renders at all"; for logic/data use a unit test or node -e assertion.${archetype === "web-app" ? ` ${WEB_APP_GATE_RULE}` : ""} Output ONLY JSON: {"gates":[{node,pattern,params} | {node,freeform}]}.`;
     const inferUser = `NODES:\n${needsInference.map((n) => `${n.id}: ${n.brief}`).join("\n")}\n\nREPOSITORY SURVEY (use REAL commands found here):\n${survey}`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const inferred = await jsonStage(
@@ -886,10 +898,34 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   // trustysquire build honest-halted on exactly this. Same fix as the DOM gate's
   // `--serve`, generalized to API gates: wrap so the harness boots the server, waits for
   // the port, runs the curls, tears down. (DOM gates already serve-wrap → skipped here.)
+  // 3c0. WEB-APP SERVER GATE COHERENCE — the planner is unreliable here: it often gates the server
+  // by IMPORTING it (supertest / require / node -e), which is incoherent with the self-listening
+  // vendored skeleton AND frequently syntactically invalid. Deterministically detect that and
+  // repair it to LIVE curls (verified before adopting), so the server node is gated the way the
+  // skeleton supports — which is also what fires the scaffold below.
+  if (archetype === "web-app") {
+    for (const [id, g] of gatesByNode) {
+      if (g.type !== "command" || !g.run || !importsServerModule(g.run)) continue;
+      const node = decomposed.nodes.find((n) => n.id === id);
+      if (!node) continue;
+      const repaired = await repairWebAppServerGate(llm, model, { brief: node.brief, contract: decomposed.contract, gate: g.run });
+      if (repaired && /https?:\/\/(?:localhost|127\.0\.0\.1):\d/.test(repaired) && /\bcurl\b/i.test(repaired) && !importsServerModule(repaired)) {
+        gatesByNode.set(id, { ...g, run: repaired });
+      }
+    }
+  }
+
   for (const [id, g] of gatesByNode) {
     if (g.type !== "command" || !g.run) continue;
-    const port = serverGatePort(g.run);
-    if (port !== null) gatesByNode.set(id, { ...g, run: wrapWithServeGate(g.run, port) });
+    // A web-app server gate usually arrives with the planner's OWN fragile boot (npm start & sleep);
+    // strip it so the harness serve-gate owns the boot (this also lets serverGatePort see the port,
+    // which a lone `&` would otherwise mask) — then the skeleton scaffold can fire below.
+    const run =
+      archetype === "web-app" && /https?:\/\/(?:localhost|127\.0\.0\.1):\d/.test(g.run) && /\bnpm (start|run|install)\b|SERVER_PID/.test(g.run)
+        ? stripSelfBootForServeGate(g.run)
+        : g.run;
+    const port = serverGatePort(run);
+    if (port !== null) gatesByNode.set(id, { ...g, run: wrapWithServeGate(run, port) });
   }
 
   // 3c2. SERVER PLUMBING SCAFFOLD — for a greenfield node whose gate now boots an HTTP server,
@@ -911,6 +947,18 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       if (!node.blast_radius.includes("data/**")) node.blast_radius.push("data/**");
       node.brief += "\n\n" + serverSkeletonNote(serverFile);
       seededServers.push(`${id}→${serverFile}`);
+    }
+
+    // 3c3. UI PALETTE — for a web app, vendor public/theme.css so UI nodes COMPOSE the surface
+    // against a known design system instead of improvising CSS (lifts the visual floor + keeps
+    // the rendered DOM consistent enough for the DOM gate). Greenfield-only; tag the UI nodes.
+    if (archetype === "web-app" && vendorPalette(input.workdir)) {
+      for (const n of decomposed.nodes.filter(looksLikeUi)) {
+        if (!n.context_globs.includes("public/theme.css")) n.context_globs.push("public/theme.css");
+        if (!n.blast_radius.some((g) => g === "public/**" || g === "public/theme.css")) n.context_globs.push("public/**");
+        n.brief += "\n\n" + paletteNote();
+      }
+      seededServers.push("palette→public/theme.css");
     }
   }
 

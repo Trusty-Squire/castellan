@@ -229,6 +229,33 @@ export function wrapWithServeGate(run: string, port: number): string {
 }
 
 /**
+ * Strip a self-boot/teardown preamble from a localhost-curl gate so the HARNESS serve-gate owns the
+ * boot. The planner reliably writes its own fragile boot for a web-app server gate
+ * (`npm install … && npm start & SERVER_PID=$! && sleep 3 && <curls> && kill $SERVER_PID`) — a race
+ * (fixed `sleep`), a leaked process, and a lone `&` that makes serverGatePort think the gate already
+ * self-boots (so it never gets serve-gate-wrapped and the skeleton scaffold never fires). Drop the
+ * pure boot/teardown segments (npm install/start, sleep, kill, PID bookkeeping) and keep every check
+ * segment (anything with a curl, including a `VAR=$(curl …)` capture). Deterministic, no model.
+ */
+export function stripSelfBootForServeGate(run: string): string {
+  const BOOT =
+    /(^|\s)(npm (install|ci|start|run|i)|yarn|pnpm|node (server|app|index)|python3?|flask|uvicorn|gunicorn|sleep|kill|wait|trap|nohup|disown)\b|SERVER_PID|[A-Z_]*PID=\$!|^\s*export\s/i;
+  let s = run.trim();
+  // 1. Drop a leading boot preamble — everything up to the first `curl`, if that prefix is boot
+  //    (no curl in it). Handles boot glued to the first check by `;`, `&`, or `&&` alike.
+  const i = s.search(/\bcurl\b/i);
+  if (i > 0 && !/\bcurl\b/i.test(s.slice(0, i))) s = s.slice(i).trim();
+  // 2. Drop a trailing teardown (kill/wait/trap a backgrounded server), however separated.
+  s = s.replace(/\s*[;&]+\s*(kill|wait|trap)\b.*$/i, "").trim();
+  // 3. Drop any pure boot/teardown segment still sitting between `&&` checks.
+  return s
+    .split("&&")
+    .map((seg) => seg.trim())
+    .filter((seg) => seg.length > 0 && (/curl/i.test(seg) || !BOOT.test(seg)))
+    .join(" && ");
+}
+
+/**
  * Brief addendum for a node whose gate is a live serve-gate. The contract often pins a
  * TESTABLE factory (export createApp(), no listen()), which is incoherent with a gate that
  * curls a LIVE server — the build did exactly as told and the server never came up. Tell

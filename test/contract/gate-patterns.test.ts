@@ -91,3 +91,51 @@ describe("gate-pattern library", () => {
     expect(() => renderGate("tests-pass", {})).toThrow(/missing required param/);
   });
 });
+
+import { stripSelfBootForServeGate, serverGatePort } from "../../src/contract/gate-patterns.js";
+
+describe("stripSelfBootForServeGate — let the harness own the boot", () => {
+  it("drops npm install/start, sleep, PID bookkeeping and kill; keeps the curl checks", () => {
+    const run =
+      "npm install --save-exact express qrcode && npm start & SERVER_PID=$! && sleep 3 && " +
+      "curl -fsS http://localhost:3000/api/shorten | grep -q shortCode && " +
+      "SHORT=$(curl -fsS http://localhost:3000/api/shorten | grep -o code) && " +
+      "curl -fsS http://localhost:3000/$SHORT && kill $SERVER_PID";
+    const stripped = stripSelfBootForServeGate(run);
+    expect(stripped).not.toMatch(/npm (install|start)/);
+    expect(stripped).not.toMatch(/sleep|SERVER_PID|kill/);
+    expect(stripped).toContain("curl -fsS http://localhost:3000/api/shorten");
+    expect(stripped).toContain("SHORT=$(curl"); // the capture survives
+    // now the port is visible to serverGatePort (the lone `&` no longer masks it)
+    expect(serverGatePort(stripped)).toBe(3000);
+  });
+  it("is a no-op on a pure curl chain", () => {
+    const run = "curl -fsS http://localhost:3000/ | grep -q ok && curl -fsS http://localhost:3000/api | grep -q ok";
+    expect(stripSelfBootForServeGate(run)).toBe(run);
+  });
+});
+
+import { importsServerModule } from "../../src/contract/gate-proofread.js";
+
+describe("importsServerModule — detect an incoherent import-based server gate", () => {
+  it("flags supertest / require / node -e imports of the server", () => {
+    expect(importsServerModule("node -e \"const app = require('./server.js'); const r = require('supertest')(app)\"")).toBe(true);
+    expect(importsServerModule("npx vitest run test_server.js && require('./server')")).toBe(true);
+  });
+  it("passes a live curl gate (and a self-boot curl gate)", () => {
+    expect(importsServerModule("curl -fsS http://localhost:3000/api | grep -q ok")).toBe(false);
+    expect(importsServerModule("npm start & sleep 3 && curl -fsS http://localhost:3000/ | grep -q ok")).toBe(false);
+  });
+});
+
+describe("stripSelfBootForServeGate — semicolon-separated boot (the variant that slipped)", () => {
+  it("strips `npm start & PID; sleep N;` glued to the first curl by semicolons", () => {
+    const run =
+      "npm start & SERVER_PID=$!; sleep 2; curl -fsS -X POST http://localhost:3000/api/shorten -d '{}' | grep -q code && " +
+      "curl -fsS http://localhost:3000/api/links | grep -q '[' ; kill $SERVER_PID";
+    const stripped = stripSelfBootForServeGate(run);
+    expect(stripped).not.toMatch(/npm start|sleep|SERVER_PID|kill/);
+    expect(stripped.startsWith("curl")).toBe(true);
+    expect(serverGatePort(stripped)).toBe(3000);
+  });
+});

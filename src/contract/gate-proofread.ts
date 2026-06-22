@@ -302,3 +302,45 @@ export async function repairUnsatisfiableGate(
     return null;
   }
 }
+
+/**
+ * Detect a WEB-APP SERVER node gate that verifies the server by IMPORTING it (supertest,
+ * `require('./server')`, `node -e` loading the module) instead of curling it LIVE. The vendored
+ * skeleton self-LISTENS (no app export), so an import gate is incoherent — and the planner
+ * reliably emits brittle or syntactically-invalid `node -e` one-liners for it. Returns true when
+ * the gate should be rewritten to live curls.
+ */
+export function importsServerModule(gateRun: string): boolean {
+  const isLiveCurl = /https?:\/\/(?:localhost|127\.0\.0\.1):\d/.test(gateRun) && /\bcurl\b/i.test(gateRun);
+  if (isLiveCurl) return false;
+  return /\bsupertest\b|require\(\s*['"][./]*[^'"]*server[^'"]*['"]\s*\)|import\(\s*['"][./]*[^'"]*server|\bnode\s+-e\b[\s\S]*\brequire\(/.test(gateRun);
+}
+
+/**
+ * Rewrite a web-app server gate to verify the LIVE server over HTTP — curl its endpoints on
+ * :3000 (the harness boots `npm start` and tears it down). Output is curls chained with `&&`; the
+ * caller verifies it became a localhost-curl gate before adopting (else keeps the original).
+ */
+export async function repairWebAppServerGate(
+  llm: LlmClient,
+  model: string,
+  args: { brief: string; contract: string; gate: string },
+): Promise<string | null> {
+  const system =
+    "You rewrite ONE shell gate (exit 0 = pass) that currently tests a web server by IMPORTING it " +
+    "(supertest / require / node -e). The server is run as a LIVE process that LISTENS on http://localhost:3000 — " +
+    "it does NOT export an app, so import-based testing is impossible. Rewrite the gate as a sequence of `curl` " +
+    "commands against http://localhost:3000 that make the SAME assertions the original intended (status codes, " +
+    "redirect Location, response-body fields, click counts, 404-after-delete), chained with `&&`. Use " +
+    "`curl -fsS` and `grep -q` (and `curl -s -o /dev/null -w '%{http_code}'` for status, `-D -` for headers). " +
+    "Do NOT boot the server yourself (no npm install/start, no sleep, no kill) — the harness boots it. Do NOT use " +
+    "supertest, require, or node -e. Output ONLY the corrected shell command (the curl chain), no prose, no fences.";
+  const user = `SHARED CONTRACT:\n${args.contract}\n\nNODE BRIEF:\n${args.brief}\n\nIMPORT-BASED GATE TO REWRITE AS LIVE CURLS:\n${args.gate}`;
+  try {
+    const res = await llm.complete({ model, system, user, json: false, maxTokens: 1100 });
+    const cmd = res.text.trim().replace(/^```[\w-]*\n?/, "").replace(/\n?```$/, "").trim();
+    return cmd.length > 0 ? cmd : null;
+  } catch {
+    return null;
+  }
+}

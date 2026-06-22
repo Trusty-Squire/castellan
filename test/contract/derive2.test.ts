@@ -88,11 +88,14 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     });
     // a freeform localhost-curl gate → serverGatePort detects :8090 → wrapWithServeGate → a server node
     const gates = JSON.stringify({ gates: [{ node: "api", freeform: "curl -fsS http://localhost:8090/api/items | grep -q ok" }] });
-    const llm = new MockLlm([{ text: decompose }, { text: gates }, { text: JSON.stringify({ claims: [] }) }]);
+    // scaffoldServers → the archetype classifier runs FIRST (web-app), then decompose/gates/claims
+    const llm = new MockLlm([{ text: "web-app" }, { text: decompose }, { text: gates }, { text: JSON.stringify({ claims: [] }) }]);
     const r = await deriveV2({ ...base(llm), goal: "an items HTTP API", scaffoldServers: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const node = r.mission.nodes[0]!;
+    // a web app steers the decompose to the scaffold-supported stack
+    expect(llm.calls[1]!.system).toContain("Node.js + Express");
     // the gate boots the server; the harness seeded a runnable skeleton the model only fills
     expect(node.gate!.run).toContain("serve-gate.mjs --port 8090");
     expect(readFileSync(join(workdir, "server.js"), "utf8")).toContain("app.listen(PORT");
@@ -101,6 +104,8 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(node.brief).toContain("ADD ONLY YOUR ROUTE HANDLERS");
     expect(node.blast_radius).toContain("package.json");
     expect(node.context_globs).toContain("server.js");
+    // the UI palette is vendored for web apps
+    expect(existsSync(join(workdir, "public", "theme.css"))).toBe(true);
     expect(r.readback).toContain("seeded server plumbing");
   });
 
