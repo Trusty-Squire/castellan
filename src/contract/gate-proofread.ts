@@ -96,6 +96,38 @@ export async function repairInterfaceGate(
   }
 }
 
+/** File-backed persistent stores (sqlite/db files) a gate reads or writes. */
+const STORE_FILE_RE = /\b([\w./-]+\.(?:db|sqlite\d?|sqlite))\b/g;
+
+/** A gate that SEEDS a fixed identity (so re-running it double-seeds). */
+const SEEDS_FIXED_IDENTITY_RE = /\bcreate[_-]?user\b|\bstore[_-]?api[_-]?key\b|\bregister\b|\bsign[_-]?up\b|\binsert\s+into\b/i;
+
+/** Does the gate already reset its store before seeding? */
+const ALREADY_RESETS_RE = /^\s*rm\s+-[rf]/i;
+
+/**
+ * IDEMPOTENCY: a gate that seeds a FIXED identity (create_user('test3@…'), INSERT … VALUES)
+ * into a file-backed store but never clears it first only passes against a PRISTINE store. The
+ * build loop runs gates repeatedly — and we explicitly tell the worker to run its check to
+ * verify ("run → see → fix"). The worker's own verification run inserts the row; the official
+ * gate's create_user then hits a UNIQUE violation and fails CORRECT code (measured: deepseek
+ * AND opus both failed the secure-storage gate this way — proof it's the gate, not the model).
+ * Worse, the worker is misled into "fixing" working code. Returns a store-reset to PREPEND so
+ * every run starts clean, or null when idempotent / not a direct seeding gate. Skips
+ * serve-gate-wrapped gates (the store opens inside a booted server; resetting it mid-flight is
+ * unsafe — a separate concern).
+ */
+export function idempotencyRepair(gate: string): string | null {
+  if (!gate || ALREADY_RESETS_RE.test(gate)) return null;
+  if (/serve-gate\.mjs/.test(gate)) return null; // booted-server store reset is unsafe here
+  if (!SEEDS_FIXED_IDENTITY_RE.test(gate)) return null;
+  const stores = [...new Set([...gate.matchAll(STORE_FILE_RE)].map((m) => m[1]!))];
+  if (stores.length === 0) return null;
+  const dirs = [...new Set(stores.map((s) => s.replace(/\/[^/]+$/, "")).filter((d) => d && d !== "."))];
+  const mkdir = dirs.length ? ` && mkdir -p ${dirs.join(" ")}` : "";
+  return `rm -f ${stores.join(" ")}${mkdir} && ${gate}`;
+}
+
 /** localhost/127.0.0.1 ports a gate HITS (curls), excluding external-service base URLs. */
 export function gateLocalPorts(gate: string): number[] {
   const out = new Set<number>();

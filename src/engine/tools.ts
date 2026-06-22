@@ -171,8 +171,13 @@ export class ToolExecutor {
 
   private checkRadius(rel: string, name: ToolName): ToolExecResult | null {
     if (this.inRadius(rel)) return null;
-    const reason = `path "${rel}" is outside blast_radius (${this.policy.blastRadius.join(", ") || "none"})`;
-    return { ok: false, denied: true, deniedReason: reason, path: rel, output: `DENIED: ${name} ${reason}` };
+    const allowed = this.policy.blastRadius.join(", ") || "none";
+    const reason = `path "${rel}" is outside blast_radius (${allowed})`;
+    // Directive nudge: the worker's denied writes were scratch/alt-name files (foo_new.js,
+    // foo_fixed.json) when its intent mapped to an allowed path. Tell it to revise the REAL
+    // file in place rather than spawn a copy, so it stops burning denials on variants.
+    const output = `DENIED: ${name} to "${rel}" — not in your writable set. Write ONLY to these exact paths: ${allowed}. To revise a file, write to or edit its real path; do NOT create *_new / *_fixed / scratch copies.`;
+    return { ok: false, denied: true, deniedReason: reason, path: rel, output };
   }
 
   /** Resolve a tool path to an in-repo relative path, rejecting escapes. */

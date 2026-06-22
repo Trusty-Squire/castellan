@@ -1,5 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, interfaceCoherence, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, interfaceCoherence, idempotencyRepair, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+
+describe("idempotencyRepair — a seeding gate that never clears its store fails on re-run", () => {
+  it("PREPENDS a store reset to a create_user gate that reads a .db (the secure-storage poison)", () => {
+    const g = `node -e "const s=require('./storage'); s.create_user('test3@example.com','pw').then(()=>process.exit(0))" && echo 'SELECT api_keys FROM users' | sqlite3 data/app.db | grep -q vouchflow`;
+    const r = idempotencyRepair(g);
+    expect(r).not.toBeNull();
+    expect(r!.startsWith("rm -f data/app.db && mkdir -p data && ")).toBe(true);
+    expect(r!.endsWith(g)).toBe(true);
+  });
+
+  it("is a no-op when the gate already resets its store", () => {
+    const g = `rm -f data/app.db && node -e "require('./storage').create_user('a@b.com','p')" && sqlite3 data/app.db 'SELECT 1'`;
+    expect(idempotencyRepair(g)).toBeNull();
+  });
+
+  it("does NOT touch a gate that seeds no fixed identity", () => {
+    const g = `node -e "require('./math').add(1,2)" && sqlite3 data/app.db 'SELECT count(*)'`;
+    expect(idempotencyRepair(g)).toBeNull();
+  });
+
+  it("skips serve-gate-wrapped gates (resetting a booted server's store is unsafe)", () => {
+    const g = `node .squire/serve-gate.mjs --port 3000 --check './run-bot.sh && sqlite3 data/app.db "SELECT 1" && curl localhost:3000/signup'`;
+    expect(idempotencyRepair(g)).toBeNull();
+  });
+
+  it("returns null when there is no file-backed store to reset", () => {
+    const g = `node -e "require('./storage').create_user('a@b.com','p')"`;
+    expect(idempotencyRepair(g)).toBeNull();
+  });
+});
 
 describe("interfaceCoherence — a gate that reaches around the build's interface with a foreign DB tool", () => {
   it("FLAGS a gate that drives the module to write but shells out to sqlite3 to read (the crypto-storage trap)", () => {

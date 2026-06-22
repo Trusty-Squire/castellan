@@ -125,8 +125,32 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     expect(denied && "path" in denied && denied.path).toMatch(/secrets\/key\.ts/);
   });
 
-  it("aborts the attempt after 3 blast-radius violations", async () => {
+  it("TOLERATES a few out-of-radius writes — denied (not written) but not an abort", async () => {
+    // A worker iterating naturally writes scratch/alt-name files; each is denied (write
+    // prevented), but that must not guillotine the rung — the radius is already protected.
     const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        {
+          tools: [
+            { id: "t1", name: "write", arguments: { path: "a/1.ts", content: "x" } },
+            { id: "t2", name: "write", arguments: { path: "b/2.ts", content: "x" } },
+            { id: "t3", name: "write", arguments: { path: "c/3.ts", content: "x" } },
+          ],
+          in: 100,
+          out: 20,
+        },
+        { text: "done", in: 10, out: 5 },
+      ]),
+    });
+    const events = await collect(engine, req());
+    expect(events.filter((e) => e.kind === "blast_denied").length).toBe(3);
+    expect(events.some((e) => e.kind === "error" && /blast-radius/.test(e.message ?? ""))).toBe(false);
+    expect(events.some((e) => e.kind === "done")).toBe(true);
+  });
+
+  it("still backstops a true out-of-radius loop at the ceiling", async () => {
+    const engine = new PiEngine({
+      maxBlastViolations: 3,
       streamFn: scriptedStreamFn([
         {
           tools: [
@@ -141,9 +165,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
       ]),
     });
     const events = await collect(engine, req());
-    const denials = events.filter((e) => e.kind === "blast_denied");
-    expect(denials.length).toBe(3);
-    expect(events.some((e) => e.kind === "error")).toBe(true);
+    expect(events.some((e) => e.kind === "error" && /3 blast-radius violations/.test(e.message ?? ""))).toBe(true);
   });
 
   it("aborts an attempt when the provider/agent loop never returns", async () => {
@@ -153,6 +175,17 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     const events = await collect(engine, req());
 
     expect(events).toContainEqual({ kind: "error", message: "attempt timed out after 50ms" });
+  });
+
+  it("aborts a STALLED attempt on the idle timeout, well before the absolute backstop", async () => {
+    // A stream that never emits an event = no progress. The idle timer (much shorter than the
+    // absolute attempt timeout) must catch it — so a stalled provider doesn't hang for minutes.
+    const hangingStream: StreamFn = (() => createAssistantMessageEventStream()) as unknown as StreamFn;
+    const engine = new PiEngine({ streamFn: hangingStream, idleTimeoutMs: 40, attemptTimeoutMs: 60_000 });
+
+    const events = await collect(engine, req());
+
+    expect(events.some((e) => e.kind === "error" && /no progress \(stalled/.test(e.message ?? ""))).toBe(true);
   });
 
   it("aborts an attempt that keeps rewriting the same path", async () => {

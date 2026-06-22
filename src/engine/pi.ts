@@ -15,7 +15,13 @@ import { renderPackedFiles, estimateTokens } from "../harness/context.js";
 import type { AttemptRequest, Engine, EngineEvent, ModelRef, ToolName } from "./types.js";
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
-const MAX_BLAST_VIOLATIONS = 3;
+// A blast-radius denial ALREADY prevents the write (the radius is enforced before the
+// filesystem is touched). This ceiling is only a runaway backstop, so it can be generous:
+// a worker iterating naturally writes a few scratch/alt-name files (test_crypto.js,
+// crypto_new.js, package_fixed.json) — each harmlessly denied — and a 3-strike instakill
+// guillotined the very rung that was doing real work. The denial protects the radius; the
+// abort just punishes a working worker. Keep a ceiling against a true loop, but high.
+const MAX_BLAST_VIOLATIONS = 25;
 // These are runaway-loop BACKSTOPS, not work budgets — the cost meter is the real stop.
 // They were originally tuned for single-file edits; once the builder was allowed to run
 // and iterate (install deps, run the gate, read the error, fix, re-run) a real node needs
@@ -28,7 +34,16 @@ const DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT = 12;
 // Must comfortably exceed BASH_TIMEOUT_MS (120s) — a single `npm install` of native deps
 // (sqlite3/bcrypt → node-gyp) can eat that alone — AND leave room to iterate after. Parity
 // with CodexEngine's 600s so the cheap path isn't strangled relative to the premium one.
+// This is an ABSOLUTE backstop; the idle timeout below is what actually catches stalls.
 const DEFAULT_ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
+// The real stall detector: abort when NOTHING has happened (no tool call, no token) for this
+// long. A flat wall-clock cap is the wrong tool — it either guillotines a working attempt
+// (the 45s bug) or, raised, makes a genuine stall (a stalled provider stream, a rate-limited
+// token) hang for the full 10 min. Capping IDLE time instead lets a PROGRESSING attempt run
+// as long as it keeps advancing while catching a stuck line fast. Must exceed BASH_TIMEOUT_MS
+// (120s) so a maxed-out single command — which emits no events while it runs — isn't mistaken
+// for a stall; the tool_execution_end then bumps it.
+const DEFAULT_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 /**
  * Bound the agent loop's conversation history. Every turn re-sends the full
  * transcript; without a cap a confused model that runs many tool calls (or one
@@ -85,8 +100,12 @@ export interface PiEngineOptions {
   maxToolCallsPerAttempt?: number;
   /** Hard stop for agents repeatedly write/editing one file without finishing. */
   maxMutationsPerPathPerAttempt?: number;
-  /** Hard wall-clock stop for one agent attempt. */
+  /** Absolute wall-clock backstop for one agent attempt. */
   attemptTimeoutMs?: number;
+  /** Stall detector: abort after this long with no tool call or token (no progress). */
+  idleTimeoutMs?: number;
+  /** Runaway backstop for an agent that keeps writing outside its radius (each is denied anyway). */
+  maxBlastViolations?: number;
 }
 
 /**
@@ -95,13 +114,16 @@ export interface PiEngineOptions {
  * The harness owns the four tool bodies (read/write/edit/bash) and the single
  * ToolExecutor, which enforces blast-radius BEFORE any write. Out-of-radius
  * write/edit calls are denied there and surfaced as blast_denied events; the
- * run continues (SPEC §5.4). 3 violations abort the attempt.
+ * run continues (SPEC §5.4). Only a runaway loop of denials (the generous
+ * MAX_BLAST_VIOLATIONS backstop) aborts the attempt.
  */
 export class PiEngine implements Engine {
   private readonly streamFn?: StreamFn;
   private readonly maxToolCallsPerAttempt: number;
   private readonly maxMutationsPerPathPerAttempt: number;
   private readonly attemptTimeoutMs: number;
+  private readonly idleTimeoutMs: number;
+  private readonly maxBlastViolations: number;
 
   constructor(opts: PiEngineOptions = {}) {
     this.streamFn = opts.streamFn;
@@ -109,6 +131,8 @@ export class PiEngine implements Engine {
     this.maxMutationsPerPathPerAttempt =
       opts.maxMutationsPerPathPerAttempt ?? DEFAULT_MAX_MUTATIONS_PER_PATH_PER_ATTEMPT;
     this.attemptTimeoutMs = opts.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
+    this.idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.maxBlastViolations = opts.maxBlastViolations ?? MAX_BLAST_VIOLATIONS;
   }
 
   async *runAttempt(req: AttemptRequest): AsyncIterable<EngineEvent> {
@@ -209,8 +233,8 @@ export class PiEngine implements Engine {
       (id, name, path, reason) => {
         state.denied += 1;
         out.push({ kind: "blast_denied", id, name, path, reason });
-        if (state.denied >= MAX_BLAST_VIOLATIONS) {
-          abortAttempt(`attempt aborted after ${MAX_BLAST_VIOLATIONS} blast-radius violations`);
+        if (state.denied >= this.maxBlastViolations) {
+          abortAttempt(`attempt aborted after ${this.maxBlastViolations} blast-radius violations`);
         }
       },
     );
@@ -224,7 +248,11 @@ export class PiEngine implements Engine {
     });
     state.agent = agent;
 
+    // Reset by run()'s idle timer; every agent event is "progress" and bumps the deadline.
+    let bumpIdle: () => void = () => {};
+
     agent.subscribe((event: AgentEvent) => {
+      bumpIdle();
       switch (event.type) {
         case "tool_execution_start":
           out.push({
@@ -270,6 +298,18 @@ export class PiEngine implements Engine {
         abortAttempt(`attempt timed out after ${this.attemptTimeoutMs}ms`);
       }, this.attemptTimeoutMs);
       timer.unref?.();
+      // Stall detector: a productive attempt bumps this on every event and never trips it;
+      // a stalled stream / wedged subprocess trips it fast instead of waiting out the absolute
+      // backstop (the "this hangs for 10 minutes" symptom of a flat cap).
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      bumpIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          abortAttempt(`attempt aborted after ${Math.round(this.idleTimeoutMs / 1000)}s with no progress (stalled — no tool call or token)`);
+        }, this.idleTimeoutMs);
+        idleTimer.unref?.();
+      };
+      bumpIdle();
       try {
         const prompt = agent.prompt(userPrompt);
         await Promise.race([prompt, aborted]);
@@ -285,6 +325,7 @@ export class PiEngine implements Engine {
         out.push({ kind: "error", message: (err as Error).message });
       } finally {
         clearTimeout(timer);
+        if (idleTimer) clearTimeout(idleTimer);
         out.end(null);
       }
     })();

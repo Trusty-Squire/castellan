@@ -3,7 +3,7 @@ import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
 import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate } from "./gate-patterns.js";
-import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate } from "./gate-proofread.js";
+import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
@@ -727,6 +727,19 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     } else {
       gateWarnings.push({ node: id, issues: [issue] });
     }
+  }
+
+  // 3d3. IDEMPOTENCY — a gate that seeds a FIXED identity (create_user('test3@…')) into a
+  // file-backed store but never clears it first only passes against a pristine store. The build
+  // loop runs gates repeatedly and we tell the worker to run its check to verify — its own
+  // verification run inserts the row, then the official gate's create_user hits a UNIQUE
+  // violation and fails CORRECT code (measured: deepseek AND opus both failed secure-storage
+  // this way — proof it's the gate, not the model). Prepend a store reset so every run starts
+  // clean. Deterministic, no LLM.
+  for (const [id, g] of gatesByNode) {
+    if (g.type !== "command" || !g.run) continue;
+    const repaired = idempotencyRepair(g.run);
+    if (repaired) gatesByNode.set(id, { ...g, run: repaired });
   }
 
   // 3b. Harness-ATTACH a deterministic DOM presence gate. The planner won't SELECT
