@@ -302,7 +302,8 @@ export class PiEngine implements Engine {
 
     const gateBlock = req.gateSpec
       ? `\n\n=== HOW YOUR WORK IS VERIFIED — build so this passes ===\n${req.gateSpec}\n\n` +
-        "The literal inputs above are EXAMPLES: implement the REAL feature so these checks pass for ANY valid input. Do NOT hardcode or special-case the example values — match the exact field names and shapes the checks use."
+        "The literal inputs above are EXAMPLES: implement the REAL feature so these checks pass for ANY valid input. Do NOT hardcode or special-case the example values — match the exact field names and shapes the checks use. " +
+        "THIS GATE IS AUTHORITATIVE: where the brief and this gate disagree on a field name or shape (the brief says `longUrl` but the gate posts `url`), follow the GATE — it is what your work is judged by. (If a check looks impossible or self-contradictory, dispute it instead of guessing.)"
       : "";
     const userPrompt =
       (req.files.length > 0
