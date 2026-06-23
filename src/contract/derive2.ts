@@ -2,7 +2,7 @@ import { z } from "zod";
 import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
-import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate, stripSelfBootForServeGate } from "./gate-patterns.js";
+import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate, stripSelfBootForServeGate, gateBehaviorCount } from "./gate-patterns.js";
 import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair, briefFileCoherence, importsServerModule, repairWebAppServerGate } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
@@ -214,7 +214,9 @@ export const COHERENCE_RULE =
  * budget as the objective backstop (an over-budget pack truncates and is caught).
  */
 export const SIZING_RULE =
-  "SIZE EACH NODE TO THE EXECUTOR'S ENVELOPE, NOT A COUNT: a node is ONE cohesive module or capability (plus its tests) the cheap executor finishes reliably in a single focused turn. Make each node as LARGE as stays reliably workable; split a unit ONLY when it would exceed roughly 150-250 lines of new code, touch more than ~3 source files, or need to read more than the per-node context budget stated below. The node COUNT is emergent — a small task may be 2 nodes, a large one 9. Do NOT aim for any particular count and do NOT pad to fill a range.";
+  "SIZE EACH NODE TO THE EXECUTOR'S ENVELOPE, NOT A COUNT: a node is ONE cohesive module or capability (plus its tests) the cheap executor finishes reliably in a single focused turn. Make each node as LARGE as stays reliably workable; split a unit ONLY when it would exceed roughly 150-250 lines of new code, touch more than ~3 source files, or need to read more than the per-node context budget stated below. " +
+  "SIZE BY VERIFIED BEHAVIORS TOO, NOT JUST LINES: a node whose acceptance would make MANY independent assertions — more than ~6-8 distinct endpoints/behaviors/cases — is TOO BIG even if the code is short, because a cheap model rarely gets a dozen behaviors all correct in one turn (it thrashes and the whole node fails). Split such a node into cohesive sub-capabilities the executor can each get right and a gate can each check in one turn (e.g. a server's core CRUD in one node, its extra features in another). " +
+  "The node COUNT is emergent — a small task may be 2 nodes, a large one 9. Do NOT aim for any particular count and do NOT pad to fill a range.";
 
 /** The executor envelope line appended after SIZING_RULE so the "context budget
  *  stated below" it references is concrete. Names the runtime executor the plan is
@@ -1153,7 +1155,19 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     seededServers.length > 0
       ? `\n\nseeded server plumbing (boot/port/json/static/store) for ${seededServers.length} node(s) — the build fills only the handlers: ${seededServers.join(", ")}`
       : "";
-  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints) + proofreadNote + scaffoldNote;
+  // Deterministic over-size guardrail: a node whose gate asserts many independent behaviors is too
+  // big for one cheap turn (it thrashes → an EXPENSIVE halt, the worst-but-one outcome). The prompt
+  // rules should have split it; warn honestly when one slipped through so a re-derive can split it.
+  const OVERSIZE_BEHAVIORS = 10;
+  const oversized = mission.data.nodes
+    .map((n) => ({ id: n.id, behaviors: n.gate?.run ? gateBehaviorCount(n.gate.run) : 0 }))
+    .filter((n) => n.behaviors > OVERSIZE_BEHAVIORS);
+  const sizingNote =
+    oversized.length > 0
+      ? `\n\n⚠ over-sized node(s) — the gate checks more behaviors than a cheap model reliably gets right in one turn (likely to thrash; split into cohesive sub-nodes):\n` +
+        oversized.map((n) => `  - ${n.id}: gate asserts ~${n.behaviors} behaviors (cap ~${OVERSIZE_BEHAVIORS})`).join("\n")
+      : "";
+  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints) + proofreadNote + scaffoldNote + sizingNote;
   return {
     ok: true,
     mission: mission.data,

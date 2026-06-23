@@ -229,6 +229,20 @@ export function wrapWithServeGate(run: string, port: number): string {
 }
 
 /**
+ * A rough count of the INDEPENDENT behaviors a gate verifies — a deterministic proxy for how much
+ * a single node must get right. A node whose gate asserts a dozen behaviors is over-sized for one
+ * cheap turn (it thrashes; see the monolith timeout). Counts the dominant signals — live curls, DOM
+ * asserts, test cases — falling back to &&-chained segments. Heuristic, used only to WARN at derive
+ * time, never as a hard gate.
+ */
+export function gateBehaviorCount(run: string): number {
+  const curls = (run.match(/\bcurl\b/gi) ?? []).length;
+  const domAsserts = (run.match(/"assert"/g) ?? []).length;
+  const segments = run.split("&&").filter((s) => s.trim().length > 0).length;
+  return Math.max(curls, domAsserts, curls + domAsserts > 0 ? 0 : segments);
+}
+
+/**
  * Strip a self-boot/teardown preamble from a localhost-curl gate so the HARNESS serve-gate owns the
  * boot. The planner reliably writes its own fragile boot for a web-app server gate
  * (`npm install … && npm start & SERVER_PID=$! && sleep 3 && <curls> && kill $SERVER_PID`) — a race

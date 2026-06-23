@@ -92,7 +92,7 @@ describe("gate-pattern library", () => {
   });
 });
 
-import { stripSelfBootForServeGate, serverGatePort } from "../../src/contract/gate-patterns.js";
+import { stripSelfBootForServeGate, serverGatePort, gateBehaviorCount } from "../../src/contract/gate-patterns.js";
 
 describe("stripSelfBootForServeGate — let the harness own the boot", () => {
   it("drops npm install/start, sleep, PID bookkeeping and kill; keeps the curl checks", () => {
@@ -137,5 +137,17 @@ describe("stripSelfBootForServeGate — semicolon-separated boot (the variant th
     expect(stripped).not.toMatch(/npm start|sleep|SERVER_PID|kill/);
     expect(stripped.startsWith("curl")).toBe(true);
     expect(serverGatePort(stripped)).toBe(3000);
+  });
+});
+
+describe("gateBehaviorCount — a deterministic over-size proxy", () => {
+  it("counts curls for a serve gate, asserts for a DOM gate, segments otherwise", () => {
+    expect(gateBehaviorCount("curl a && curl b && curl c")).toBe(3);
+    expect(gateBehaviorCount('[{"assert":"x"},{"assert":"y"}]')).toBe(2);
+    expect(gateBehaviorCount("test1 && test2")).toBe(2);
+  });
+  it("flags a 13-check monolith server gate as over-sized (>10)", () => {
+    const checks = Array.from({ length: 13 }, (_, i) => `curl -fsS http://localhost:3000/api/${i} | grep -q ok`).join(" && ");
+    expect(gateBehaviorCount(checks)).toBeGreaterThan(10);
   });
 });
