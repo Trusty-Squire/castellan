@@ -696,3 +696,26 @@ describe("harness-derived UI gate — deterministic DOM teeth without the planne
     expect(looksLikeUi({ blast_radius: ["src/poker-engine.js", "src/bot-ai.js"] })).toBe(false);
   });
 });
+
+import { unifyContractFieldNames } from "../../src/contract/derive2.js";
+
+describe("unifyContractFieldNames — one value, one name (the url/longUrl drift)", () => {
+  it("rewrites an endpoint field to the type's canonical name", () => {
+    const c = "type Link = { id: string, longUrl: string, shortCode: string };\nPOST /api/shorten body: { url: string, customAlias?: string } -> { shortCode: string }";
+    const r = unifyContractFieldNames(c);
+    expect(r.renamed).toContainEqual(["url", "longUrl"]);
+    expect(r.contract).toContain("{ longUrl: string, customAlias?: string }"); // url -> longUrl
+    expect(r.contract).not.toMatch(/\burl\b/); // the bare endpoint `url` is gone
+  });
+  it("does NOT touch a legit endpoint-only field or a substring collision", () => {
+    const c = "type Link = { longUrl: string, shortCode: string };\nresponse: { shortUrl: string, customAlias: string }";
+    const r = unifyContractFieldNames(c);
+    // shortUrl is NOT a substring-rename of shortCode; customAlias has no type match -> both kept
+    expect(r.renamed).toEqual([]);
+    expect(r.contract).toContain("shortUrl");
+    expect(r.contract).toContain("customAlias");
+  });
+  it("no-op when there are no data types", () => {
+    expect(unifyContractFieldNames("just prose, no types").renamed).toEqual([]);
+  });
+});

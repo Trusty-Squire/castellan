@@ -188,8 +188,37 @@ export interface DirectMissionInput {
  * INTERFACE, all referencing one shared contract. This is what keeps the build on
  * the cheap rung — escalation is a rare backstop, not the mechanism.
  */
+/**
+ * Unify field names in the shared contract so the SAME value isn't named two ways — the url-vs-longUrl
+ * drift that halted the shortener: the data type stored `longUrl`, the endpoint body said `url`, so the
+ * gate posted `url` and the build (obeying the type) 400'd it. The data TYPES are the canonical source
+ * of truth; an endpoint/shape field that is a rename of a type field (one is a substring of the other)
+ * is rewritten to the type's name. Deterministic, no model — the contract becomes a single, declared-
+ * once vocabulary that the gate AND the build both reference, so they cannot disagree on a name.
+ */
+export function unifyContractFieldNames(contract: string): { contract: string; renamed: [string, string][] } {
+  const fieldsIn = (block: string): string[] => [...block.matchAll(/\b([a-zA-Z_]\w*)\s*\??\s*:/g)].map((m) => m[1]!);
+  const typeFields = new Set<string>();
+  for (const m of contract.matchAll(/\btype\s+\w+\s*=\s*\{([^}]*)\}/g)) for (const f of fieldsIn(m[1]!)) typeFields.add(f);
+  if (typeFields.size === 0) return { contract, renamed: [] };
+  const shapeFields = new Set<string>();
+  for (const m of contract.matchAll(/\{([^}]*)\}/g)) for (const f of fieldsIn(m[1]!)) shapeFields.add(f);
+  const renamed: [string, string][] = [];
+  let out = contract;
+  for (const e of shapeFields) {
+    if (typeFields.has(e) || e.length < 3) continue;
+    // a type field that is the same concept under a different name (substring either way)
+    const el = e.toLowerCase();
+    const t = [...typeFields].find((tf) => tf !== e && tf.length >= 3 && (tf.toLowerCase().includes(el) || el.includes(tf.toLowerCase())));
+    if (!t) continue;
+    renamed.push([e, t]);
+    out = out.replace(new RegExp(`\\b${e}\\b`, "g"), t);
+  }
+  return { contract: out, renamed };
+}
+
 export const CONTRACT_FIRST =
-  "CONTRACT-FIRST (so the cheap executor succeeds first try, not via escalation): emit a concise shared `contract` — the canonical data shapes (named types with their fields and value types) and the module interfaces (the exact exports and their signatures) that nodes share. Then make each brief CONCRETE ABOUT THE INTERFACE and concise about intent: name the contract types it consumes and produces, the functions/exports it must create with their signatures, and which prior node's output it builds on. A brief that only gestures at intent ('harden normalization', 'validate payloads') WITHOUT naming the data shape, the exports, and the upstream contract is REJECTED — the executor sees only its brief and will invent an incompatible schema. Keep the contract concise: the shared interface, not a design doc. " +
+  "CONTRACT-FIRST (so the cheap executor succeeds first try, not via escalation): emit a concise shared `contract` — the canonical data shapes (named types with their fields and value types) and the module interfaces (the exact exports and their signatures) that nodes share. ONE NAME PER VALUE: a request/response field that holds a value stored in a data type MUST use the SAME field name as that type — never rename it (do NOT call a stored `longUrl` field `url` in an endpoint body). Then make each brief CONCRETE ABOUT THE INTERFACE and concise about intent: name the contract types it consumes and produces, the functions/exports it must create with their signatures, and which prior node's output it builds on. A brief that only gestures at intent ('harden normalization', 'validate payloads') WITHOUT naming the data shape, the exports, and the upstream contract is REJECTED — the executor sees only its brief and will invent an incompatible schema. Keep the contract concise: the shared interface, not a design doc. " +
   "FOR A UI PRODUCT, the contract MUST also include a DOM CONTRACT and behaviors must be OWNED, not split away: (1) pin STABLE selector hooks for the interactive elements as data-* attributes or ids (e.g. [data-testid=pot], [data-action=raise], [data-card], [data-disabled-when-not-turn]); (2) state each key INTERACTIVE BEHAVIOR as an observable cause→effect on those hooks (clicking [data-action=raise] increases [data-testid=pot]; [data-card] flips face-up on reveal; a control is disabled off-turn). Do NOT carve a UI into a render-only node plus a logic node such that NO node owns the interaction — the node that renders an interactive surface OWNS its behavior (wire it to the data/API it needs) so its gate can drive the page and assert the effect. A frontend brief that only 'renders DOM elements' with no named hooks and no cause→effect behavior is REJECTED — its gate decays to grepping for a class name. (3) The UI build MUST expose a START COMMAND — `npm start` that serves the app on a fixed localhost port — so the gate can boot it, drive it, and tear it down; name that port in the contract.";
 
 /**
@@ -706,6 +735,12 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     };
   }
 
+  // 2c. UNIFY CONTRACT FIELD NAMES — collapse a value named two ways (type `longUrl` vs endpoint
+  // `url`) onto the type's canonical name BEFORE the gate author and the briefs read it, so the gate
+  // and the build reference one declared-once vocabulary and can't drift on a field name.
+  const fieldUnify = unifyContractFieldNames(decomposed.contract);
+  decomposed.contract = fieldUnify.contract;
+
   // 3. infer-gates — spec acceptance wins; otherwise select from the pattern library.
   // A node may now map to SEVERAL requirements, so the gate must verify the WHOLE
   // unit (the aggregate-gate principle: a multi-requirement node, like a split, is a
@@ -1188,7 +1223,11 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       ? `\n\n⚠ over-sized node(s) — the gate checks more behaviors than a cheap model reliably gets right in one turn (likely to thrash; split into cohesive sub-nodes):\n` +
         oversized.map((n) => `  - ${n.id}: gate asserts ~${n.behaviors} behaviors (cap ~${OVERSIZE_BEHAVIORS})`).join("\n")
       : "";
-  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints) + proofreadNote + scaffoldNote + sizingNote;
+  const unifyNote =
+    fieldUnify.renamed.length > 0
+      ? `\n\nunified contract field names (one value, one name — gate & build can't drift): ${fieldUnify.renamed.map(([e, t]) => `${e}→${t}`).join(", ")}`
+      : "";
+  const readback = renderReadback(mission.data, verdicts, freeformGates, foldedConstraints) + proofreadNote + scaffoldNote + sizingNote + unifyNote;
   return {
     ok: true,
     mission: mission.data,
