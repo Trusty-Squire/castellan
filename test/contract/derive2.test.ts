@@ -96,6 +96,10 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     const node = r.mission.nodes[0]!;
     // a web app steers the decompose to the scaffold-supported stack
     expect(llm.calls[1]!.system).toContain("Node.js + Express");
+    // the gate author (call 2, after classify+decompose) SEES the shared contract — so its gates
+    // use the contract's exact field names instead of inventing incoherent ones (the 400-on-url bug)
+    expect(llm.calls[2]!.user).toContain("SHARED CONTRACT");
+    expect(llm.calls[2]!.user).toContain("/api/items");
     // the gate boots the server; the harness seeded a runnable skeleton the model only fills
     expect(node.gate!.run).toContain("serve-gate.mjs --port 8090");
     expect(readFileSync(join(workdir, "server.js"), "utf8")).toContain("app.listen(PORT");
