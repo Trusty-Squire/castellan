@@ -93,6 +93,21 @@ export async function listFiles(cwd: string): Promise<string[]> {
   return out.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 
+/**
+ * True if `dir` is content that an ENCLOSING git repo tracks — i.e. it sits inside a parent repo
+ * AND that repo does not gitignore it. Such a dir is real source we must NOT build in place (the
+ * per-node commit/reset would mutate the parent's working tree); the caller sandboxes it instead.
+ * A dir that is its own repo, is gitignored by its parent (a dedicated build dir under projects/),
+ * or lives outside any repo, returns false → safe to git-init and build in place.
+ */
+export async function trackedByParentRepo(dir: string): Promise<boolean> {
+  const top = await execa("git", ["-C", dir, "rev-parse", "--show-toplevel"], { reject: false });
+  if (top.exitCode !== 0) return false; // not inside any git repo
+  // If `dir` is the repo root itself, an own-repo check (caller's isRepo) governs — not "parent".
+  const ignored = await execa("git", ["-C", dir, "check-ignore", "-q", "."], { reject: false });
+  return ignored.exitCode !== 0; // exit 0 = ignored by the parent → NOT tracked
+}
+
 /** True if the working tree has no changes. */
 export async function isClean(cwd: string): Promise<boolean> {
   const result = await execa("git", ["status", "--porcelain"], { cwd, reject: true });

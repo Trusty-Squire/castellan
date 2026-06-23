@@ -7,7 +7,7 @@ import { resolveChains } from "./contract/derive.js";
 import { runMission, type DisputeReviewer } from "./harness/runner.js";
 import { summarizeTrace } from "./harness/trace.js";
 import { MockEngine, fileScriptResolver } from "./engine/mock.js";
-import { commitAll, initRepo, isClean } from "./harness/checkpoint.js";
+import { commitAll, initRepo, isClean, trackedByParentRepo } from "./harness/checkpoint.js";
 import { SquireError } from "./errors.js";
 import type { Engine } from "./engine/types.js";
 import type { LlmClient } from "./llm/types.js";
@@ -147,6 +147,22 @@ async function cmdDomGate(args: string[]): Promise<number> {
   return 0;
 }
 
+/** Keep only the `keep` most recent /tmp/squire-run-* sandboxes; delete older ones (each holds a
+ *  per-run node_modules that's never reused). Best-effort — a locked/in-use dir is just skipped. */
+function pruneOldSandboxes(keep: number): void {
+  try {
+    const tmp = tmpdir();
+    const dirs = readdirSync(tmp)
+      .filter((n) => n.startsWith("squire-run-"))
+      .map((n) => join(tmp, n))
+      .map((p) => ({ p, t: (() => { try { return statSync(p).mtimeMs; } catch { return 0; } })() }))
+      .sort((a, b) => b.t - a.t);
+    for (const { p } of dirs.slice(keep)) {
+      try { rmSync(p, { recursive: true, force: true }); } catch { /* in use / gone */ }
+    }
+  } catch { /* tmpdir unreadable — skip */ }
+}
+
 async function cmdRun(args: string[]): Promise<number> {
   const flags = parseFlags(args, ["chain", "chains", "harness"]);
   const missionPath = flags.positional[0];
@@ -171,13 +187,22 @@ async function executeMissionObject(
   const declaredWorkdir = resolve(missionDir, mission.workdir);
   const useMock = flags.bool.has("mock");
 
-  // Establish an effective workdir that is a real git repo. If the declared
-  // workdir is not a git repo (or --sandbox is given), copy it to a temp dir
-  // and git-init a baseline there, so the harness never mutates the source.
+  // The harness needs a git repo to commit/reset per node. Pick where to build:
+  //  --sandbox, or a dir TRACKED by a parent repo (real source — e.g. a checked-in fixture) →
+  //    copy to a temp repo and build THERE, so the per-node reset never mutates the source. The
+  //    result is stranded in /tmp; prune old temp sandboxes first (each leaves a per-run
+  //    node_modules) so they don't pile into GBs.
+  //  a non-repo NOT tracked by a parent (a dedicated build dir under the gitignored projects/, or
+  //    any dir outside a repo) → git-init IN PLACE and build here. The build, node_modules, and
+  //    trace stay in the workdir: no /tmp copy, no copy-back, no accumulation.
+  //  already its own repo → build in place, but require a clean tree (we commit/reset it).
   const isRepo = existsSync(join(declaredWorkdir, ".git"));
+  const mustSandbox =
+    flags.bool.has("sandbox") || (!isRepo && (await trackedByParentRepo(declaredWorkdir)));
   let workdir = declaredWorkdir;
   let sandboxed = false;
-  if (!isRepo || flags.bool.has("sandbox")) {
+  if (mustSandbox) {
+    pruneOldSandboxes(5);
     workdir = mkdtempSync(join(tmpdir(), "squire-run-"));
     cpSync(declaredWorkdir, workdir, {
       recursive: true,
@@ -185,6 +210,8 @@ async function executeMissionObject(
     });
     await initRepo(workdir);
     sandboxed = true;
+  } else if (!isRepo) {
+    await initRepo(workdir); // git-init the build dir in place; build + trace stay here
   } else if (!(await isClean(workdir))) {
     throw new SquireError(
       "DIRTY_WORKDIR",
