@@ -978,12 +978,20 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     // A web-app server gate usually arrives with the planner's OWN fragile boot (npm start & sleep);
     // strip it so the harness serve-gate owns the boot (this also lets serverGatePort see the port,
     // which a lone `&` would otherwise mask) — then the skeleton scaffold can fire below.
-    const run =
-      archetype === "web-app" && /https?:\/\/(?:localhost|127\.0\.0\.1):\d/.test(g.run) && /\bnpm (start|run|install)\b|SERVER_PID/.test(g.run)
-        ? stripSelfBootForServeGate(g.run)
-        : g.run;
+    let run = g.run;
+    if (archetype === "web-app" && /https?:\/\/(?:localhost|127\.0\.0\.1):\d/.test(g.run) && /\bnpm (start|run|install)\b|SERVER_PID/.test(g.run)) {
+      const stripped = stripSelfBootForServeGate(g.run);
+      // NEVER ship a strip that broke the shell (the $(…) capture case) — re-validate, revert if so.
+      run = (await shellSyntaxError(stripped)) === null ? stripped : g.run;
+    }
     const port = serverGatePort(run);
-    if (port !== null) gatesByNode.set(id, { ...g, run: wrapWithServeGate(run, port) });
+    if (port !== null) {
+      const wrapped = wrapWithServeGate(run, port);
+      gatesByNode.set(id, { ...g, run: wrapped });
+      // Final backstop: a transform after the 3b2 sh -n pass (strip/wrap) can still leave a broken
+      // inner check; validate the INNER check of the final wrapped gate and warn if it won't parse.
+      if ((await shellSyntaxError(run)) !== null) gateWarnings.push({ node: id, issues: ["serve-gate inner check has a shell syntax error after transform"] });
+    }
   }
 
   // 3c2. SERVER PLUMBING SCAFFOLD — for a greenfield node whose gate now boots an HTTP server,

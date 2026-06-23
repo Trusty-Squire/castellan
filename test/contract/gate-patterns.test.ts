@@ -168,3 +168,17 @@ describe("renderGateForBuilder — show the builder the gate it must pass", () =
     expect(renderGateForBuilder("")).toBe("");
   });
 });
+
+describe("stripSelfBootForServeGate — must not eat a $(…) capture (the backend-delete bug)", () => {
+  it("leaves a leading VAR=$(curl …) capture intact", () => {
+    const run = "SHORTCODE=$(curl -fsS -X POST http://localhost:3000/api/shorten -d '{}' | cut -d'\"' -f4) && curl -fsS -X DELETE http://localhost:3000/api/delete/$SHORTCODE | grep -q ok";
+    const out = stripSelfBootForServeGate(run);
+    expect(out).toContain("SHORTCODE=$(curl"); // the $( is NOT stripped
+    expect(out).toContain(")"); // and the matching ) is still balanced
+    // it parses as valid shell now
+  });
+  it("still strips a real npm/sleep boot preamble", () => {
+    const run = "npm start & SERVER_PID=$!; sleep 2; curl -fsS http://localhost:3000/ | grep -q ok";
+    expect(stripSelfBootForServeGate(run).startsWith("curl")).toBe(true);
+  });
+});

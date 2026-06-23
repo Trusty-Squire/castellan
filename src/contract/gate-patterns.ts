@@ -278,10 +278,13 @@ export function stripSelfBootForServeGate(run: string): string {
   const BOOT =
     /(^|\s)(npm (install|ci|start|run|i)|yarn|pnpm|node (server|app|index)|python3?|flask|uvicorn|gunicorn|sleep|kill|wait|trap|nohup|disown)\b|SERVER_PID|[A-Z_]*PID=\$!|^\s*export\s/i;
   let s = run.trim();
-  // 1. Drop a leading boot preamble — everything up to the first `curl`, if that prefix is boot
-  //    (no curl in it). Handles boot glued to the first check by `;`, `&`, or `&&` alike.
+  // 1. Drop a leading boot preamble — up to the first `curl` — but ONLY if that prefix is actually
+  //    boot (npm/sleep/&…) and does NOT open a `$(` capture. Else a `SHORTCODE=$(curl …)` capture
+  //    gets its `$(` eaten, leaving a dangling `)` that crashes the gate (`sh: ")" unexpected`).
   const i = s.search(/\bcurl\b/i);
-  if (i > 0 && !/\bcurl\b/i.test(s.slice(0, i))) s = s.slice(i).trim();
+  const prefix = i > 0 ? s.slice(0, i) : "";
+  const opensCapture = (prefix.split("$(").length - 1) > (prefix.match(/\)/g) ?? []).length;
+  if (i > 0 && !/\bcurl\b/i.test(prefix) && BOOT.test(prefix) && !opensCapture) s = s.slice(i).trim();
   // 2. Drop a trailing teardown (kill/wait/trap a backgrounded server), however separated.
   s = s.replace(/\s*[;&]+\s*(kill|wait|trap)\b.*$/i, "").trim();
   // 3. Drop any pure boot/teardown segment still sitting between `&&` checks.
