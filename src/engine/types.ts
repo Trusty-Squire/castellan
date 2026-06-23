@@ -31,6 +31,10 @@ export interface AttemptRequest {
   rung: number;
   /** Command gate for this node, used by engines for cheap local sanity checks. */
   doneCheck?: string;
+  /** The gate rendered as a human-readable SPEC the builder reads — the exact checks its work must
+   *  pass — so it builds TO the test instead of guessing the contract (kills the brief↔gate drift).
+   *  Safe to show because gates verify BEHAVIOR over (ideally randomized) inputs, not value-presence. */
+  gateSpec?: string;
 }
 
 export type EngineEvent =

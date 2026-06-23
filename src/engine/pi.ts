@@ -300,10 +300,14 @@ export class PiEngine implements Engine {
       }
     });
 
+    const gateBlock = req.gateSpec
+      ? `\n\n=== HOW YOUR WORK IS VERIFIED — build so this passes ===\n${req.gateSpec}\n\n` +
+        "The literal inputs above are EXAMPLES: implement the REAL feature so these checks pass for ANY valid input. Do NOT hardcode or special-case the example values — match the exact field names and shapes the checks use."
+      : "";
     const userPrompt =
-      req.files.length > 0
+      (req.files.length > 0
         ? `${req.brief}\n\n=== CONTEXT FILES (read-only unless writable) ===\n${renderPackedFiles(req.files)}`
-        : req.brief;
+        : req.brief) + gateBlock;
 
     // Gate-required modules the build does NOT yet satisfy. Uses Node's OWN resolution (so an
     // extensionless require('./storage') matches storage.js), checked outside the agent's tools

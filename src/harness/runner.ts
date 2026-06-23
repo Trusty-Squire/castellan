@@ -1,5 +1,6 @@
 import type { ChainsFile, Mission } from "../contract/schema.js";
 import { resolveChain, topoSort, effectiveGate, type MissionNode } from "../contract/schema.js";
+import { renderGateForBuilder } from "../contract/gate-patterns.js";
 import type { Engine, AttemptRecord, ToolCallRecord, ToolName } from "../engine/types.js";
 import { Trace } from "./trace.js";
 import { packContext } from "./context.js";
@@ -358,6 +359,10 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         nodeId: node.id,
         rung: rung.rung,
         doneCheck: gateCommandOf(node),
+        // Show the builder the EXACT gate it must pass — it was building blind to the test, so its
+        // code drifted from the gate on field names / response shapes (the whack-a-mole). The gate
+        // verifies behavior, not value-presence, so showing it is a precise spec, not a cheat sheet.
+        gateSpec: renderGateForBuilder(gateCommandOf(node)),
       };
 
       // Retry a TRANSIENT provider error (a 500/429/overload blip) that struck BEFORE the

@@ -229,6 +229,29 @@ export function wrapWithServeGate(run: string, port: number): string {
 }
 
 /**
+ * Render a node's gate as a SPEC the BUILDER reads — the exact checks its work must pass — so it
+ * builds TO the test instead of guessing the contract (the root cause of the field-name /
+ * response-shape drift: the builder never saw the gate). Unwraps the serve-gate / dom-gate harness
+ * wrappers to the underlying requests so the model sees real curls / DOM steps, not `node
+ * serve-gate.mjs …`. The caller frames the example inputs as EXAMPLES — build the real feature so the
+ * checks pass for ANY valid input, never hardcode the literals (over randomized inputs that's the
+ * only winning move anyway).
+ */
+export function renderGateForBuilder(run: string): string {
+  if (!run.trim()) return "";
+  const serve = run.match(/serve-gate\.mjs --port (\d+) --check '([\s\S]*)'\s*$/);
+  if (serve) {
+    const checks = serve[2]!.replace(/'\\''/g, "'");
+    return `The harness boots your server with \`npm start\` on port ${serve[1]} and runs these checks against the LIVE server — every one must pass:\n\n${checks}`;
+  }
+  const dom = run.match(/dom-gate\.mjs\s+'([^']+)'\s+'([\s\S]*?)'(?:\s+--serve\s+'([^']*)')?/);
+  if (dom) {
+    return `The harness serves your app${dom[3] ? ` (via \`${dom[3]}\`)` : ""}, opens ${dom[1]}, and asserts these DOM behaviors — every one must hold:\n\n${dom[2]}`;
+  }
+  return `Your work must pass this exact check, run from a fresh checkout:\n\n${run}`;
+}
+
+/**
  * A rough count of the INDEPENDENT behaviors a gate verifies — a deterministic proxy for how much
  * a single node must get right. A node whose gate asserts a dozen behaviors is over-sized for one
  * cheap turn (it thrashes; see the monolith timeout). Counts the dominant signals — live curls, DOM

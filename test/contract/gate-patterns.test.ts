@@ -92,7 +92,7 @@ describe("gate-pattern library", () => {
   });
 });
 
-import { stripSelfBootForServeGate, serverGatePort, gateBehaviorCount } from "../../src/contract/gate-patterns.js";
+import { stripSelfBootForServeGate, serverGatePort, gateBehaviorCount, renderGateForBuilder, wrapWithServeGate } from "../../src/contract/gate-patterns.js";
 
 describe("stripSelfBootForServeGate — let the harness own the boot", () => {
   it("drops npm install/start, sleep, PID bookkeeping and kill; keeps the curl checks", () => {
@@ -149,5 +149,22 @@ describe("gateBehaviorCount — a deterministic over-size proxy", () => {
   it("flags a 13-check monolith server gate as over-sized (>10)", () => {
     const checks = Array.from({ length: 13 }, (_, i) => `curl -fsS http://localhost:3000/api/${i} | grep -q ok`).join(" && ");
     expect(gateBehaviorCount(checks)).toBeGreaterThan(10);
+  });
+});
+
+describe("renderGateForBuilder — show the builder the gate it must pass", () => {
+  it("unwraps a serve-gate to the real curls + a boot explanation", () => {
+    const wrapped = wrapWithServeGate("curl -fsS -X POST http://localhost:3000/api/shorten -d '{\"longUrl\":\"x\"}' | grep -q shortUrl", 3000);
+    const spec = renderGateForBuilder(wrapped);
+    expect(spec).toContain("npm start");
+    expect(spec).toContain("port 3000");
+    expect(spec).toContain('"longUrl"'); // the actual request the builder must satisfy
+    expect(spec).not.toContain("serve-gate.mjs"); // the harness wrapper is hidden
+  });
+  it("falls back to showing a plain command verbatim", () => {
+    expect(renderGateForBuilder("pnpm vitest run test/x")).toContain("pnpm vitest run test/x");
+  });
+  it("returns empty for an empty gate", () => {
+    expect(renderGateForBuilder("")).toBe("");
   });
 });
