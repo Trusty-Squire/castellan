@@ -214,14 +214,23 @@ export async function runServeGate(opts: {
  * Re-issuing state-mutating curls is harmless: the server is torn down immediately after.
  */
 async function traceCheck(check: string, workdir: string, port: number): Promise<string> {
-  // Run the check under `sh -x` so every command is echoed (expanded) to stderr: the build then
-  // sees the exact requests the gate makes — e.g. the `-d '{"longUrl":...}'` body that reveals the
-  // field it misread — plus each curl's own error line. We do NOT rewrite the curls (an earlier
-  // attempt to inject --fail-with-body to surface bodies conflicted with the gate's own -f/--fail
-  // and produced a useless "option badly used" error; the -x trace of the REQUEST is the signal).
+  // Re-run the check so the build SEES why it failed: (1) `sh -x` echoes every request expanded
+  // (the `-d '{...}'` body reveals a field mismatch); (2) we strip curl's `-f` so a 4xx still prints
+  // its RESPONSE BODY (with -f curl swallows it — and the body is exactly the server's "longUrl is
+  // required" / "invalid url" reason); (3) we tee each curl's output to stderr so that body is
+  // visible even though it's piped into grep. The diagnostic's own exit code is ignored — its only
+  // job is to surface requests + responses + errors into the failure note.
+  const traced = check
+    .replace(/\bcurl\b((?:\s+-{1,2}[A-Za-z-]+\b)*)/g, (m) =>
+      m.replace(/-fsS\b/g, "-sS").replace(/-fSs\b/g, "-sS").replace(/-fs\b/g, "-s").replace(/(^|\s)-f(\s|$)/g, "$1$2"),
+    )
+    // Drop the `| grep …` assertions so each curl's RESPONSE BODY prints straight to the captured
+    // output (the -x trace already shows what was being checked). `tee /dev/stderr` can't be used —
+    // it fails when stderr is a pipe ("No such device or address"). Without -f, a 4xx prints its body.
+    .replace(/\|\s*grep\b[^&|;]*/g, " ");
   return await new Promise<string>((resolve) => {
     let out = "";
-    const c = spawn("sh", ["-xc", check], {
+    const c = spawn("sh", ["-xc", traced], {
       cwd: workdir,
       env: { ...process.env, PORT: String(port) },
     });

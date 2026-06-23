@@ -144,7 +144,9 @@ describe("runServeGate — boot, wait for the port, run the check, tear down", (
     // the request the gate actually sent is now visible — enough for the build to spot that it read
     // the wrong field (it POSTed `longUrl`, the handler expected something else)
     expect(r.note).toContain("longUrl");
-    expect(r.note).toMatch(/curl/); // the failing request appears in the trace
+    // AND the server's 400 response body is surfaced (curl -f had swallowed it) — the build now sees
+    // the server's own reason, not just "curl failed"
+    expect(r.note).toMatch(/name is required/);
   });
 
   it("reports code 3 (not a false pass) when no server can be booted", async () => {
