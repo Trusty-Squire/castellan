@@ -11,8 +11,43 @@
  * set up its own preconditions is trusted — false-flagging a good gate would break a
  * working build, which is worse than missing one.
  */
+import { execa } from "execa";
 import type { LlmClient } from "../llm/types.js";
 import { makeMatcher } from "../harness/globs.js";
+
+/**
+ * Return the shell SYNTAX error in a gate command (or null if it parses). A gate that doesn't even
+ * parse — a stray `)` from a botched `$(...)` capture, an unbalanced quote — can NEVER pass: the
+ * build burns its whole ladder on `sh: Syntax error`, and the model rightly disputes a gate it can't
+ * satisfy. `sh -n` dry-parses without executing (no curl, no side effects), so this is a cheap,
+ * deterministic pre-gate. The planner slips this even on a premium model (measured: a qr-endpoint
+ * gate shipped with an unmatched paren).
+ */
+export async function shellSyntaxError(run: string): Promise<string | null> {
+  const r = await execa("sh", ["-n", "-c", run], { reject: false });
+  return r.exitCode === 0 ? null : (r.stderr.split("\n").find((l) => l.trim()) ?? "shell syntax error");
+}
+
+/** Rewrite a gate that has a SHELL SYNTAX error, preserving the checks it intended. Caller
+ *  re-validates with shellSyntaxError before adopting (only a clean parse is kept). */
+export async function repairMalformedGate(
+  llm: LlmClient,
+  model: string,
+  args: { brief: string; gate: string; error: string },
+): Promise<string | null> {
+  const system =
+    "You fix the SHELL SYNTAX of ONE gate command (exit 0 = pass) that does not parse — an unmatched " +
+    "paren/quote, a botched $(...) capture. Keep the SAME checks and assertions it intended; only make " +
+    "it valid POSIX sh. Output ONLY the corrected single shell command, no prose, no code fences.";
+  const user = `NODE BRIEF:\n${args.brief}\n\nGATE WITH A SHELL SYNTAX ERROR (${args.error}):\n${args.gate}`;
+  try {
+    const res = await llm.complete({ model, system, user, json: false, maxTokens: 1100 });
+    const cmd = res.text.trim().replace(/^```[\w-]*\n?/, "").replace(/\n?```$/, "").trim();
+    return cmd.length > 0 ? cmd : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Files a brief explicitly instructs the worker to CREATE/WRITE/ADD (by name + extension). */
 const BRIEF_CREATE_RE =

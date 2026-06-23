@@ -176,3 +176,12 @@ describe("toolingCoherence — equip a node with the files/manifest its gate nee
     expect(toolingCoherence(integration, [integration, bot])).not.toContain("run-bot.sh");
   });
 });
+
+import { shellSyntaxError } from "../../src/contract/gate-proofread.js";
+
+describe("shellSyntaxError — catch a gate that doesn't even parse", () => {
+  it("flags an unmatched paren (the qr-endpoint bug), passes valid shell", async () => {
+    expect(await shellSyntaxError("curl -fsS http://x/y -d '{\"a\":1}') && echo ok")).toMatch(/unexpected|syntax/i);
+    expect(await shellSyntaxError("curl -fsS http://x/y | grep -q ok && curl -fsS http://x/z | grep -q ok")).toBeNull();
+  });
+});

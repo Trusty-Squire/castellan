@@ -3,7 +3,7 @@ import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
 import { MissionSchema, GateSchema, type Mission, type Gate } from "./schema.js";
 import { renderGate, serverGatePort, serveGateBriefNote, wrapWithServeGate, stripSelfBootForServeGate, gateBehaviorCount } from "./gate-patterns.js";
-import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair, briefFileCoherence, importsServerModule, repairWebAppServerGate } from "./gate-proofread.js";
+import { gateProofread, portCoherence, toolingCoherence, repairUnsatisfiableGate, interfaceCoherence, repairInterfaceGate, idempotencyRepair, briefFileCoherence, importsServerModule, repairWebAppServerGate, shellSyntaxError, repairMalformedGate } from "./gate-proofread.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC, gatePatternDoc } from "./self-knowledge.js";
 import { buildRepoSurvey, tryParseJson, formatZodIssues } from "./derive.js";
 import { scaffoldServerNode, serverSkeletonNote } from "./server-scaffold.js";
@@ -907,6 +907,20 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   // trustysquire build honest-halted on exactly this. Same fix as the DOM gate's
   // `--serve`, generalized to API gates: wrap so the harness boots the server, waits for
   // the port, runs the curls, tears down. (DOM gates already serve-wrap → skipped here.)
+  // 3b2. SHELL SYNTAX — a gate that doesn't even parse (a stray `)` from a botched $(...) capture)
+  // can never pass; the build burns its whole ladder on `sh: Syntax error` and the model disputes a
+  // gate it can't satisfy. Dry-parse every command gate (sh -n, no side effects) and repair the
+  // malformed ones via the planner, re-validating before adopting. Deterministic detection.
+  for (const [id, g] of gatesByNode) {
+    if (g.type !== "command" || !g.run) continue;
+    const err = await shellSyntaxError(g.run);
+    if (!err) continue;
+    const node = decomposed.nodes.find((n) => n.id === id);
+    const repaired = await repairMalformedGate(llm, model, { brief: node?.brief ?? "", gate: g.run, error: err });
+    if (repaired && (await shellSyntaxError(repaired)) === null) gatesByNode.set(id, { ...g, run: repaired });
+    else gateWarnings.push({ node: id, issues: [`gate has a shell syntax error and could not be repaired: ${err}`] });
+  }
+
   // 3c0. WEB-APP SERVER GATE COHERENCE — the planner is unreliable here: it often gates the server
   // by IMPORTING it (supertest / require / node -e), which is incoherent with the self-listening
   // vendored skeleton AND frequently syntactically invalid. Deterministically detect that and
