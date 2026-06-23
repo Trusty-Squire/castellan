@@ -143,3 +143,24 @@ describe("reconcile", () => {
     expect(r.confabulation).toBe(false);
   });
 });
+
+describe("reconcile — scratch output files are byproducts, not violations", () => {
+  it("does NOT fail a node whose gate passed but that left a debug scratch file (the gridcalc output.txt halt)", () => {
+    const r = reconcile({
+      blastRadius: ["engine.js", "package.json"],
+      doneCheck: "node test/r1.cjs",
+      changedFiles: ["engine.js", "output.txt", "debug.txt"],
+      record: record({ executedWrites: ["engine.js"], finalMessage: "built the engine" }),
+    });
+    expect(r.outOfRadius).toEqual([]);
+    expect(r.violations).toEqual([]);
+  });
+  it("still flags a real out-of-radius SOURCE file", () => {
+    const r = reconcile({
+      blastRadius: ["engine.js"], doneCheck: "true",
+      changedFiles: ["engine.js", "test/r1.cjs"],
+      record: record({ executedWrites: ["engine.js", "test/r1.cjs"] }),
+    });
+    expect(r.outOfRadius).toContain("test/r1.cjs"); // editing the held-out test IS a violation
+  });
+});
