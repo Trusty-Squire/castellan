@@ -13,9 +13,9 @@
 # Use: pnpm experiment --tasks 1..20 --chains knight-only --chains-file chains/knight-only-scaled.yaml
 chains:
   knight-only:
-    executor: "z-ai/glm-5.2"
-    fallback: "z-ai/glm-5.2"
-    knight: "z-ai/glm-5.2"
+    executor: "moonshotai/kimi-k2-thinking"
+    fallback: "moonshotai/kimi-k2-thinking"
+    knight: "moonshotai/kimi-k2-thinking"
     budget_scale: 3
 prices:
-  "z-ai/glm-5.2": { in: 0.95, out: 3.00 }
+  "moonshotai/kimi-k2-thinking": { in: 0.60, out: 2.50 }
