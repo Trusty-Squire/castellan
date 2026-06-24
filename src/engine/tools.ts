@@ -56,6 +56,26 @@ export function clampOutput(s: string, max = MAX_TOOL_OUTPUT_BYTES): string {
 }
 
 /**
+ * Broad process-killers (`pkill`, `killall`) match processes by name/pattern and so escape this
+ * build's scope: a `pkill -f node` to free a port kills the ser HARNESS running the build (and the
+ * MCP servers, and any other node process) — observed mid-run, it killed the supervisor itself.
+ * A build never needs to mass-kill processes; block them at the membrane and tell the model the
+ * scoped alternative (kill the one PID it started, or just use the harness-assigned $PORT).
+ */
+export function broadProcessKill(command: string): string | null {
+  if (/(^|[;&|(]|\s)(pkill|killall)\b/.test(command)) {
+    return (
+      "blocked: `pkill`/`killall` match processes by name/pattern and would kill the build harness " +
+      "itself (a `pkill -f node` killed ser in a prior run). Do NOT mass-kill processes. To stop a " +
+      "server YOU started, capture its PID and kill only that one (`node server.js & SRV=$!; ...; " +
+      "kill $SRV`), or just (re)start on the port the harness assigned via $PORT — the harness/gate " +
+      "owns server lifecycle and port allocation, so you usually do not need to kill anything."
+    );
+  }
+  return null;
+}
+
+/**
  * The one place writes happen. Blast-radius and denylist are enforced here,
  * BEFORE any filesystem mutation — never trusted to the engine or the model.
  */
@@ -154,6 +174,10 @@ export class ToolExecutor {
 
   private async bash(args: BashArgs): Promise<ToolExecResult> {
     const command = args.command ?? "";
+    const killBlock = broadProcessKill(command);
+    if (killBlock) {
+      return { ok: false, denied: true, deniedReason: "broad process-kill blocked", command, output: killBlock };
+    }
     try {
       const result = await execa(command, {
         cwd: this.cwd,

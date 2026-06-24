@@ -1173,6 +1173,18 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   const contractBlock = decomposed.contract.trim()
     ? `SHARED CONTRACT (the whole build conforms to these data shapes + module signatures — do not invent your own):\n${decomposed.contract.trim()}\n\n---\n\n`
     : "";
+  // EXTEND nodes edit files that already exist and that other nodes + the gate import. The #1
+  // observed cheap-model failure was breaking the module export ("module.exports = { Sheet }")
+  // while editing, then thrashing dozens of rewrites on a "Sheet is not a constructor" it could
+  // not diagnose. Pin the public interface and name the symptom so it self-corrects fast.
+  const EXTEND_CONTRACT_NOTE =
+    'EXTEND NOTE — this node edits files that ALREADY EXIST and that other nodes and the gate import. ' +
+    'PRESERVE THE PUBLIC INTERFACE EXACTLY as the SHARED CONTRACT lists it: keep the same exports and ' +
+    'signatures (e.g. keep "module.exports = { Sheet }", the same exported names, the same function ' +
+    'signatures). ADD capability inside the file; never change, rename, or remove an export. If a ' +
+    'check suddenly fails at IMPORT/LOAD time — "X is not a constructor", "X is not a function", ' +
+    '"Cannot find module", "is not defined in ES module scope" — you changed the module export shape: ' +
+    'RESTORE the exact export line FIRST; do NOT rewrite the file from scratch.';
   // Per-node USD: floor + escalation reserve over the planner's weights (step 2).
   const nodeBudgets = allocateNodeBudgets(
     decomposed.nodes.map((n) => n.budget_usd),
@@ -1190,9 +1202,12 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       // shared contract may have pinned a non-listening factory (the auth-api incoherence).
       const servePort = gate.type === "command" && gate.run ? gate.run.match(/serve-gate\.mjs --port (\d+)/)?.[1] : undefined;
       const serveNote = servePort ? `\n\n${serveGateBriefNote(Number(servePort))}` : "";
+      // A node that depends on prior nodes AND reads existing files is extending them — pin exports.
+      const extendNote =
+        (n.deps?.length ?? 0) > 0 && (n.context_globs?.length ?? 0) > 0 ? `\n\n${EXTEND_CONTRACT_NOTE}` : "";
       return {
         id: n.id,
-        brief: contractBlock + n.brief + serveNote + constraintBlock,
+        brief: contractBlock + n.brief + serveNote + extendNote + constraintBlock,
         deps: n.deps,
         context_globs: n.context_globs,
         blast_radius: n.blast_radius,

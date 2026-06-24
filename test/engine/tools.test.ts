@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ToolExecutor, clampOutput } from "../../src/engine/tools.js";
+import { ToolExecutor, clampOutput, broadProcessKill } from "../../src/engine/tools.js";
 
 let cwd: string;
 beforeEach(() => {
@@ -130,5 +130,21 @@ describe("ToolExecutor", () => {
     const exec = new ToolExecutor(cwd, { blastRadius: ["**"], denylist: ["bash"] });
     const r = await exec.execute("bash", { command: "echo x" });
     expect(r.denied).toBe(true);
+  });
+
+  it("blocks broad process-kills (pkill/killall) but allows scoped kill", () => {
+    for (const c of ["pkill -f node", "killall node", "killall -9 node", "x; pkill -f 'node server.js'", "echo y && pkill node"]) {
+      expect(broadProcessKill(c), c).not.toBeNull();
+    }
+    for (const c of ["npm start", "node server.js & SRV=$!; sleep 1; kill $SRV", "kill 12345", "echo pkillnot"]) {
+      expect(broadProcessKill(c), c).toBeNull();
+    }
+  });
+
+  it("denies a broad process-kill at the bash membrane without executing it", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["**"] });
+    const r = await exec.execute("bash", { command: "pkill -f node" });
+    expect(r.denied).toBe(true);
+    expect(r.output).toMatch(/kill the build harness|\$PORT/);
   });
 });

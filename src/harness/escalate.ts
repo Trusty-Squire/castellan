@@ -94,6 +94,8 @@ export function buildFailureContext(info: FailureInfo): string {
     lines.push("- gate stderr (tail):");
     lines.push(indent(info.stderrTail.trim(), "    "));
   }
+  const loadHint = moduleLoadHint(`${info.stderrTail}\n${info.stdoutTail}`);
+  if (loadHint) lines.push(`- ${loadHint}`);
   if (info.reconcileViolations.length > 0) {
     lines.push("- reconcile violations:");
     for (const v of info.reconcileViolations) lines.push(`    * ${v}`);
@@ -117,6 +119,19 @@ export function buildFailureContext(info: FailureInfo): string {
   );
   lines.push("=== END FAILURE CONTEXT ===");
   return lines.join("\n");
+}
+
+/**
+ * Distinguish an IMPORT/LOAD-TIME failure from a logic bug. When a gate dies because the module no
+ * longer exports what the test imports (the cheap model changed the export shape while editing), the
+ * raw stack ("X is not a constructor") reads like a logic error and the model thrashes. Name the
+ * root cause so the repair rung fixes the export instead of rewriting the file.
+ */
+function moduleLoadHint(text: string): string | null {
+  if (/\bis not a constructor\b|\bis not a function\b|Cannot find module|ERR_MODULE_NOT_FOUND|is not defined in ES module scope|has no exported member/.test(text)) {
+    return 'DIAGNOSIS: this is an IMPORT/LOAD-TIME failure, NOT a logic bug — the module no longer exports what the test imports. You almost certainly changed the export shape while editing (e.g. broke "module.exports = { Sheet }"). RESTORE the exact export the SHARED CONTRACT lists, then re-run; do NOT rewrite the file.';
+  }
+  return null;
 }
 
 function indent(text: string, pad: string): string {
