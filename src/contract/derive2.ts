@@ -1450,7 +1450,7 @@ function renderReadback(
 
 export async function runDeriveV2(args: string[]): Promise<number> {
   const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
-  const { resolve, join } = await import("node:path");
+  const { resolve, join, dirname } = await import("node:path");
   const { stringify } = await import("yaml");
   const { parseSpec } = await import("./spec.js");
   const { loadChainsForDerive } = await import("./derive.js");
@@ -1471,21 +1471,27 @@ export async function runDeriveV2(args: string[]): Promise<number> {
   const target = positional[0];
   if (!target) throw new SquireError("USAGE", 'ser derive <goal | spec.yaml> [--judge] [--out <file>]');
 
-  const workdir = resolve(value.get("workdir") ?? process.cwd());
-  const chainName = value.get("chain") ?? "cheap";
-  const chains = loadChainsForDerive(workdir, value.get("chains"));
-  const chain = resolveChain(chains, chainName);
-
   // Detect a spec by CONTENT, not just the `.spec.yaml` extension: the TUI writes
   // its spec to `.ser/spec.yaml`, and naming it differently must NOT silently turn
   // the spec file's PATH into the build "goal" (which yields a nonsense "read this
   // yaml and build something" mission). Any existing YAML file that parses as a spec
-  // is treated as a spec; anything else is a free-text goal.
+  // is treated as a spec; anything else is a free-text goal. Detected BEFORE the
+  // workdir so the workdir can default to the spec's own directory.
   let spec: ReturnType<typeof parseSpec> | undefined;
   const asPath = resolve(target);
   if (/\.ya?ml$/.test(target) && existsSync(asPath)) {
     try { spec = parseSpec(readFileSync(asPath, "utf8"), target); } catch { spec = undefined; }
   }
+
+  // When deriving FROM A SPEC FILE, default the workdir to the spec's OWN directory — its held-out
+  // tests, scaffold, and mission belong together there. Defaulting to process.cwd() leaked the
+  // server-plumbing scaffold (server.js, public/, a merged package.json) into wherever the command
+  // was run from (it mutated the repo root). An explicit --workdir always wins; a free-text goal
+  // still defaults to cwd.
+  const workdir = resolve(value.get("workdir") ?? (spec ? dirname(asPath) : process.cwd()));
+  const chainName = value.get("chain") ?? "cheap";
+  const chains = loadChainsForDerive(workdir, value.get("chains"));
+  const chain = resolveChain(chains, chainName);
 
   // Judge mode: mechanical pre-gates only — no tokens, exit code is the verdict.
   if (bool.has("judge")) {
