@@ -9,11 +9,11 @@ export const DEFAULT_CHAINS_YAML = `chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
   knight-only:
-    executor: "anthropic/claude-opus-4"
-    fallback: "anthropic/claude-opus-4"
-    knight: "anthropic/claude-opus-4"
+    executor: "z-ai/glm-5.2"
+    fallback: "z-ai/glm-5.2"
+    knight: "z-ai/glm-5.2"
   cheap-raw:
     executor: "qwen/qwen3-coder"
     fallback: "qwen/qwen3-coder"
@@ -22,7 +22,7 @@ export const DEFAULT_CHAINS_YAML = `chains:
 prices:
   "qwen/qwen3-coder": { in: 0.30, out: 1.00 }
   "deepseek/deepseek-chat": { in: 0.20, out: 0.80 }
-  "anthropic/claude-opus-4": { in: 15.0, out: 75.0 }
+  "z-ai/glm-5.2": { in: 0.95, out: 3.00 }
 `;
 
 /** Marker source label used when no chains file is found and defaults apply. */

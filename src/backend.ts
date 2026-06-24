@@ -45,7 +45,7 @@ export async function makeVisualClient(
   const apiKey = env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
   const { OpenRouterClient } = await import("./llm/openrouter.js");
-  return { llm: new OpenRouterClient({ apiKey, baseUrl: env.OPENROUTER_BASE_URL }), model: env.SER_VISUAL_MODEL ?? "anthropic/claude-opus-4" };
+  return { llm: new OpenRouterClient({ apiKey, baseUrl: env.OPENROUTER_BASE_URL }), model: env.SER_VISUAL_MODEL ?? "z-ai/glm-5v-turbo" };
 }
 
 /** The build-execution Engine for the configured backend (non-mock runs only). */

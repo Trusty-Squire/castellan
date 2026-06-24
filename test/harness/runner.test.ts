@@ -13,11 +13,11 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 prices:
   "qwen/qwen3-coder": { in: 0.2, out: 0.8 }
   "deepseek/deepseek-chat": { in: 0.14, out: 0.28 }
-  "anthropic/claude-opus-4": { in: 15.0, out: 75.0 }
+  "z-ai/glm-5.2": { in: 0.95, out: 3.00 }
 `);
 
 let repo: string;

@@ -29,7 +29,7 @@ function parseKey(b: Buffer): { name: string; ch?: string } {
   return { name: "other" };
 }
 
-/** Short, readable model id: "anthropic/claude-opus-4" → "opus-4", "qwen/qwen3-coder" → "qwen3-coder". */
+/** Short, readable model id: "z-ai/glm-5.2" → "glm-5.2", "qwen/qwen3-coder" → "qwen3-coder". */
 function modelShort(id: string): string { return (id.split("/").pop() ?? id).replace(/^claude-/, ""); }
 
 const cols = (): number => process.stdout.columns || 80;

@@ -3,7 +3,7 @@ import { BudgetMeter, priceUsd } from "../../src/harness/budget.js";
 
 const prices = {
   "qwen/qwen3-coder": { in: 0.2, out: 0.8 },
-  "anthropic/claude-opus-4": { in: 15.0, out: 75.0 },
+  "z-ai/glm-5.2": { in: 0.95, out: 3.00 },
 };
 
 describe("priceUsd", () => {
@@ -24,8 +24,8 @@ describe("BudgetMeter", () => {
   it("tracks node and global spend and flags the node cap", () => {
     const m = new BudgetMeter(prices, 10.0);
     m.beginNode(0.5);
-    const first = m.charge("anthropic/claude-opus-4", 10_000, 10_000);
-    // 10k*15/1e6 + 10k*75/1e6 = 0.15 + 0.75 = 0.90 > 0.5 node cap
+    const first = m.charge("z-ai/glm-5.2", 0, 300_000);
+    // 300k*3.00/1e6 = 0.90 > 0.5 node cap
     expect(first.nodeExceeded).toBe(true);
     expect(first.globalExceeded).toBe(false);
     expect(m.nodeSpent()).toBeCloseTo(0.9, 6);
@@ -34,7 +34,7 @@ describe("BudgetMeter", () => {
   it("flags the global hard cap and resets node meter per node", () => {
     const m = new BudgetMeter(prices, 1.0);
     m.beginNode(100);
-    m.charge("anthropic/claude-opus-4", 100_000, 0); // 1.5 > 1.0 global cap
+    m.charge("z-ai/glm-5.2", 0, 500_000); // 500k*3.00/1e6 = 1.5 > 1.0 global cap
     expect(m.globalExceeded()).toBe(true);
     m.beginNode(100);
     expect(m.nodeSpent()).toBe(0);

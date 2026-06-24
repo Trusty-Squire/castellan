@@ -28,7 +28,7 @@ function base(llm: MockLlm) {
     workdir: ".",
     repoSurvey: "FILES (1):\nsrc/sum.ts",
     llm,
-    knightModel: "anthropic/claude-opus-4",
+    knightModel: "z-ai/glm-5.2",
   };
 }
 
@@ -38,7 +38,7 @@ describe("derivePlan", () => {
     await derivePlan(base(llm));
     expect(llm.calls[0]!.system).toBe(HERALD_SYSTEM_PROMPT);
     expect(llm.calls[0]!.json).toBe(true);
-    expect(llm.calls[0]!.model).toBe("anthropic/claude-opus-4");
+    expect(llm.calls[0]!.model).toBe("z-ai/glm-5.2");
   });
 
   it("produces a valid mission from a good plan", async () => {

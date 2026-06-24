@@ -17,11 +17,11 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 prices:
   "qwen/qwen3-coder": { in: 0.2, out: 0.8 }
   "deepseek/deepseek-chat": { in: 0.14, out: 0.28 }
-  "anthropic/claude-opus-4": { in: 15.0, out: 75.0 }
+  "z-ai/glm-5.2": { in: 0.95, out: 3.00 }
 `);
 
 const HALT_MISSION = `
@@ -157,7 +157,7 @@ describe("build progress renderer (pure, append-only milestones)", () => {
       mk("node_start", "b"),
       mk("gate", "b"),
       mk("node_fail", "b"), // mid-ladder fail → suppressed
-      mk("escalate", "b", { nextModel: "anthropic/claude-opus-4" }),
+      mk("escalate", "b", { nextModel: "z-ai/glm-5.2" }),
       mk("node_pass", "b"),
     ];
     const lines = events.map((e) => renderTraceLine(e, st, s)).filter((l): l is string => l !== null);
@@ -167,7 +167,7 @@ describe("build progress renderer (pure, append-only milestones)", () => {
       "  ✓ piece 1/2 — a",
       "  ▸ piece 2/2 — b",
       "  · checking b",
-      "  ↑ piece 2 — retrying with opus-4",
+      "  ↑ piece 2 — retrying with glm-5.2",
       "  ✓ piece 2/2 — b",
     ]);
     expect(lines.some((l) => /tool|pack|node_fail/.test(l))).toBe(false);

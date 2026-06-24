@@ -35,7 +35,7 @@ async function main(): Promise<number> {
   // ---- live: a gate the design reviewer GENERATES must also fail the defect ----
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (apiKey) {
-    const model = process.env.SER_REVIEW_MODEL ?? "anthropic/claude-opus-4";
+    const model = process.env.SER_REVIEW_MODEL ?? "z-ai/glm-5.2";
     const clair = SPEC_FIXTURES.find((f) => f.id === "clairvoyance/design")!;
     const review = await designReview(clair.spec, new OpenRouterClient({ apiKey, baseUrl: process.env.OPENROUTER_BASE_URL }), model);
     const objectiveGates = review.patches.filter((p) => p.kind === "objective").map((p) => p.gate);

@@ -13,7 +13,7 @@ import type { LlmClient } from "./types.js";
  * "model-as-Codex-agent", not a bare completion: codex wraps its own system
  * prompt and may narrate around requested JSON, so we salvage the object.
  *
- * The OpenRouter model id passed by callers (e.g. "anthropic/claude-opus-4") is
+ * The OpenRouter model id passed by callers (e.g. "z-ai/glm-5.2") is
  * IGNORED — codex uses its subscription model. Override with CODEX_MODEL.
  */
 export class CodexCliClient implements LlmClient {

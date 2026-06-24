@@ -4,7 +4,7 @@ import { ladder, buildFailureContext, MAX_RUNGS } from "../../src/harness/escala
 const chain = {
   executor: "qwen/qwen3-coder",
   fallback: "deepseek/deepseek-chat",
-  knight: "anthropic/claude-opus-4",
+  knight: "z-ai/glm-5.2",
   harness: "on" as const,
   budget_scale: 1,
   node_context_budget: 40000,
@@ -20,8 +20,8 @@ describe("ladder", () => {
       "qwen/qwen3-coder",
       "deepseek/deepseek-chat",
       "deepseek/deepseek-chat",
-      "anthropic/claude-opus-4",
-      "anthropic/claude-opus-4",
+      "z-ai/glm-5.2",
+      "z-ai/glm-5.2",
     ]);
     // a repair rung re-runs the SAME model on its own failed attempt, with failure context
     expect(rungs.map((r) => r.repair ?? false)).toEqual([false, true, false, true, false, false]);

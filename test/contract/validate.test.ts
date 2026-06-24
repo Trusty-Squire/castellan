@@ -35,7 +35,7 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 `
     );
 
@@ -74,7 +74,7 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 `
     );
 
@@ -116,7 +116,7 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 `
     );
 
@@ -159,7 +159,7 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 `
     );
 
@@ -194,7 +194,7 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 `
     );
 

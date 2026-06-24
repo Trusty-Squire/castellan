@@ -13,9 +13,9 @@
 # Use: pnpm experiment --tasks 1..20 --chains knight-only --chains-file chains/knight-only-scaled.yaml
 chains:
   knight-only:
-    executor: "anthropic/claude-opus-4"
-    fallback: "anthropic/claude-opus-4"
-    knight: "anthropic/claude-opus-4"
+    executor: "z-ai/glm-5.2"
+    fallback: "z-ai/glm-5.2"
+    knight: "z-ai/glm-5.2"
     budget_scale: 3
 prices:
-  "anthropic/claude-opus-4": { in: 15.0, out: 75.0 }
+  "z-ai/glm-5.2": { in: 0.95, out: 3.00 }

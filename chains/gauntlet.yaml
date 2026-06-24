@@ -7,17 +7,17 @@ chains:
   glm:
     executor: "z-ai/glm-4.7"
     fallback: "z-ai/glm-4.7"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
   kimi:
     executor: "moonshotai/kimi-k2.6"
     fallback: "moonshotai/kimi-k2.6"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
   deepseek:
     executor: "deepseek/deepseek-v3.2"
     fallback: "deepseek/deepseek-v3.2"
-    knight: "anthropic/claude-opus-4"
+    knight: "z-ai/glm-5.2"
 prices: # per million tokens
   "z-ai/glm-4.7": { in: 0.40, out: 1.75 }
   "moonshotai/kimi-k2.6": { in: 0.68, out: 3.41 }
   "deepseek/deepseek-v3.2": { in: 0.26, out: 0.40 }
-  "anthropic/claude-opus-4": { in: 15.0, out: 75.0 }
+  "z-ai/glm-5.2": { in: 0.95, out: 3.00 }
