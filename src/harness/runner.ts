@@ -96,6 +96,47 @@ export type DisputeReviewer = (input: {
   dispute: NodeDispute;
 }) => Promise<DisputeReview>;
 
+/**
+ * The orchestrator's RETROSPECTIVE verdict: after the cheap model genuinely tried and failed
+ * (without disputing), the planner audits whether the HARNESS — its own brief / decomposition /
+ * context — is the fault, and proposes a TASK ADJUSTMENT before another model is thrown at it.
+ *
+ * SAFETY: `briefAppend` / `addContextGlobs` only help the agent build the RIGHT thing — they can
+ * NEVER make a wrong implementation pass, so the runner applies them directly. A suspected GATE
+ * problem is NOT repaired here (an LLM must never weaken the objective bar): it is surfaced as
+ * `gateProblem` and routed through the audited DisputeReviewer path, which forbids vacuous gates.
+ */
+export interface RetrospectVerdict {
+  /** Where the fault lies. Only "harness" produces an adjustment; "model"/"unsure" → escalate. */
+  fault: "harness" | "model" | "unsure";
+  /** Short tag, e.g. "brief-prescribes-mechanism" | "interface-break" | "missing-context" | "gate-unsatisfiable" | "genuine-difficulty". */
+  category: string;
+  /** The concrete contradiction/evidence (one or two sentences). */
+  evidence: string;
+  /** Text to APPEND to the node brief (a hint, a permit-rewrite note, a behavior restatement). */
+  briefAppend?: string;
+  /** Extra files the node should pack (the agent lacked context the task needs). */
+  addContextGlobs?: string[];
+  /** Set ONLY if the GATE itself looks mis-specified — routed to the audited dispute path, not applied here. */
+  gateProblem?: string;
+}
+
+/**
+ * Proactive harness self-audit, supplied by the funnel (owns the planner/LLM). Called when a cheap
+ * attempt fails and did NOT dispute, BEFORE escalating — so a mis-specified task gets FIXED and re-run
+ * on the cheap model instead of throwing pricier models at a task the harness broke.
+ */
+export type RetrospectReviewer = (input: {
+  nodeId: string;
+  brief: string;
+  gate: string;
+  blastRadius: string[];
+  contextGlobs: string[];
+  failure: FailureInfo;
+  agentFinalMessage: string;
+  priorDiff: string;
+}) => Promise<RetrospectVerdict>;
+
 
 /** Command string for reconcile's confabulation matching ("" for human/judge gates). */
 function gateCommandOf(node: MissionNode): string {
@@ -165,6 +206,11 @@ export interface RunMissionOptions {
    *  an upheld dispute repairs the gate and re-runs the SAME cheap executor (no
    *  escalation). Absent → a dispute just re-attributes the honest halt. */
   disputeReviewer?: DisputeReviewer;
+  /** Proactive harness self-audit: after a cheap attempt fails WITHOUT disputing, the planner
+   *  audits its own brief/decomposition/context and may adjust the task (brief/context) before
+   *  escalating — re-running the cheap model on the FIXED task. A suspected gate problem is routed
+   *  through disputeReviewer (never weakened here). Absent → straight escalation as before. */
+  retrospectReviewer?: RetrospectReviewer;
 }
 
 /**
@@ -253,6 +299,9 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
     // ladder from rung 1 (the cheap executor) — it does NOT escalate. Bounded so a
     // pathological dispute loop can't spin.
     let gateRepairsLeft = opts.disputeReviewer ? 2 : 0;
+    // Proactive harness self-audit, once per node: a cheap attempt that fails WITHOUT disputing
+    // triggers the planner to audit its own brief/context and fix the task before escalating.
+    let retrospectsLeft = opts.retrospectReviewer ? 1 : 0;
     let rerunLadder = true;
     while (rerunLadder) {
       rerunLadder = false;
@@ -566,6 +615,79 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
           break; // exit the rung ladder; the node-level while re-runs it from rung 1
         }
         // rejected → the gate stands; fall through to normal escalation.
+      }
+
+      // PROACTIVE RETROSPECTIVE: the cheap model tried fresh + repaired (rung 2) and failed without
+      // disputing. Before paying for a stronger model, the planner audits whether the HARNESS — its
+      // own brief/decomposition/context — is the fault, and fixes the TASK so the cheap model can
+      // retry it. (Mirrors the manual harness-not-model loop.) Fires once per node.
+      if (
+        !dispute &&
+        opts.retrospectReviewer &&
+        retrospectsLeft > 0 &&
+        rung.repair &&
+        rung.model === chain.executor &&
+        !nodeBudgetHit
+      ) {
+        retrospectsLeft -= 1;
+        const verdict = await opts.retrospectReviewer({
+          nodeId: node.id,
+          brief: node.brief,
+          gate: effectiveGate(node).run ?? "",
+          blastRadius: node.blast_radius,
+          contextGlobs: effectiveContextGlobs(node),
+          failure,
+          agentFinalMessage: record.finalMessage,
+          priorDiff: priorDiff ?? "",
+        });
+        const adjusted =
+          verdict.fault === "harness" && (Boolean(verdict.briefAppend) || (verdict.addContextGlobs?.length ?? 0) > 0);
+        trace.append("retrospect", {
+          nodeId: node.id,
+          rung: rung.rung,
+          payload: {
+            fault: verdict.fault,
+            category: verdict.category,
+            evidence: verdict.evidence,
+            adjusted,
+            addedContext: verdict.addContextGlobs ?? [],
+            gateProblem: verdict.gateProblem ? verdict.gateProblem : undefined,
+          },
+          costUsdSoFar: budget.globalSpent(),
+        });
+        // A suspected GATE defect is never weakened here — route it to the audited dispute path.
+        if (verdict.gateProblem && opts.disputeReviewer && gateRepairsLeft > 0) {
+          const review = await opts.disputeReviewer({
+            nodeId: node.id,
+            brief: node.brief,
+            gate: effectiveGate(node).run ?? "",
+            dispute: { target: "gate", evidence: verdict.gateProblem },
+          });
+          trace.append("dispute_review", {
+            nodeId: node.id,
+            rung: rung.rung,
+            payload: { upheld: review.upheld, target: "gate", reason: review.reason, repaired: Boolean(review.upheld && review.gate), viaRetrospect: true },
+            costUsdSoFar: budget.globalSpent(),
+          });
+          if (review.upheld && review.gate) {
+            node.gate = { ...effectiveGate(node), run: review.gate };
+            gateRepairsLeft -= 1;
+            rerunLadder = true;
+            log(`node(${node.id}): retrospective routed a gate fix — re-allocating to ${rungs[0]!.model}`);
+            break;
+          }
+        }
+        // Brief/context adjustments only help build the RIGHT thing — apply and re-run the cheap model.
+        if (adjusted) {
+          if (verdict.briefAppend) node.brief += `\n\n${verdict.briefAppend.trim()}`;
+          if (verdict.addContextGlobs?.length) {
+            node.context_globs = [...new Set([...(node.context_globs ?? []), ...verdict.addContextGlobs])];
+          }
+          rerunLadder = true;
+          log(`node(${node.id}): retrospective found a HARNESS fault (${verdict.category}) — adjusted the task, re-allocating to ${rungs[0]!.model}`);
+          break;
+        }
+        // fault = model / unsure, or no actionable adjustment → fall through to normal escalation.
       }
 
       // The node FAILED its gate. If it also burned its per-node budget, stop

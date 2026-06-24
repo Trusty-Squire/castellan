@@ -300,6 +300,71 @@ nodes:
     expect(kinds).not.toContain("escalate");
   });
 
+  it("RETROSPECTIVE: a cheap fail (no dispute) triggers a harness audit that fixes the brief and re-runs CHEAP", async () => {
+    let attempt = 0;
+    let sawBrief = "";
+    const result = await runMission({
+      mission: parseMission(oneNode),
+      chains,
+      engine: new MockEngine({
+        resolveScript: () => {
+          attempt += 1;
+          // rung 1 + rung 2 (repair) both fail, and the agent does NOT dispute.
+          if (attempt <= 2) return { steps: [{ done: "couldn't get the gate to pass" }] };
+          // after the retrospective adjusts the brief, the cheap re-run succeeds.
+          return { steps: [{ tool: "write", args: { path: "src/target.ts", content: "export const v = 1;\n" } }, { done: "done" }] };
+        },
+      }),
+      workdir: repo,
+      missionId: "retro",
+      tracePath: join(repo, ".squire", "trace.jsonl"),
+      now: () => ++clock,
+      retrospectReviewer: async ({ brief }) => {
+        sawBrief = brief;
+        return { fault: "harness", category: "missing-hint", evidence: "brief never said to set v to the literal 1", briefAppend: "Set v to the integer 1." };
+      },
+    });
+    expect(result.completed).toBe(true);
+    expect(result.committedNodeIds).toEqual(["fix"]);
+    expect(sawBrief).toContain("edit src/target.ts"); // the auditor saw the real brief
+    const trace = readTrace(result.tracePath);
+    const retro = trace.find((e) => e.kind === "retrospect");
+    expect(retro).toBeTruthy();
+    expect((retro!.payload as { fault?: string; adjusted?: boolean }).fault).toBe("harness");
+    expect((retro!.payload as { adjusted?: boolean }).adjusted).toBe(true);
+    // it FIXED the task and re-ran the cheap executor — never escalated to the fallback model.
+    const models = trace.filter((e) => e.kind === "node_start").map((e) => (e.payload as { model?: string }).model);
+    expect(models).not.toContain("deepseek/deepseek-chat");
+  });
+
+  it("RETROSPECTIVE GUARDRAIL: a suspected gate problem is NOT weakened here — it routes through the audited dispute path", async () => {
+    // gate greps v=2 but brief wants v=1; the agent writes v=1, never disputes, fails twice.
+    const wrongGate = oneNode.replace('done_check: "bash check.sh"', 'done_check: "grep -q \'v = 2\' src/target.ts"');
+    let disputeCalled = false;
+    const result = await runMission({
+      mission: parseMission(wrongGate),
+      chains,
+      engine: new MockEngine({
+        resolveScript: () => ({ steps: [{ tool: "write", args: { path: "src/target.ts", content: "export const v = 1;\n" } }, { done: "wrote v=1" }] }),
+      }),
+      workdir: repo,
+      missionId: "retro-gate",
+      tracePath: join(repo, ".squire", "trace.jsonl"),
+      now: () => ++clock,
+      // retrospect flags the gate but proposes NO brief change — it must not touch the gate itself.
+      retrospectReviewer: async () => ({ fault: "harness", category: "gate-unsatisfiable", evidence: "gate greps v=2, brief wants v=1", gateProblem: "the gate greps for v = 2 but the brief requires v = 1" }),
+      disputeReviewer: async ({ dispute }) => {
+        disputeCalled = true;
+        return { upheld: dispute.target === "gate", gate: "grep -q 'v = 1' src/target.ts", reason: "gate checked the wrong value" };
+      },
+    });
+    expect(disputeCalled).toBe(true); // the gate concern was routed to the AUDITED reviewer, not applied directly
+    expect(result.completed).toBe(true); // which repaired it to a still-objective gate, and the node passed
+    const kinds = readTrace(result.tracePath).map((e) => e.kind);
+    expect(kinds).toContain("retrospect");
+    expect(kinds).toContain("dispute_review");
+  });
+
   it("a dispute is CLEARED when a stronger rung simply does the task (no cry-wolf halt)", async () => {
     const result = await run(oneNode, (_id, rung) => {
       if (rung === 1) return { steps: [{ done: "DISPUTE: gate: I think this is contradictory and cannot be done" }] };

@@ -21,6 +21,7 @@ export const TRACE_KINDS = [
   "repair",
   "escalate",
   "dispute_review",
+  "retrospect",
   "budget_stop",
   "engine_error",
   "provider_retry",

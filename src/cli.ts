@@ -4,7 +4,7 @@ import { dirname, resolve, join, basename, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { parseMission, resolveChain, type ChainsFile } from "./contract/schema.js";
 import { resolveChains } from "./contract/derive.js";
-import { runMission, type DisputeReviewer } from "./harness/runner.js";
+import { runMission, type DisputeReviewer, type RetrospectReviewer, type RetrospectVerdict } from "./harness/runner.js";
 import { summarizeTrace } from "./harness/trace.js";
 import { MockEngine, fileScriptResolver } from "./engine/mock.js";
 import { commitAll, initRepo, isClean, trackedByParentRepo } from "./harness/checkpoint.js";
@@ -280,6 +280,48 @@ async function executeMissionObject(
         }
       };
 
+  // PROACTIVE RETROSPECTIVE: when the cheap model fails twice WITHOUT disputing, the planner audits
+  // whether the HARNESS (its own brief/decomposition/context) is the fault and proposes a TASK fix —
+  // before paying for a stronger model. It can adjust the BRIEF / add CONTEXT (which only help build
+  // the right thing) but can NEVER weaken the gate: a suspected gate defect is surfaced as
+  // `gateProblem` and re-checked by the audited disputeReviewer. Lazy; mock runs skip it.
+  const retrospectReviewer: RetrospectReviewer | undefined = useMock
+    ? undefined
+    : async ({ brief, gate, blastRadius, contextGlobs, failure, agentFinalMessage, priorDiff }) => {
+        try {
+          const { makeLlmClient } = await import("./backend.js");
+          const { tryParseJson } = await import("./contract/derive.js");
+          const llm = await makeLlmClient();
+          const system =
+            "You are the ORCHESTRATOR doing a RETROSPECTIVE after a cheap coding agent FAILED a node's gate twice and did NOT dispute it. Decide where the fault lies: the HARNESS (a brief/decomposition/context YOU authored that made a satisfiable task needlessly hard or impossible) vs the MODEL (the task is correct + well-specified and the agent just isn't getting it). " +
+            "Look for concrete harness faults: (a) the brief PRESCRIBES A HARD MECHANISM when a simpler one satisfies the gate (e.g. 'track a dependency graph' when recomputing-on-read works) — fix by restating the BEHAVIOR and permitting the simpler approach; (b) an INTERFACE BREAK the agent didn't diagnose (gate fails at import/load: 'is not a constructor / is not a function / Cannot find module') — fix by reminding it to preserve the exact export/signature; (c) the node INHERITED an architecture it can't extend cleanly — fix by permitting an internal rewrite; (d) the agent needed a FILE not in its context — fix via addContextGlobs; (e) the GATE itself is mis-specified (tests outside the node's scope, contradicts the brief, unsatisfiable) — set gateProblem. " +
+            "DEFAULT TO fault=model unless you can point to a SPECIFIC harness contradiction with evidence — do not invent a harness excuse for a genuine model miss. " +
+            "HARD CONSTRAINTS: you may ADD guidance to the brief and REQUEST context files, but you CANNOT change the gate and MUST NOT suggest hardcoding, faking output, special-casing the test, or any way to PASS without doing the real work. If the gate is the problem, use gateProblem (it is re-checked separately) — never work around a gate in the brief. " +
+            'Output ONLY JSON: {"fault":"harness|model|unsure","category":"<short tag>","evidence":"<the concrete contradiction>","briefAppend":"<text to ADD to the brief, omit if none>","addContextGlobs":["<glob>"],"gateProblem":"<omit unless the GATE is mis-specified>"}.';
+          const user =
+            `NODE BRIEF:\n${brief}\n\nGATE (the agent had to make this exit 0):\n${gate}\n` +
+            `blast_radius: ${JSON.stringify(blastRadius)}\ncontext_globs (files packed): ${JSON.stringify(contextGlobs)}\n\n` +
+            `GATE FAILURE — exit ${failure.exitCode}${failure.timedOut ? " (TIMED OUT)" : ""}\nstdout: ${failure.stdoutTail.slice(-600)}\nstderr: ${failure.stderrTail.slice(-600)}\n` +
+            `reconcile violations: ${JSON.stringify(failure.reconcileViolations)}\n\n` +
+            `AGENT'S FINAL MESSAGE:\n${agentFinalMessage.slice(0, 800)}\n\nAGENT'S DIFF (what it changed):\n${priorDiff.slice(0, 2500)}`;
+          const res = await llm.complete({ model: chain.knight, system, user, json: true, maxTokens: 1500 });
+          const parsed = tryParseJson(res.text);
+          if (!parsed.ok || typeof parsed.value !== "object" || parsed.value === null) return { fault: "unsure", category: "no-json", evidence: "reviewer returned no JSON" };
+          const v = parsed.value as Partial<RetrospectVerdict>;
+          const fault = v.fault === "harness" || v.fault === "model" ? v.fault : "unsure";
+          return {
+            fault,
+            category: typeof v.category === "string" ? v.category : "unspecified",
+            evidence: typeof v.evidence === "string" ? v.evidence : "",
+            briefAppend: typeof v.briefAppend === "string" && v.briefAppend.trim() ? v.briefAppend : undefined,
+            addContextGlobs: Array.isArray(v.addContextGlobs) ? v.addContextGlobs.filter((g): g is string => typeof g === "string") : undefined,
+            gateProblem: typeof v.gateProblem === "string" && v.gateProblem.trim() ? v.gateProblem : undefined,
+          };
+        } catch {
+          return { fault: "unsure", category: "reviewer-failed", evidence: "reviewer call failed" };
+        }
+      };
+
   const result = await runMission({
     mission,
     chains,
@@ -296,6 +338,7 @@ async function executeMissionObject(
     // otherwise so unattended runs fail loudly instead of self-approving.
     adjudicate: process.stdin.isTTY ? promptAdjudicator(workdir) : undefined,
     disputeReviewer,
+    retrospectReviewer,
   });
 
   process.stdout.write("\n" + summarizeTrace(tracePath) + "\n");
