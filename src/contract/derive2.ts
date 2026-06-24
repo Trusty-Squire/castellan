@@ -244,7 +244,8 @@ export const COHERENCE_RULE =
  */
 export const SIZING_RULE =
   "SIZE EACH NODE TO THE EXECUTOR'S ENVELOPE, NOT A COUNT: a node is ONE cohesive module or capability (plus its tests) the cheap executor finishes reliably in a single focused turn. Make each node as LARGE as stays reliably workable; split a unit ONLY when it would exceed roughly 150-250 lines of new code, touch more than ~3 source files, or need to read more than the per-node context budget stated below. " +
-  "SIZE BY VERIFIED BEHAVIORS TOO, NOT JUST LINES: a node whose acceptance would make MANY independent assertions — more than ~6-8 distinct endpoints/behaviors/cases — is TOO BIG even if the code is short, because a cheap model rarely gets a dozen behaviors all correct in one turn (it thrashes and the whole node fails). Split such a node into cohesive sub-capabilities the executor can each get right and a gate can each check in one turn (e.g. a server's core CRUD in one node, its extra features in another). " +
+  "SIZE BY VERIFIED BEHAVIORS TOO — BUT ONLY SPLIT ALONG SEPARABLE-ARTIFACT SEAMS, NEVER THROUGH ONE COHESIVE MODULE: a node whose many behaviors live in DIFFERENT files that can be built independently (a server's core CRUD vs its extra features; engine vs server vs UI) may split when its acceptance would make many (>~6-8) independent assertions. But do NOT split a SINGLE cohesive module — one file whose behaviors share ONE implementation core (a formula engine whose arithmetic, cell-references, recompute, circular-detection and error-handling are all the same evaluation path) — across nodes even if it has many behaviors. Those behaviors are coupled through one design, and splitting forces an EARLY node to freeze an internal architecture that 'extend, don't rewrite' then stops a LATER node from fixing (e.g. an eager-cache engine the recompute node can no longer make lazy — observed: the split engine HALTED on recalc, whereas one node gates all behaviors at once and the executor's own write→test→fix loop iterates the hard cases). One file a single model can write in a focused turn = ONE node, gated by ALL its behaviors. Split by FILE/MODULE seams, not by behaviors inside one file. " +
+  "STATE BEHAVIOR, NOT MECHANISM: each node brief says WHAT must be observably true (the outcome a gate can check — 'editing a cell leaves no dependent stale'), never a prescribed hard algorithm ('track a dependency graph', 'invalidate caches'); dictating the mechanism traps the executor in a harder path than it needs and is often the reason a node fails. Let the executor pick the simplest correct implementation. " +
   "The node COUNT is emergent — a small task may be 2 nodes, a large one 9. Do NOT aim for any particular count and do NOT pad to fill a range.";
 
 /** The executor envelope line appended after SIZING_RULE so the "context budget
@@ -404,12 +405,34 @@ export function affirmsBuildability(evidence: string): boolean {
  * negative lookahead) and never substrings inside other words.
  */
 export function groundGateRun(run: string): string {
-  return stripCaseFilters(
-    run
-      .replace(/\bpython\b(?!3)/g, "python3")
-      .replace(/\bpip\b(?!3)/g, "pip3")
-      .replace(/(^|[;&|(\n]\s*)pytest\b/g, "$1python3 -m pytest"),
+  return wrapTestsWithTimeout(
+    stripCaseFilters(
+      run
+        .replace(/\bpython\b(?!3)/g, "python3")
+        .replace(/\bpip\b(?!3)/g, "pip3")
+        .replace(/(^|[;&|(\n]\s*)pytest\b/g, "$1python3 -m pytest"),
+    ),
   );
+}
+
+/**
+ * Wrap each bare test-FILE runner in a per-test `timeout`, so one hung test (a cheap model's
+ * infinite-loop implementation — observed: a recalc engine that never terminated) fails the gate in
+ * seconds instead of stalling it to the multi-minute hard-wall, and the model gets a fast signal
+ * instead of a useless "gate timed out". Only touches `&&`-separated segments whose first word runs a
+ * test FILE (node/python a .js/.py); leaves segments that already have a `timeout`, and bails out
+ * entirely on inline scripts/heredocs/pipes where naive `&&` splitting would be unsafe.
+ */
+export function wrapTestsWithTimeout(run: string, seconds = 30): string {
+  if (/\s-e\s|<<|\|/.test(run)) return run; // inline script / heredoc / pipe → don't split on &&
+  const TEST_FILE = /^(node|python3?|deno|bun)\s+[^\s&|]+\.(c?js|mjs|py)\b/;
+  return run
+    .split("&&")
+    .map((seg) => {
+      const s = seg.trim();
+      return TEST_FILE.test(s) && !/\btimeout\b/.test(s) ? `timeout ${seconds}s ${s}` : s;
+    })
+    .join(" && ");
 }
 
 /**
@@ -1179,12 +1202,14 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   // not diagnose. Pin the public interface and name the symptom so it self-corrects fast.
   const EXTEND_CONTRACT_NOTE =
     'EXTEND NOTE — this node edits files that ALREADY EXIST and that other nodes and the gate import. ' +
-    'PRESERVE THE PUBLIC INTERFACE EXACTLY as the SHARED CONTRACT lists it: keep the same exports and ' +
-    'signatures (e.g. keep "module.exports = { Sheet }", the same exported names, the same function ' +
-    'signatures). ADD capability inside the file; never change, rename, or remove an export. If a ' +
-    'check suddenly fails at IMPORT/LOAD time — "X is not a constructor", "X is not a function", ' +
-    '"Cannot find module", "is not defined in ES module scope" — you changed the module export shape: ' +
-    'RESTORE the exact export line FIRST; do NOT rewrite the file from scratch.';
+    'Keep the PUBLIC INTERFACE the SHARED CONTRACT lists — the same exported names and the same function ' +
+    'signatures (e.g. keep "module.exports = { Sheet }" and Sheet\'s method signatures). That interface ' +
+    'is the ONLY thing frozen. Within it you MAY freely rewrite the internals/algorithm: if making a ' +
+    'requirement work cleanly means changing HOW values are computed or stored (e.g. recomputing on read ' +
+    'instead of caching), DO it — do not contort a bad internal design just to avoid a rewrite. If a ' +
+    'check fails at IMPORT/LOAD time — "X is not a constructor", "X is not a function", "Cannot find ' +
+    'module", "is not defined in ES module scope" — you changed the interface itself: restore the exact ' +
+    'export/signature (that is the one thing you must not change), then proceed.';
   // Per-node USD: floor + escalation reserve over the planner's weights (step 2).
   const nodeBudgets = allocateNodeBudgets(
     decomposed.nodes.map((n) => n.budget_usd),

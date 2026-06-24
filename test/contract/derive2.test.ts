@@ -9,6 +9,7 @@ import {
   groundGateRun,
   tractableGateRun,
   stripCaseFilters,
+  wrapTestsWithTimeout,
   canonicalizeTestGate,
   bootstrapGreenfieldNodeGate,
   trimSurveyForDecompose,
@@ -717,5 +718,23 @@ describe("unifyContractFieldNames — one value, one name (the url/longUrl drift
   });
   it("no-op when there are no data types", () => {
     expect(unifyContractFieldNames("just prose, no types").renamed).toEqual([]);
+  });
+});
+
+describe("wrapTestsWithTimeout", () => {
+  it("wraps each bare test-file runner, skips already-timed, fails fast on a hung test", () => {
+    const out = wrapTestsWithTimeout("node test/a.cjs && node test/b.cjs && timeout 15s node test/c.cjs");
+    expect(out).toBe("timeout 30s node test/a.cjs && timeout 30s node test/b.cjs && timeout 15s node test/c.cjs");
+  });
+  it("also applies through groundGateRun (so spec + generated gates both get it)", () => {
+    expect(groundGateRun("node test/r4_recalc.cjs")).toBe("timeout 30s node test/r4_recalc.cjs");
+  });
+  it("bails out on inline scripts / heredocs / pipes where && splitting is unsafe", () => {
+    expect(wrapTestsWithTimeout(`node -e "x && y"`)).toBe(`node -e "x && y"`);
+    expect(wrapTestsWithTimeout("node a.cjs | grep ok")).toBe("node a.cjs | grep ok");
+  });
+  it("leaves non-test commands alone (curl, npm, npx playwright)", () => {
+    const run = "curl -fsS localhost:3000 && npx playwright test e2e.spec.ts";
+    expect(wrapTestsWithTimeout(run)).toBe(run);
   });
 });
