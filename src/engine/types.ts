@@ -15,6 +15,11 @@ export interface ToolPolicy {
   blastRadius: string[];
   /** Tool names that are denied entirely. */
   denylist?: ToolName[];
+  /** Exact relative paths the build may NEVER write/edit, even if blast_radius would allow them —
+   *  the held-out gate/test files that VERIFY this node (its source of truth). Lets a broad glob
+   *  like `test/**` stay in blast_radius for files the build legitimately creates, while the
+   *  pre-existing tests it must not touch are hard-protected at the membrane. */
+  protectedPaths?: string[];
 }
 
 export interface AttemptRequest {

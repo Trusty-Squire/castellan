@@ -19,6 +19,8 @@ import {
   addGitExclude,
   listFiles,
 } from "./checkpoint.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 /** Executor system prompt — Appendix B, plus a standard-work clause (build the simplest
  *  thing that passes the gate), added after observing the cheap model OVER-ENGINEER a node
@@ -141,6 +143,23 @@ export type RetrospectReviewer = (input: {
 /** Command string for reconcile's confabulation matching ("" for human/judge gates). */
 function gateCommandOf(node: MissionNode): string {
   return effectiveGate(node).run ?? "";
+}
+
+/** Files the gate is a TEST/SPEC for and that already exist at node start = the held-out grader,
+ *  the node's source of truth. The build must never write these (editing your own test to pass is
+ *  the false-pass catastrophe). Detected by a test-file shape under a tests dir / *.test|spec /
+ *  test_*.py / rN_*.cjs — NOT scaffold sources the node legitimately builds (server.js, index.html),
+ *  which don't match and/or don't exist yet. Returns relative paths to hard-protect at the membrane. */
+const HELD_OUT_TEST_RE =
+  /(?:^|\/)(?:tests?|spec|__tests__)\/|\.(?:test|spec)\.[\w]+$|(?:^|\/)test_[\w-]+\.py$|(?:^|\/)r\d+_[\w-]*\.[cm]?js$/;
+function heldOutGateFiles(gateCommand: string, workdir: string): string[] {
+  const tokens = gateCommand.match(/[\w./-]+\.[\w]+/g) ?? [];
+  const out = new Set<string>();
+  for (const t of tokens) {
+    const rel = t.replace(/^\.\//, "");
+    if (HELD_OUT_TEST_RE.test(rel) && existsSync(join(workdir, rel))) out.add(rel);
+  }
+  return [...out];
 }
 
 /**
@@ -403,7 +422,7 @@ export async function runMission(opts: RunMissionOptions): Promise<MissionResult
         files: pack.files,
         cwd: workdir,
         model: { slug: rung.model, apiKey: opts.apiKey, baseUrl: opts.baseUrl },
-        tools: { blastRadius: node.blast_radius },
+        tools: { blastRadius: node.blast_radius, protectedPaths: heldOutGateFiles(gateCommandOf(node), workdir) },
         maxTokens: node.max_context_tokens,
         nodeId: node.id,
         rung: rung.rung,

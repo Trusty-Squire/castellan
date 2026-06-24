@@ -202,6 +202,18 @@ export class ToolExecutor {
   }
 
   private checkRadius(rel: string, name: ToolName): ToolExecResult | null {
+    // Protected paths win over blast_radius: the held-out tests/gate that VERIFY this node are its
+    // source of truth — the build must never edit its own grader to "pass". Hard-deny regardless.
+    if (this.policy.protectedPaths?.some((p) => norm(p) === norm(rel))) {
+      const reason = `path "${rel}" is a held-out gate/test file — protected from writes`;
+      return {
+        ok: false,
+        denied: true,
+        deniedReason: reason,
+        path: rel,
+        output: `DENIED: ${name} to "${rel}" — that is the HELD-OUT TEST that verifies this node; you cannot edit your own grader. Make the implementation satisfy it instead.`,
+      };
+    }
     if (this.inRadius(rel)) return null;
     const allowed = this.policy.blastRadius.join(", ") || "none";
     const reason = `path "${rel}" is outside blast_radius (${allowed})`;
@@ -244,6 +256,11 @@ export function manifestJsonError(rel: string, content: string): string | null {
   } catch (err) {
     return `REFUSED to write ${rel}: it is not valid JSON (${(err as Error).message}). ${base} must be STRICT JSON — no comments, no trailing commas, no JS. Node parses it on every require(), so a malformed manifest breaks every check. Re-emit the full file as valid JSON.`;
   }
+}
+
+/** Normalize a relative path for comparison: forward slashes, no leading "./". */
+function norm(p: string): string {
+  return p.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
 export function normalizeWriteContent(rel: string, content: string): string {

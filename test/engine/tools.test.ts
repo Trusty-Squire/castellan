@@ -147,4 +147,17 @@ describe("ToolExecutor", () => {
     expect(r.denied).toBe(true);
     expect(r.output).toMatch(/kill the build harness|\$PORT/);
   });
+
+  it("protectedPaths hard-denies writing a held-out test even when blast_radius would allow it", async () => {
+    mkdirSync(join(cwd, "test"), { recursive: true });
+    writeFileSync(join(cwd, "test", "r4.cjs"), "// held-out grader\n");
+    const exec = new ToolExecutor(cwd, { blastRadius: ["**"], protectedPaths: ["test/r4.cjs"] });
+    const denied = await exec.execute("write", { path: "test/r4.cjs", content: "process.exit(0)" });
+    expect(denied.denied).toBe(true);
+    expect(denied.output).toMatch(/held-out test|cannot edit your own grader/i);
+    expect(readFileSync(join(cwd, "test", "r4.cjs"), "utf8")).toBe("// held-out grader\n"); // untouched
+    // a build output (not protected) still writes fine
+    const ok = await exec.execute("write", { path: "src/engine.js", content: "module.exports={}" });
+    expect(ok.ok).toBe(true);
+  });
 });
