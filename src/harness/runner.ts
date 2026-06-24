@@ -941,6 +941,30 @@ async function runRaw(
   };
 }
 
+/** Yield events from `stream` until `capMs` elapses, then end (racing each pull against the deadline
+ *  so even a mid-flight LLM call is bounded). Sets `cap.hit` when the deadline cut it short. */
+async function* withRungDeadline(
+  stream: AsyncIterable<import("../engine/types.js").EngineEvent>,
+  capMs: number,
+  cap: { hit: boolean },
+): AsyncGenerator<import("../engine/types.js").EngineEvent> {
+  const it = stream[Symbol.asyncIterator]();
+  const deadline = Date.now() + capMs;
+  try {
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) { cap.hit = true; return; }
+      const timeout = new Promise<{ __timeout: true }>((res) => setTimeout(() => res({ __timeout: true }), remaining).unref?.());
+      const r = await Promise.race([it.next(), timeout]);
+      if ("__timeout" in r) { cap.hit = true; return; }
+      if (r.done) return;
+      yield r.value;
+    }
+  } finally {
+    try { await it.return?.(); } catch { /* best effort */ }
+  }
+}
+
 async function consumeAttempt(
   stream: AsyncIterable<import("../engine/types.js").EngineEvent>,
   ctx: {
@@ -964,7 +988,14 @@ async function consumeAttempt(
   let globalBudgetExceeded = false;
   let nodeBudgetExceeded = false;
 
-  for await (const ev of stream) {
+  // Per-rung wall-clock cap (SER_RUNG_TIMEOUT_MS, 0 = off): bound how long ONE rung may run so a
+  // slow reasoning model or a long iterate loop can't stall the whole build. On expiry the stream
+  // ends, the attempt is marked errored, and the ladder escalates — the node budget still bounds total cost.
+  const rungCapMs = Number(process.env.SER_RUNG_TIMEOUT_MS || "0");
+  const cap = { hit: false };
+  const events = rungCapMs > 0 ? withRungDeadline(stream, rungCapMs, cap) : stream;
+
+  for await (const ev of events) {
     switch (ev.kind) {
       case "text":
         finalMessage = ev.text;
@@ -1059,6 +1090,17 @@ async function consumeAttempt(
         });
         break;
     }
+  }
+
+  if (cap.hit) {
+    errored = true;
+    errorMessage = errorMessage || `rung exceeded SER_RUNG_TIMEOUT_MS=${rungCapMs}ms — aborted, escalating`;
+    trace.append("engine_error", {
+      nodeId,
+      rung: rungNumber,
+      payload: { message: errorMessage },
+      costUsdSoFar: budget.globalSpent(),
+    });
   }
 
   return finalize();
