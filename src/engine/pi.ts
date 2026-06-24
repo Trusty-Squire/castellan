@@ -96,10 +96,13 @@ export function boundHistory(messages: Message[], maxTokens = MAX_HISTORY_TOKENS
 /**
  * Hard cap on output tokens per LLM call. Without this, providers pre-authorize
  * the model's full max output (e.g. 32k for Opus → ~$2.40), which both wastes
- * the budget pre-check and triggers 402s on low-balance accounts. Coding edits
- * never need this much output.
+ * the budget pre-check and triggers 402s on low-balance accounts. 16k (up from 8k)
+ * because a COHESIVE single-file node (a whole ~400-line engine in one node, the
+ * fixed decomposition) plus the model's reasoning exceeds 8k in one response —
+ * observed: glm-5.2 hit the 8k cap mid-write of engine.js, truncated, wrote nothing,
+ * and the node halted on a missing file. The cost meter still bounds total spend.
  */
-const OUTPUT_MAX_TOKENS = 8_192;
+const OUTPUT_MAX_TOKENS = 16_384;
 
 export interface PiEngineOptions {
   /** Inject a fake stream function for tests (no network). Default: pi-ai streamSimple. */
@@ -407,7 +410,7 @@ function buildModel(ref: ModelRef): Model<"openai-completions"> {
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
-    maxTokens: 8_192,
+    maxTokens: OUTPUT_MAX_TOKENS,
     // NOTE: do NOT set openRouterRouting.require_parameters — it demands
     // endpoints support EVERY request param (incl. optional ones pi-ai sends)
     // and 404s models like deepseek-v3.2 entirely. OpenRouter already filters

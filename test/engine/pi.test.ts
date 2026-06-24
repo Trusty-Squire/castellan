@@ -445,9 +445,9 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     const engine = new PiEngine({ streamFn: recordingStream });
     await collect(engine, req({ maxTokens: 40_000 }));
     expect(seen.length).toBeGreaterThan(0);
-    // 40k requested context budget must be capped to the 8192 output ceiling.
-    expect(seen.every((m) => m === 8192)).toBe(true);
-    expect(outputCapFor(40_000)).toBe(8192);
+    // 40k requested context budget must be capped to the 16384 output ceiling.
+    expect(seen.every((m) => m === 16384)).toBe(true);
+    expect(outputCapFor(40_000)).toBe(16384);
     expect(outputCapFor(100)).toBe(100);
   });
 
