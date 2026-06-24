@@ -39,7 +39,7 @@ describe("ser fix (repro-then-fix pack)", () => {
     const repro = effectiveGate(m.nodes[0]!);
     expect(repro.run).toContain("! npm run test test/repro.test.ts");
     expect(repro.run).toContain("AssertionError|expected|FAIL");
-    expect(repro.run).toContain("! grep -q 'ENOENT'");
+    expect(repro.run).toContain("! grep -qE 'ENOENT'");
     // repro writes only tests
     expect(m.nodes[0]!.blast_radius).toEqual(["test/**"]);
   });

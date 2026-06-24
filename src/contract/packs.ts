@@ -78,6 +78,11 @@ export function buildFixMission(bug: string, workdir: string, opts: FixOptions =
   // The repro lives next to the test file, whatever the repo's layout (test/, tests/, …).
   const testDir = testFile.includes("/") ? testFile.slice(0, testFile.lastIndexOf("/")) : ".";
   const testGlob = testDir === "." ? testFile : `${testDir}/**`;
+  // The package/module the repro MUST exercise (top dir of the first source glob) — used by the
+  // repro gate to reject a vacuous self.fail() repro that imports nothing real. "src" is the generic
+  // TS root (imports are relative there) → no check.
+  const pkg = (srcGlobs[0] ?? "").split("/")[0]!.replace(/\*+$/, "");
+  const exercises = pkg && pkg !== "src" && !pkg.includes("*") ? pkg : undefined;
 
   return MissionSchema.parse({
     goal: `Fix bug: ${bug}`,
@@ -89,18 +94,24 @@ export function buildFixMission(bug: string, workdir: string, opts: FixOptions =
         id: "repro",
         brief:
           `Write a failing test at ${testFile} that REPRODUCES this bug: "${bug}". ` +
-          `The test must fail with an assertion failure demonstrating the bug (not a crash, ` +
-          `not a missing-file error). Create any directories you need with recursive mkdir. ` +
-          `Do not fix the bug in this step.`,
+          `It MUST import the real code under test${exercises ? ` (the \`${exercises}\` package)` : ""} and CALL the specific ` +
+          `function/method the bug is in with concrete inputs, then assert on the COMPUTED result — so ` +
+          `that once the defect is fixed the test PASSES. Do NOT write a hardcoded self.fail()/assert ` +
+          `False/throw — that exercises nothing and can never pass. Prefer a UNIT test of the exact ` +
+          `function over an integration test that needs a network/server/external service the sandbox ` +
+          `lacks. The test must fail now with an assertion failure (not a crash, not a missing-file ` +
+          `error). Create any directories you need with recursive mkdir. Do not fix the bug in this step.`,
         context_globs: [...srcGlobs, testGlob],
         blast_radius: [testGlob],
-        // A25: repro gates demand an assertion-failure signature and reject
-        // fixture crashes — the dogfood lesson applied to bug repros.
+        // A25: repro gates demand an assertion-failure signature and reject fixture crashes — the
+        // dogfood lesson applied to bug repros — AND (SWE-bench) reject a vacuous repro that imports
+        // nothing real (exercises), so the fix node can't be handed an unsatisfiable self.fail() gate.
         gate: renderGate("fail-for-the-right-reason", {
           testFile,
           testCmd: `${testCmd} ${testFile}`,
           mustMatch: "AssertionError|expected|FAIL",
           mustNotMatch: "ENOENT",
+          ...(exercises ? { exercises } : {}),
         }),
         budget_usd: budget * 0.4,
       },

@@ -67,7 +67,7 @@ export const GATE_PATTERNS: GatePattern[] = [
       "Tests-first: the suite must FAIL, the failure must match the missing-impl signature, and must NOT contain fixture-crash markers.",
     bornFrom: "DOGFOOD.md run 1 — a broken fixture satisfied a naive 'suite fails' gate, poisoning the next node",
     params: ["testFile", "testCmd", "mustMatch"],
-    optionalParams: ["mustNotMatch", "outFile"],
+    optionalParams: ["mustNotMatch", "outFile", "exercises"],
     render: (p) => {
       const out = typeof p.outFile === "string" && p.outFile ? p.outFile : "/tmp/castellan-gate-out.txt";
       // grep -qE: mustMatch/mustNotMatch are REGEX alternations ("AssertionError|expected|FAIL").
@@ -77,8 +77,18 @@ export const GATE_PATTERNS: GatePattern[] = [
         typeof p.mustNotMatch === "string" && p.mustNotMatch
           ? ` && ! grep -qE '${p.mustNotMatch}' ${out}`
           : " && ! grep -qE ENOENT " + out;
+      // EXERCISES: the repro must actually IMPORT and USE the module under test — else a vacuous
+      // `self.fail("...")` / `assert False` that touches no real code satisfies the "it fails" check
+      // yet can NEVER be made to pass, dooming the fix node (SWE-bench: a fake proxy-407 self.fail
+      // repro halted a node before the model ever fixed anything). Require an import of the module
+      // AND a second reference to it, so the test calls into the code it claims to reproduce.
+      const tf = str(p, "testFile");
+      const exercises =
+        typeof p.exercises === "string" && p.exercises
+          ? ` && grep -qE '(import +${p.exercises}|from +${p.exercises}( |\\.|import))' ${tf} && [ "$(grep -cE '\\b${p.exercises}\\b' ${tf})" -ge 2 ]`
+          : "";
       return command(
-        `test -f ${str(p, "testFile")} && ! ${str(p, "testCmd")} > ${out} 2>&1 && grep -qE '${str(p, "mustMatch")}' ${out}${notMatch}`,
+        `test -f ${tf} && ! ${str(p, "testCmd")} > ${out} 2>&1 && grep -qE '${str(p, "mustMatch")}' ${out}${notMatch}${exercises}`,
       );
     },
   },
