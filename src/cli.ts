@@ -367,15 +367,17 @@ async function cmdDo(args: string[]): Promise<number> {
 }
 
 async function cmdFix(args: string[]): Promise<number> {
-  const flags = parseFlags(args, ["chain", "chains", "harness", "test-cmd", "test-file", "radius", "budget"]);
+  const flags = parseFlags(args, ["chain", "chains", "harness", "test-cmd", "test-file", "radius", "budget", "src"]);
   const bug = flags.positional[0];
-  if (!bug) throw new SquireError("USAGE", 'ser fix "<bug description>" [--test-cmd <cmd>] [--test-file <path>]');
+  if (!bug) throw new SquireError("USAGE", 'ser fix "<bug description>" [--test-cmd <cmd>] [--test-file <path>] [--src <glob>]');
   const { buildFixMission } = await import("./contract/packs.js");
   const workdir = process.cwd();
+  const csv = (v: string | undefined) => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : undefined);
   const mission = buildFixMission(bug, workdir, {
     testCmd: flags.value.get("test-cmd"),
     testFile: flags.value.get("test-file"),
-    radius: flags.value.get("radius") ? [flags.value.get("radius")!] : undefined,
+    radius: csv(flags.value.get("radius")),
+    srcGlobs: csv(flags.value.get("src")),
     budgetUsd: flags.value.get("budget") ? Number(flags.value.get("budget")) : undefined,
     chain: flags.value.get("chain"),
   });

@@ -28,8 +28,8 @@ describe("gate-pattern library", () => {
       mustMatch: "Failed to load url",
     });
     expect(g.run).toContain("! pnpm vitest run test/cart.test.ts");
-    expect(g.run).toContain("grep -q 'Failed to load url'");
-    expect(g.run).toContain("! grep -q ENOENT");
+    expect(g.run).toContain("grep -qE 'Failed to load url'");
+    expect(g.run).toContain("! grep -qE ENOENT");
   });
 
   it("varied-input refuses a single assertion (hardcodeable)", () => {

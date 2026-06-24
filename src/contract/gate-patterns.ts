@@ -70,12 +70,15 @@ export const GATE_PATTERNS: GatePattern[] = [
     optionalParams: ["mustNotMatch", "outFile"],
     render: (p) => {
       const out = typeof p.outFile === "string" && p.outFile ? p.outFile : "/tmp/castellan-gate-out.txt";
+      // grep -qE: mustMatch/mustNotMatch are REGEX alternations ("AssertionError|expected|FAIL").
+      // Without -E, grep treats `|` as a literal pipe → the pattern never matches → the repro gate
+      // is unsatisfiable by any repro (latent bug surfaced by the SWE-bench spike).
       const notMatch =
         typeof p.mustNotMatch === "string" && p.mustNotMatch
-          ? ` && ! grep -q '${p.mustNotMatch}' ${out}`
-          : " && ! grep -q ENOENT " + out;
+          ? ` && ! grep -qE '${p.mustNotMatch}' ${out}`
+          : " && ! grep -qE ENOENT " + out;
       return command(
-        `test -f ${str(p, "testFile")} && ! ${str(p, "testCmd")} > ${out} 2>&1 && grep -q '${str(p, "mustMatch")}' ${out}${notMatch}`,
+        `test -f ${str(p, "testFile")} && ! ${str(p, "testCmd")} > ${out} 2>&1 && grep -qE '${str(p, "mustMatch")}' ${out}${notMatch}`,
       );
     },
   },

@@ -55,6 +55,9 @@ export interface FixOptions {
   radius?: string[];
   budgetUsd?: number;
   chain?: string;
+  /** Source globs to PACK as context + the fix node's default writable set. Defaults to ["src/**"];
+   *  set per-repo for non-src layouts (e.g. ["requests/**"] for psf/requests). */
+  srcGlobs?: string[];
 }
 
 /**
@@ -71,6 +74,10 @@ export function buildFixMission(bug: string, workdir: string, opts: FixOptions =
   }
   const testFile = opts.testFile ?? "test/repro.test.ts";
   const budget = opts.budgetUsd ?? 1.5;
+  const srcGlobs = opts.srcGlobs ?? ["src/**"];
+  // The repro lives next to the test file, whatever the repo's layout (test/, tests/, …).
+  const testDir = testFile.includes("/") ? testFile.slice(0, testFile.lastIndexOf("/")) : ".";
+  const testGlob = testDir === "." ? testFile : `${testDir}/**`;
 
   return MissionSchema.parse({
     goal: `Fix bug: ${bug}`,
@@ -85,8 +92,8 @@ export function buildFixMission(bug: string, workdir: string, opts: FixOptions =
           `The test must fail with an assertion failure demonstrating the bug (not a crash, ` +
           `not a missing-file error). Create any directories you need with recursive mkdir. ` +
           `Do not fix the bug in this step.`,
-        context_globs: ["src/**", "test/**"],
-        blast_radius: ["test/**"],
+        context_globs: [...srcGlobs, testGlob],
+        blast_radius: [testGlob],
         // A25: repro gates demand an assertion-failure signature and reject
         // fixture crashes — the dogfood lesson applied to bug repros.
         gate: renderGate("fail-for-the-right-reason", {
@@ -104,8 +111,8 @@ export function buildFixMission(bug: string, workdir: string, opts: FixOptions =
           `Fix the underlying defect so the repro passes and the whole suite stays green. ` +
           `Do not modify the repro test.`,
         deps: ["repro"],
-        context_globs: ["src/**", testFile],
-        blast_radius: opts.radius ?? ["src/**"],
+        context_globs: [...srcGlobs, testFile],
+        blast_radius: opts.radius ?? srcGlobs,
         gate: renderGate("tests-pass", {
           testCmd,
           guardPaths: [testFile],
