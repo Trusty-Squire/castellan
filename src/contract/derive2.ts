@@ -339,8 +339,10 @@ async function jsonStage<S extends z.ZodTypeAny>(
   usage: PlannerUsage,
 ): Promise<z.output<S>> {
   let note = "";
+  let lastText = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await llm.complete({ model, system, user: user + note, json: true, maxTokens: 4000 });
+    lastText = res.text;
     usage.in += res.inTokens;
     usage.out += res.outTokens;
     if (typeof res.costUsd === "number" && Number.isFinite(res.costUsd)) {
@@ -355,6 +357,9 @@ async function jsonStage<S extends z.ZodTypeAny>(
     } else {
       note = `\n\nYour previous output was not valid JSON: ${parsed.error}. Output JSON only.`;
     }
+  }
+  if (process.env.SER_DUMP_STAGE_FAIL) {
+    try { (await import("node:fs")).writeFileSync(process.env.SER_DUMP_STAGE_FAIL, `STAGE ${stage} (len ${lastText.length})\n\n${lastText}`); } catch { /* best effort */ }
   }
   throw new SquireError("DERIVE_STAGE_INVALID", `stage "${stage}" produced invalid output after one retry`);
 }
