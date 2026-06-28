@@ -536,7 +536,7 @@ Success criterion:
 - If any new pytest IDs resolve, combine them with the existing Requests `6/6` artifact only after the
   new predictions pass individually.
 
-## 2026-06-28 — pytest six-instance k=3 oracle-repair pass: 5/6 official
+## 2026-06-28 — pytest six-instance k=3 oracle-repair pass: 5/6, then focused 5787 repair to 6/6
 
 Executed the proposed pytest expansion configuration:
 
@@ -585,3 +585,25 @@ Interpretation:
   that fixes F2P while breaking an existing deserialization failure case.
 - Next pytest target should be a regression-aware repair pass focused on `5787`, feeding the exact
   failing P2P source/test output back into repair rather than resampling the whole six.
+
+Focused follow-up:
+
+- Repaired only `pytest-dev__pytest-5787`.
+- Root cause: the selected patch added chained-exception serialization, but its `_from_json` chain branch
+  bypassed validation of the top-level `reprtraceback`. The existing P2P test mutates that top-level
+  entry type to `"Unknown"` and expects `_report_unserialization_failure`.
+- Focused fix: deserialize/validate the top-level traceback first, then deserialize `chain` entries using
+  the same helper. This preserves the old unknown-entry failure behavior while keeping chained exception
+  round-tripping.
+
+Focused official result:
+
+- Prediction: `predictions-pytest-5787-regression-repair.jsonl`
+- Report: `ser-select-v2.pytest-5787-regression-repair.json`
+- Result: `1/1`
+
+Combined v2 official result:
+
+- Predictions: `predictions-pytest-six-k3-oracle-repair-v2.jsonl`
+- Report: `ser-select-v2.pytest-six-k3-oracle-repair-v2.json`
+- Resolved: `6/6`
