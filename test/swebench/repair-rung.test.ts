@@ -153,13 +153,14 @@ describe("SWE-bench repair rung utilities", () => {
   });
 
   it("requires all oracle nodes before treating a candidate as solved", async () => {
-    const { answerPass, classifyOracleResult } = await loadMjs<{
+    const { answerPass, classifyOracleResult, isSlowOrInfraNode } = await loadMjs<{
       answerPass: (candidate: { reproPass?: number; oraclePass?: number }, oracleTotal?: number) => number;
       classifyOracleResult: (
         nodes: string[],
         runnerResult: { passed: Set<string> },
         tbForNode: (node: string) => string,
       ) => { pass: number; passed: string[]; failed: string[]; infraFailed: string[] };
+      isSlowOrInfraNode: (node: string) => boolean;
     }>("projects/swebench/select.mjs");
 
     expect(answerPass({ oraclePass: 1 }, 1)).toBe(1);
@@ -174,6 +175,9 @@ describe("SWE-bench repair rung utilities", () => {
     expect(result.pass).toBe(2);
     expect(result.failed).toEqual(["test_real_fail"]);
     expect(result.infraFailed).toEqual(["test_httpbin"]);
+
+    expect(isSlowOrInfraNode("test_requests.py::RequestsTestCase::test_connection_error")).toBe(true);
+    expect(isSlowOrInfraNode("test_requests.py::RequestsTestCase::test_basic_building")).toBe(false);
   });
 
   it("threads exact failed oracle nodes through repair attempts", async () => {

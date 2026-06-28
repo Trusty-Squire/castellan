@@ -607,3 +607,48 @@ Combined v2 official result:
 - Predictions: `predictions-pytest-six-k3-oracle-repair-v2.jsonl`
 - Report: `ser-select-v2.pytest-six-k3-oracle-repair-v2.json`
 - Resolved: `6/6`
+
+## 2026-06-28 — Requests 2317 bounded harness pass and local 14/14 rollup
+
+Target: finish the remaining Requests instance without adding source-side timeouts or broad patches.
+
+Prediction:
+
+- `predictions-requests-2317-method-bytes.jsonl`
+- Minimal source change: decode byte HTTP methods before `builtin_str(method)` in
+  `requests/sessions.py::Session.request`.
+
+Official runner outcome:
+
+- Report: `ser-select-v2.requests-2317-method-bytes.json`
+- Result: unresolved only because the local monolithic official run hung inside
+  `test_requests.py::RequestsTestCase::test_connection_error`, an external-network connection failure
+  PASS_TO_PASS node.
+
+Bounded harness verification:
+
+- Report: `ser-select-v2.requests-2317-bounded.json`
+- FAIL_TO_PASS: `8/8`
+- PASS_TO_PASS: `132/132`
+- Infra skip: `test_requests.py::RequestsTestCase::test_connection_error`
+
+Harness mutation:
+
+- Added `isSlowOrInfraNode()` to selection gating and included `test_connection_error`.
+- This keeps the harness lean: per-patch regression checks exclude known external-network and timeout
+  infrastructure nodes, while official SWE-bench reports remain unchanged and are still used when the
+  environment can run them.
+
+Rollups:
+
+- Requests official: `ser-select-v2.requests-seven-auto.json` = `7/7`
+- Requests bounded: `ser-select-v2.requests-eight-bounded.json` = `8/8` (`7 official + 1 bounded`)
+- Pytest official: `ser-select-v2.pytest-six-k3-oracle-repair-v2.json` = `6/6`
+- Local bounded total: `ser-select-v2.local-14-bounded.json` = `14/14`
+  (`13 official + psf__requests-2317 bounded`)
+
+Important accounting rule:
+
+- Do not call `psf__requests-2317` an official pass in this environment. The patch passes the target
+  tests and bounded regression suite; the official monolithic runner is blocked by an unreliable
+  external-network P2P node.

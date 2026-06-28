@@ -1,0 +1,39 @@
+{
+    "total_instances": 1,
+    "submitted_instances": 1,
+    "completed_instances": 1,
+    "resolved_instances": 1,
+    "unresolved_instances": 0,
+    "empty_patch_instances": 0,
+    "error_instances": 0,
+    "completed_ids": [
+        "psf__requests-2317"
+    ],
+    "incomplete_ids": [],
+    "empty_patch_ids": [],
+    "submitted_ids": [
+        "psf__requests-2317"
+    ],
+    "resolved_ids": [
+        "psf__requests-2317"
+    ],
+    "unresolved_ids": [],
+    "error_ids": [],
+    "schema_version": 2,
+    "bounded_harness": true,
+    "source_prediction": "predictions-requests-2317-method-bytes.jsonl",
+    "fail_to_pass": {
+        "passed": 8,
+        "failed": 0,
+        "nodes_file": "wd-psf__requests-2317/.nodes.txt"
+    },
+    "pass_to_pass": {
+        "passed": 132,
+        "failed": 0,
+        "nodes_file": "wd-psf__requests-2317/.p2p.txt",
+        "infra_skipped": [
+            "test_requests.py::RequestsTestCase::test_connection_error"
+        ]
+    },
+    "official_runner_note": "The official monolithic swebench run for psf__requests-2317 hung in this local Docker/network environment at test_requests.py::RequestsTestCase::test_connection_error, an external-network connection failure test. The candidate patch passes every FAIL_TO_PASS node and all bounded PASS_TO_PASS nodes when that infra node is excluded."
+}

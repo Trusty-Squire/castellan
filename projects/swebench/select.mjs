@@ -337,6 +337,13 @@ function classifyOracleResult(oracleNodes, runnerResult, tbForNode = () => "") {
   }
   return { pass: passed.length + infraFailed.length, passed, failed, infraFailed };
 }
+function isSlowOrInfraNode(node) {
+  // These nodes are valuable as suite tests in their original environment, but poor per-patch
+  // regression gates: they intentionally wait on timeouts, DNS, SSL subprocesses, or external
+  // httpbin connection behavior. Treat them as infrastructure for selection; official eval can
+  // still run them when its environment is stable.
+  return /TestTimeout|connect_timeout|total_timeout|test_errors\[|doesnotexist|test_system_ssl|test_requests_after_timeout|test_connection_error/.test(node);
+}
 const STOP = new Set("the a an and or of to in is be for with that this it on as if not are from when you your http https def self none true false return import class".split(" "));
 function issueTerms(problem) {
   const t = new Set();
@@ -484,10 +491,8 @@ async function runInstance(inst) {
     // regression set = EVERY offline-passing test node across the suite. Pass the repo's test ROOTS
     // (a dir, which pytest collects recursively, or a root test file) — repo-parametric via cfg.
     const testFiles = cfg.testRoots.filter(t => existsSync(join(wd, t)));
-    // drop deliberately-slow integration tests that PASS but cost seconds each (re-run per patch):
-    // timeouts wait out their duration, *_errors/doesnotexist do real DNS, ssl spawns a subprocess.
-    const SLOW = /TestTimeout|connect_timeout|total_timeout|test_errors\[|doesnotexist|test_system_ssl|test_requests_after_timeout/;
-    const passing = (runner) => [...runner.nodes(testFiles).passed].filter(n => !SLOW.test(n)).slice(0, 500);
+    // Drop deliberately-slow/infra integration tests that PASS but are unstable per-patch gates.
+    const passing = (runner) => [...runner.nodes(testFiles).passed].filter(n => !isSlowOrInfraNode(n)).slice(0, 500);
     // detect local-venv incompatibility (can't run the era's tests) → fall back to in-container gating
     let basePass = passing(makeRunner(wd, venv, false));
     const useC = !basePass.length && testFiles.length > 0;
@@ -716,7 +721,7 @@ async function runInstance(inst) {
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }
 }
-export { callLLM, makeRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, defBlocks, localizedReproHints, repoCfg };
+export { callLLM, makeRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, defBlocks, localizedReproHints, repoCfg };
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {
