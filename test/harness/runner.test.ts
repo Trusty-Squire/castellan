@@ -205,6 +205,22 @@ describe("runMission", () => {
     expect(result.nodes[0]!.maxRung).toBe(6); // executor, exec-repair, fallback, fallback-repair, knight, knight+diff
   });
 
+  it("records a deterministic engine timeout from a sleeping mock attempt", async () => {
+    const prev = process.env.SER_RUNG_TIMEOUT_MS;
+    process.env.SER_RUNG_TIMEOUT_MS = "5";
+    try {
+      const result = await run(oneNode, () => ({ steps: [{ text: "starting" }, { sleepMs: 50 }, { done: "too late" }] }));
+      expect(result.completed).toBe(false);
+      const trace = readTrace(result.tracePath);
+      const errors = trace.filter((e) => e.kind === "engine_error");
+      expect(errors.length).toBeGreaterThan(0);
+      expect((errors[0]!.payload as { message?: string }).message).toContain("SER_RUNG_TIMEOUT_MS=5ms");
+    } finally {
+      if (prev === undefined) delete process.env.SER_RUNG_TIMEOUT_MS;
+      else process.env.SER_RUNG_TIMEOUT_MS = prev;
+    }
+  });
+
   it("halts honestly when a node's pack TRUNCATES at run time (over-scoped node, not DAG surgery)", async () => {
     // A node sized too coarse: its context_globs match more than its envelope holds.
     // Two large files + a tiny max_context_tokens → one is dropped → pack.truncated.

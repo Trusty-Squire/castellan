@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { parseMission, resolveChain, type ChainsFile } from "./contract/schema.js";
 import { resolveChains } from "./contract/derive.js";
 import { runMission, type DisputeReviewer, type RetrospectReviewer, type RetrospectVerdict } from "./harness/runner.js";
-import { summarizeTrace } from "./harness/trace.js";
+import { appendTraceEvent, formatTraceStatus, latestTracePath, summarizeTrace } from "./harness/trace.js";
 import { MockEngine, fileScriptResolver } from "./engine/mock.js";
 import { commitAll, initRepo, isClean, trackedByParentRepo } from "./harness/checkpoint.js";
 import { SquireError } from "./errors.js";
@@ -29,6 +29,10 @@ async function main(argv: string[]): Promise<number> {
       return cmdRun(rest);
     case "trace":
       return cmdTrace(rest);
+    case "status":
+      return cmdStatus(rest);
+    case "findings":
+      return cmdFindings(rest);
     case "derive":
       return cmdDerive(rest);
     case "experiment":
@@ -87,7 +91,7 @@ function printUsage(): void {
       "",
       "Utilities:",
       "  ser login · ser do \"<goal>\" · ser fix \"<bug>\"",
-      "  ser run/derive/validate/trace/experiment (advanced; stages of the above)",
+      "  ser status · ser findings · ser run/derive/validate/trace/experiment (advanced; stages of the above)",
       "",
     ].join("\n"),
   );
@@ -626,6 +630,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
       const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
       const buildRc = await executeMissionObject(mission, buildDir, flags, slug);
+      const buildTracePath = latestTracePath(buildDir);
     // A build halt is already a loop-exhausted state — the executor's own rung
     // ladder retried before giving up — so it's an honest halt, not a first-fail stop.
       if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red after the executor's retries. ser will not ship unverified work.") + "\n"); return buildRc; }
@@ -641,6 +646,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       recs = audit.recommendations.sort((a, b) => (rank[a.severity]! - rank[b.severity]!));
       if (recs.length === 0) process.stdout.write(st.green("  audit: no polish recommended — the build is clean.") + "\n");
       for (const r of recs) {
+        if (buildTracePath) appendTraceEvent(buildTracePath, "audit_finding", r);
         const sev = r.severity === "high" ? st.yellow("[high]") : r.severity === "med" ? st.bold("[med] ") : st.gray("[low] ");
         process.stdout.write(`  ${sev} ${st.gray(r.lens.padEnd(7))} ${r.note}${r.file ? st.gray("  (" + r.file + ")") : ""}\n`);
       }
@@ -669,17 +675,38 @@ async function cmdPipeline(argv: string[]): Promise<number> {
         if (/not a visual build/i.test(shot.note ?? "")) {
           process.stdout.write(st.gray(`  visual review skipped — ${shot.note}\n`));
         } else {
+          if (buildTracePath) {
+            appendTraceEvent(buildTracePath, "visual_finding", {
+              severity: "high",
+              note: shot.note ?? "visual review unavailable",
+              fix: "make the UI renderable so ser can inspect it",
+            });
+          }
           process.stdout.write(st.yellow(`\nvisual review unavailable — ${shot.note}. ser will not ship a UI it could not render and inspect.`) + "\n");
           return 1;
         }
       } else {
         visualClient ??= await makeVisualClient();
         if (!visualClient) {
+          if (buildTracePath) {
+            appendTraceEvent(buildTracePath, "visual_finding", {
+              severity: "high",
+              note: "no multimodal reviewer is configured",
+              fix: "configure a visual-review backend or run a non-visual target",
+            });
+          }
           process.stdout.write(st.yellow("\nvisual review unavailable — no multimodal reviewer is configured. ser will not ship a rendered UI without that check.") + "\n");
           return 1;
         }
         const verdict = await visualReview(shot, { thesis: builtSpec.thesis, stories: builtSpec.stories }, visualClient.llm, visualClient.model);
         if (!verdict) {
+          if (buildTracePath) {
+            appendTraceEvent(buildTracePath, "visual_finding", {
+              severity: "high",
+              note: "visual review failed to produce a verdict",
+              fix: "retry the visual review or inspect the rendered UI manually",
+            });
+          }
           process.stdout.write(st.yellow("\nvisual review failed to produce a verdict. ser will not ship a rendered UI without that check.") + "\n");
           return 1;
         }
@@ -705,6 +732,14 @@ async function cmdPipeline(argv: string[]): Promise<number> {
           const open = unresolvedDefects(frozenDefects, closure);
           for (const d of frozenDefects) {
             const closed = !open.some((o) => o.id === d.id);
+            if (buildTracePath) {
+              appendTraceEvent(buildTracePath, "visual_finding", {
+                severity: closed ? "low" : "high",
+                status: closed ? "closed" : "open",
+                note: d.note,
+                fix: d.fix,
+              });
+            }
             process.stdout.write(`  ${closed ? st.green("✓ closed") : st.yellow("✗ open  ")} ${st.gray(d.note)}\n`);
           }
           fixes = open.map((d) => ({ note: d.note, fix: d.fix }));
@@ -730,7 +765,17 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       // re-judge. LOOP if we have attempts left; halt only when spent.
       if (!frozenDefects) frozenDefects = freezeDefects(fixes);
       process.stdout.write(st.yellow(`\nvisual review blocks ship — the built UI doesn't deliver the spec yet:\n`));
-      for (const f of fixes) process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
+      for (const f of fixes) {
+        if (buildTracePath) {
+          appendTraceEvent(buildTracePath, "visual_finding", {
+            severity: "high",
+            status: "open",
+            note: f.note,
+            fix: f.fix,
+          });
+        }
+        process.stdout.write(`  ${st.yellow("✗")} ${f.fix}\n`);
+      }
       if (attempt < maxRebuilds) {
         pendingChange = { stories: fixes.map((f) => f.fix) };
         process.stdout.write(st.gray(`\nfolding these into the spec and rebuilding (attempt ${attempt + 1}/${maxRebuilds})…`) + "\n");
@@ -912,6 +957,65 @@ async function cmdTrace(args: string[]): Promise<number> {
   const path = flags.positional[0];
   if (!path) throw new SquireError("USAGE", "ser trace <trace.jsonl>");
   process.stdout.write(summarizeTrace(resolve(path)) + "\n");
+  return 0;
+}
+
+async function cmdStatus(args: string[]): Promise<number> {
+  const flags = parseFlags(args, ["workdir"]);
+  const explicit = flags.positional[0];
+  const path = explicit ? resolve(explicit) : latestTracePath(resolve(flags.value.get("workdir") ?? process.cwd()));
+  if (!path) {
+    process.stdout.write(
+      [
+        "runs: 0",
+        `workdir: ${resolve(flags.value.get("workdir") ?? process.cwd())}`,
+        "help[1]: Run `ser run <mission.yaml>` to create a trace",
+        "",
+      ].join("\n"),
+    );
+    return 0;
+  }
+  process.stdout.write(formatTraceStatus(path) + "\n");
+  return 0;
+}
+
+async function cmdFindings(args: string[]): Promise<number> {
+  const { formatFindingDetail, formatFindings } = await import("./harness/findings.js");
+  const flags = parseFlags(args, ["workdir"]);
+  const workdir = resolve(flags.value.get("workdir") ?? process.cwd());
+  let tracePath: string | undefined;
+  let detailId: string | undefined;
+
+  if (flags.positional[0] === "show") {
+    if (flags.positional.length >= 3) {
+      tracePath = resolve(flags.positional[1]!);
+      detailId = flags.positional[2];
+    } else {
+      tracePath = latestTracePath(workdir);
+      detailId = flags.positional[1];
+    }
+    if (!detailId) throw new SquireError("USAGE", "ser findings show [trace.jsonl] <finding-id>");
+  } else {
+    tracePath = flags.positional[0] ? resolve(flags.positional[0]) : latestTracePath(workdir);
+  }
+
+  if (!tracePath) {
+    process.stdout.write(
+      [
+        "findings: 0 open, 0 total",
+        `workdir: ${workdir}`,
+        "help[1]: Run `ser run <mission.yaml>` to create a trace",
+        "",
+      ].join("\n"),
+    );
+    return 0;
+  }
+
+  process.stdout.write(
+    detailId
+      ? formatFindingDetail(tracePath, detailId) + "\n"
+      : formatFindings(tracePath, { all: flags.bool.has("all") }) + "\n",
+  );
   return 0;
 }
 

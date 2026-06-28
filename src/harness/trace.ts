@@ -1,5 +1,5 @@
-import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { SquireError } from "../errors.js";
 
@@ -25,6 +25,8 @@ export const TRACE_KINDS = [
   "budget_stop",
   "engine_error",
   "provider_retry",
+  "audit_finding",
+  "visual_finding",
   "node_pass",
   "node_fail",
   "mission_end",
@@ -103,6 +105,18 @@ export function readTrace(path: string): TraceEvent[] {
     events.push(TraceEventSchema.parse(parsed));
   }
   return events;
+}
+
+/** Append an out-of-runner event, preserving mission id and current cost from an existing trace. */
+export function appendTraceEvent(path: string, kind: TraceKind, payload: unknown, fields: Omit<TraceAppendFields, "payload" | "costUsdSoFar"> = {}): TraceEvent {
+  const events = readTrace(path);
+  if (events.length === 0) throw new SquireError("TRACE_EMPTY", `trace file is empty: ${path}`);
+  const last = events[events.length - 1]!;
+  return new Trace(path, last.missionId).append(kind, {
+    ...fields,
+    payload,
+    costUsdSoFar: last.costUsdSoFar,
+  });
 }
 
 interface NodeSummary {
@@ -226,6 +240,100 @@ export function summarizeTrace(path: string): string {
   return lines.join("\n");
 }
 
+export interface TraceStatus {
+  tracePath: string;
+  missionId: string;
+  completed: boolean;
+  passedNodes: number;
+  totalNodes: number;
+  totalCostUsd: number;
+  lastKind: TraceKind;
+  lastNodeId?: string;
+  lastRung?: number;
+  haltedReason?: string;
+  ended: boolean;
+  openFailures: string[];
+}
+
+export function latestTracePath(dir = process.cwd()): string | undefined {
+  const squireDir = resolve(dir, ".squire");
+  if (!existsSync(squireDir)) return undefined;
+  let best: { path: string; mtimeMs: number } | undefined;
+  for (const name of readdirSync(squireDir)) {
+    if (!/^trace-.*\.jsonl$/.test(name)) continue;
+    const path = join(squireDir, name);
+    let mtimeMs = 0;
+    try {
+      mtimeMs = statSync(path).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (!best || mtimeMs > best.mtimeMs) best = { path, mtimeMs };
+  }
+  return best?.path;
+}
+
+export function traceStatus(path: string): TraceStatus {
+  const events = readTrace(path);
+  if (events.length === 0) throw new SquireError("TRACE_EMPTY", `trace file is empty: ${path}`);
+  const summary = summarize(events);
+  const last = events[events.length - 1]!;
+  const failed = new Set<string>();
+  const passed = new Set<string>();
+  let haltedReason: string | undefined;
+  let ended = false;
+
+  for (const ev of events) {
+    if (ev.nodeId && !/^\(.*\)$/.test(ev.nodeId)) {
+      if (ev.kind === "node_fail") failed.add(ev.nodeId);
+      if (ev.kind === "node_pass") {
+        passed.add(ev.nodeId);
+        failed.delete(ev.nodeId);
+      }
+    }
+    if (ev.kind === "mission_end") {
+      ended = true;
+      if (!isMissionCompleted(ev.payload)) {
+        haltedReason = readString(ev.payload, "haltReason") ?? readString(ev.payload, "reason");
+      }
+    }
+  }
+
+  return {
+    tracePath: path,
+    missionId: summary.missionId,
+    completed: summary.completed,
+    passedNodes: summary.nodes.filter((n) => n.passed).length,
+    totalNodes: summary.nodes.length,
+    totalCostUsd: summary.totalCostUsd,
+    lastKind: last.kind,
+    lastNodeId: last.nodeId,
+    lastRung: last.rung,
+    haltedReason,
+    ended,
+    openFailures: [...failed].filter((id) => !passed.has(id)),
+  };
+}
+
+/** Compact agent-facing status. Keep detail in `ser trace <path>`. */
+export function formatTraceStatus(path: string): string {
+  const s = traceStatus(path);
+  const lines = [
+    `trace: ${s.tracePath}`,
+    `mission: ${s.missionId}`,
+    `state: ${s.completed ? "completed" : s.ended ? "halted" : "running"}`,
+    `nodes: ${s.passedNodes}/${s.totalNodes} passed`,
+    `cost_usd: ${s.totalCostUsd.toFixed(4)}`,
+    `last: ${s.lastKind}${s.lastNodeId ? ` node=${s.lastNodeId}` : ""}${s.lastRung ? ` rung=${s.lastRung}` : ""}`,
+  ];
+  if (s.openFailures.length > 0) lines.push(`open_failures[${s.openFailures.length}]: ${s.openFailures.join(", ")}`);
+  if (s.haltedReason) lines.push(`halt_reason: ${s.haltedReason}`);
+  lines.push(`help[2]:`);
+  lines.push(`  ser trace ${s.tracePath}`);
+  lines.push(`  ser status ${s.tracePath}`);
+  return lines.join("\n");
+}
+
 function isMissionCompleted(payload: unknown): boolean {
   return (
     typeof payload === "object" &&
@@ -239,6 +347,14 @@ function readNumber(payload: unknown, key: string): number | undefined {
   if (typeof payload === "object" && payload !== null && key in payload) {
     const v = (payload as Record<string, unknown>)[key];
     if (typeof v === "number") return v;
+  }
+  return undefined;
+}
+
+function readString(payload: unknown, key: string): string | undefined {
+  if (typeof payload === "object" && payload !== null && key in payload) {
+    const v = (payload as Record<string, unknown>)[key];
+    if (typeof v === "string") return v;
   }
   return undefined;
 }

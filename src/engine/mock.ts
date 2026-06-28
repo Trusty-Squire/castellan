@@ -15,6 +15,7 @@ const ToolNameSchema = z.enum(["read", "write", "edit", "bash"]);
 
 const MockStepSchema = z.union([
   z.object({ text: z.string() }).strict(),
+  z.object({ sleepMs: z.number().int().nonnegative() }).strict(),
   z.object({ tool: ToolNameSchema, args: z.record(z.string(), z.unknown()) }).strict(),
   z.object({ usage: z.object({ in: z.number(), out: z.number() }).strict() }).strict(),
   z.object({ done: z.string() }).strict(),
@@ -62,6 +63,8 @@ export class MockEngine implements Engine {
       if ("text" in step) {
         lastText = step.text;
         yield { kind: "text", text: step.text };
+      } else if ("sleepMs" in step) {
+        await new Promise((resolve) => setTimeout(resolve, step.sleepMs));
       } else if ("usage" in step) {
         yield { kind: "usage", inTokens: step.usage.in, outTokens: step.usage.out };
       } else if ("tool" in step) {

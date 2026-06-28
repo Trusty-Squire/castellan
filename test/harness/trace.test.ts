@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Trace, readTrace, summarize, summarizeTrace } from "../../src/harness/trace.js";
+import { Trace, formatTraceStatus, latestTracePath, readTrace, summarize, summarizeTrace, traceStatus } from "../../src/harness/trace.js";
 
 function tmpTrace(): string {
   const dir = mkdtempSync(join(tmpdir(), "squire-trace-"));
@@ -63,5 +63,38 @@ describe("Trace", () => {
     const out = summarizeTrace(path);
     expect(out).toMatch(/COMPLETED/);
     expect(out).toMatch(/1\/1 nodes passed/);
+  });
+
+  it("formats compact agent-facing status for a trace", () => {
+    const t = new Trace(path, "m-status", { now: () => ++clock });
+    t.append("mission_start", { payload: { goal: "x" } });
+    t.append("node_start", { nodeId: "a", rung: 1 });
+    t.append("node_pass", { nodeId: "a", rung: 1, costUsdSoFar: 0.01 });
+    t.append("node_start", { nodeId: "b", rung: 1 });
+    t.append("node_fail", { nodeId: "b", rung: 1, payload: { gateExitCode: 1 }, costUsdSoFar: 0.02 });
+    t.append("mission_end", { payload: { completed: false, haltReason: "node b exhausted ladder" }, costUsdSoFar: 0.02 });
+
+    expect(traceStatus(path)).toMatchObject({
+      missionId: "m-status",
+      completed: false,
+      passedNodes: 1,
+      totalNodes: 2,
+      openFailures: ["b"],
+      haltedReason: "node b exhausted ladder",
+    });
+    const out = formatTraceStatus(path);
+    expect(out).toContain("nodes: 1/2 passed");
+    expect(out).toContain("open_failures[1]: b");
+  });
+
+  it("finds the newest trace under .squire", () => {
+    const dir = mkdtempSync(join(tmpdir(), "squire-status-"));
+    const sq = join(dir, ".squire");
+    mkdirSync(sq, { recursive: true });
+    const oldPath = join(sq, "trace-old.jsonl");
+    const newPath = join(sq, "trace-new.jsonl");
+    new Trace(oldPath, "old").append("mission_start");
+    new Trace(newPath, "new").append("mission_start");
+    expect(latestTracePath(dir)).toBe(newPath);
   });
 });

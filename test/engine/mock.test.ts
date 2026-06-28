@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockEngine } from "../../src/engine/mock.js";
+import { SquireError } from "../../src/errors.js";
 import type { AttemptRequest, EngineEvent } from "../../src/engine/types.js";
 
 let cwd: string;
@@ -82,5 +83,24 @@ describe("MockEngine", () => {
     });
     const events = await collect(engine, req({ rung: 3 }));
     expect(events.at(-1)).toEqual({ kind: "done", finalMessage: "rung 3" });
+  });
+
+  it("can deterministically pause between events", async () => {
+    const engine = new MockEngine({
+      resolveScript: () => ({ steps: [{ text: "before" }, { sleepMs: 10 }, { done: "after" }] }),
+    });
+    const start = Date.now();
+    const events = await collect(engine, req());
+    expect(Date.now() - start).toBeGreaterThanOrEqual(8);
+    expect(events.map((e) => e.kind)).toEqual(["text", "done"]);
+  });
+
+  it("rejects malformed script files before a live model is involved", async () => {
+    const path = join(cwd, "bad.json");
+    writeFileSync(path, JSON.stringify({ steps: [{ sleepMs: -1 }] }));
+    const engine = new MockEngine({ resolveScript: () => path });
+    await expect(collect(engine, req())).rejects.toMatchObject({
+      code: "MOCK_SCRIPT_INVALID",
+    } satisfies Partial<SquireError>);
   });
 });
