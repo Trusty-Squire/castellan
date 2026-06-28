@@ -1,0 +1,116 @@
+[
+ {
+  "id": "pytest-dev__pytest-10051",
+  "status": "selected",
+  "survivors": 3,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/logging.py",
+   "src/_pytest/reports.py",
+   "src/_pytest/junitxml.py",
+   "src/_pytest/debugging.py",
+   "src/_pytest/config/__init__.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-10081",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/unittest.py",
+   "src/_pytest/fixtures.py",
+   "src/_pytest/hookspec.py",
+   "src/_pytest/runner.py",
+   "src/_pytest/config/__init__.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-10356",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/python.py",
+   "src/_pytest/mark/structures.py",
+   "src/_pytest/pathlib.py",
+   "src/_pytest/fixtures.py",
+   "src/_pytest/nodes.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-5262",
+  "status": "selected",
+  "survivors": 2,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/doctest.py",
+   "src/_pytest/unittest.py",
+   "src/pytest.py",
+   "src/_pytest/capture.py",
+   "src/_pytest/pytester.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-5631",
+  "status": "selected",
+  "survivors": 3,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 3,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/python.py",
+   "src/_pytest/compat.py",
+   "src/_pytest/fixtures.py",
+   "src/_pytest/config/__init__.py",
+   "src/_pytest/main.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-5787",
+  "status": "selected",
+  "survivors": 3,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 2,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/main.py",
+   "src/_pytest/cacheprovider.py",
+   "src/_pytest/python_api.py",
+   "src/_pytest/reports.py",
+   "src/_pytest/config/__init__.py"
+  ]
+ }
+]
