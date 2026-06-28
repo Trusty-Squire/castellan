@@ -1,0 +1,114 @@
+# SWE-bench Results
+
+## Pytest Six-Instance Slice
+
+Dataset file: `pytest-instances.json`
+
+Instances:
+
+- `pytest-dev__pytest-10051`
+- `pytest-dev__pytest-10081`
+- `pytest-dev__pytest-10356`
+- `pytest-dev__pytest-5262`
+- `pytest-dev__pytest-5631`
+- `pytest-dev__pytest-5787`
+
+## Results
+
+### SER selector only
+
+- Predictions: `predictions-pt-kimi-knight.jsonl`
+- Report: `ser-select-v2.pt-kimi-knight.json`
+- Result: `4/6`
+- Resolved: `10051`, `10081`, `5262`, `5631`
+- Unresolved: `10356`, `5787`
+
+### SER selector + Codex manual repair proof
+
+- Two repaired predictions: `predictions-codex-two-v2.jsonl`
+- Two-case report: `codex-manual-proof-v2.codex-two-v2.json`
+- Combined predictions: `predictions-pt-kimi-codex-6.jsonl`
+- Full report: `ser-select-v2.pt-kimi-codex-6.json`
+- Result: `6/6`
+
+This is not a selector-only result. Codex-authored patches replaced only:
+
+- `pytest-dev__pytest-10356`
+- `pytest-dev__pytest-5787`
+
+### SER selector + autonomous repair rung
+
+- `10356` repair prediction: `predictions-repair-rung-10356.jsonl`
+- `10356` report: `ser-select-v2.repair-rung-10356.json`
+- Clean repro `10356` prediction: `predictions-repair-rung-10356-repro.jsonl`
+- Clean repro `10356` report: `ser-select-v2-repair-rung.repair-rung-10356-repro.json`
+- `5787` repair prediction: `predictions-repair-rung-5787-v3.jsonl`
+- `5787` report: `ser-select-v2.repair-rung-5787-v3.json`
+- Combined predictions: `predictions-pt-repair-rung-6.jsonl`
+- Full report: `ser-select-v2.pt-repair-rung-6.json`
+- Clean repro combined predictions: `predictions-pt-repair-rung-6-repro.jsonl`
+- Clean repro full report: `ser-select-v2.pt-repair-rung-6-repro.json`
+- Result: `6/6`
+
+This is the repeatable product result for this slice: the original SER selector supplies the four existing resolved patches, and the repair rung autonomously repairs the two former misses using structured failure evidence, contract-required context, semantic lints, and official-style gates.
+
+## Product Lesson
+
+The remaining gap was not basic localization. The selector had enough project context to get close, but it lacked a failure-aware repair rung that could turn rejected candidate patches into corrected patches using explicit evidence.
+
+The repair rung now records:
+
+- failed candidate patch
+- classification (`oracle_miss`, `regression`, `lint_failed`, `apply_failed`)
+- touched files
+- oracle progress
+- failed tests
+- semantic lint findings
+- repair attempt result
+
+Trace files are written as `repair-trace-<instance_id>.jsonl`.
+
+## Clean Reproduction Commands
+
+Run from the repository root unless noted.
+
+### Repair `pytest-dev__pytest-10356`
+
+```bash
+rm -f projects/swebench/predictions-select.jsonl projects/swebench/results-select.json projects/swebench/repair-trace-pytest-dev__pytest-10356.jsonl
+node projects/swebench/select.mjs --instances=pytest-instances.json --k=1 --r=0 --pool=1 --model=qwen/qwen3-coder --repair-model=qwen/qwen3-coder --fallback-model=qwen/qwen3-coder --llm-timeout-ms=90000 --llm-attempts=1 --repair=0 --oracle=1 --oracle-repair=0 --knight=0 --repair-rung=3 --repair-records=1 pytest-dev__pytest-10356
+```
+
+Official eval, from `projects/swebench`:
+
+```bash
+node - <<'NODE'
+const fs=require('fs');
+const lines=fs.readFileSync('repair-trace-pytest-dev__pytest-10356.jsonl','utf8').trim().split('\n');
+const events=lines.map(l=>JSON.parse(l)).filter(o=>o.outputPatch);
+const o=events[events.length-1];
+fs.writeFileSync('predictions-repair-rung-10356-repro.jsonl', JSON.stringify({instance_id:'pytest-dev__pytest-10356', model_patch:o.outputPatch, model_name_or_path:'ser-select-v2-repair-rung'})+'\n');
+NODE
+sudo -n eval-venv/bin/python -m swebench.harness.run_evaluation -d pytest-instances.json -s test -i pytest-dev__pytest-10356 -p predictions-repair-rung-10356-repro.jsonl --max_workers 1 --cache_level instance --clean False -id repair-rung-10356-repro --report_dir .
+```
+
+### Repair `pytest-dev__pytest-5787`
+
+```bash
+rm -f projects/swebench/predictions-select.jsonl projects/swebench/results-select.json projects/swebench/repair-trace-pytest-dev__pytest-5787.jsonl
+node projects/swebench/select.mjs --instances=pytest-instances.json --k=1 --r=0 --pool=1 --model=qwen/qwen3-coder --repair-model=deepseek/deepseek-v4-pro --fallback-model=qwen/qwen3-coder --llm-timeout-ms=180000 --llm-attempts=1 --repair=0 --oracle=1 --oracle-repair=0 --knight=0 --repair-rung=3 --repair-records=1 pytest-dev__pytest-5787
+```
+
+The current clean repro uses `predictions-repair-rung-5787-v3.jsonl`, generated from the repair trace and evaluated by:
+
+```bash
+sudo -n eval-venv/bin/python -m swebench.harness.run_evaluation -d pytest-instances.json -s test -i pytest-dev__pytest-5787 -p predictions-repair-rung-5787-v3.jsonl --max_workers 1 --cache_level instance --clean False -id repair-rung-5787-v3 --report_dir .
+```
+
+### Full Six-Instance Eval
+
+From `projects/swebench`:
+
+```bash
+sudo -n eval-venv/bin/python -m swebench.harness.run_evaluation -d pytest-instances.json -s test -i pytest-dev__pytest-10051 pytest-dev__pytest-10081 pytest-dev__pytest-10356 pytest-dev__pytest-5262 pytest-dev__pytest-5631 pytest-dev__pytest-5787 -p predictions-pt-repair-rung-6-repro.jsonl --max_workers 3 --cache_level instance --clean False -id pt-repair-rung-6-repro --report_dir .
+```

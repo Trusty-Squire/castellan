@@ -1,0 +1,38 @@
+{
+    "total_instances": 6,
+    "submitted_instances": 6,
+    "completed_instances": 6,
+    "resolved_instances": 6,
+    "unresolved_instances": 0,
+    "empty_patch_instances": 0,
+    "error_instances": 0,
+    "completed_ids": [
+        "pytest-dev__pytest-10051",
+        "pytest-dev__pytest-10081",
+        "pytest-dev__pytest-10356",
+        "pytest-dev__pytest-5262",
+        "pytest-dev__pytest-5631",
+        "pytest-dev__pytest-5787"
+    ],
+    "incomplete_ids": [],
+    "empty_patch_ids": [],
+    "submitted_ids": [
+        "pytest-dev__pytest-10051",
+        "pytest-dev__pytest-10081",
+        "pytest-dev__pytest-10356",
+        "pytest-dev__pytest-5262",
+        "pytest-dev__pytest-5631",
+        "pytest-dev__pytest-5787"
+    ],
+    "resolved_ids": [
+        "pytest-dev__pytest-10051",
+        "pytest-dev__pytest-10081",
+        "pytest-dev__pytest-10356",
+        "pytest-dev__pytest-5262",
+        "pytest-dev__pytest-5631",
+        "pytest-dev__pytest-5787"
+    ],
+    "unresolved_ids": [],
+    "error_ids": [],
+    "schema_version": 2
+}
