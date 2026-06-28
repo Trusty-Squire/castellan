@@ -269,6 +269,13 @@ function patchLint(problem, diff) {
   }
   return issues;
 }
+function targetPass(s) {
+  return (s.reproPass || 0) + (s.oraclePass || 0);
+}
+function answerPass(s, oracleTotal = 0) {
+  if (!oracleTotal) return targetPass(s);
+  return (s.oraclePass || 0) >= oracleTotal ? (s.oraclePass || 0) : 0;
+}
 const STOP = new Set("the a an and or of to in is be for with that this it on as if not are from when you your http https def self none true false return import class".split(" "));
 function issueTerms(problem) {
   const t = new Set();
@@ -491,9 +498,9 @@ async function runInstance(inst) {
     // the broken test + traceback back and let the model find the COMPLETE (often multi-site) fix.
     const REPAIR = Number((process.argv.find(a => a.startsWith("--repair=")) || "--repair=3").slice(9));
     let repaired = 0;
-    const targetPass = (s) => (s.reproPass || 0) + (s.oraclePass || 0);
-    const answerPass = (s) => oracle.nodes.length ? (s.oraclePass || 0) : targetPass(s);
-    if (!survivors.some(s => answerPass(s) > 0) && repairCands.length && REPAIR > 0) {
+    const oracleTotal = oracle.nodes.length;
+    const solvesTarget = (s) => answerPass(s, oracleTotal) > 0;
+    if (!survivors.some(solvesTarget) && repairCands.length && REPAIR > 0) {
       repairCands.sort((a, b) => (targetPass(b) - targetPass(a)) || (a.broke.length - b.broke.length));
       let cand = repairCands[0];
       // pull the SOURCE of a regressed test so the model sees the behavior it must preserve (autonomous
@@ -528,7 +535,7 @@ async function runInstance(inst) {
           for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
           const reproPass = scoreRepro();
           const oraclePass = scoreOracle();
-          if ((reproPass > 0 || oraclePass > 0) && failed.size === 0) { landed = { diff, reproPass, oraclePass, win: true }; break; }
+          if (answerPass({ reproPass, oraclePass }, oracleTotal) > 0 && failed.size === 0) { landed = { diff, reproPass, oraclePass, win: true }; break; }
           if (!landed) landed = { diff, reproPass, oraclePass, failed: [...failed], lintFindings };
         }
         if (landed?.win) { survivors.push({ diff: landed.diff, sr: srOf(rtext), reproPass: landed.reproPass, oraclePass: landed.oraclePass, broke: [], norm: landed.diff.replace(/\s+/g, " ").trim(), size: landed.diff.split("\n").length }); repaired = round + 1; break; }
@@ -540,7 +547,7 @@ async function runInstance(inst) {
     // pass the official FAIL_TO_PASS nodes, ask the repair model to target that concrete contract.
     const ORACLE_REPAIR = Number((process.argv.find(a => a.startsWith("--oracle-repair=")) || "--oracle-repair=2").slice(16));
     let oracleRepaired = 0;
-    if (oracle.nodes.length && !survivors.some(s => answerPass(s) > 0) && ORACLE_REPAIR > 0) {
+    if (oracle.nodes.length && !survivors.some(solvesTarget) && ORACLE_REPAIR > 0) {
       const counts = {}; for (const s of survivors) counts[s.norm] = (counts[s.norm] || 0) + 1;
       const weak = [...survivors].sort((a, b) => (counts[b.norm] - counts[a.norm]) || (a.size - b.size)).slice(0, 3);
       const osys = "You are fixing a Python library bug. The DEVELOPMENT ORACLE below is the exact FAIL_TO_PASS test contract. Output ONLY Aider SEARCH/REPLACE blocks against the ORIGINAL source files. The patch must make the oracle nodes pass while preserving existing passing tests. Prefer the smallest complete root-cause fix; incomplete helper-only fixes are wrong.";
@@ -556,7 +563,7 @@ async function runInstance(inst) {
         const reproPass = scoreRepro();
         const oraclePass = scoreOracle();
         log(`  [${id.replace("psf__requests-", "#")}] ORACLE attempt ${a}: touches=${[...diff.matchAll(/^\+\+\+ b\/(\S+)/gm)].map(x => x[1]).join(",")}, regressions=${failed.size}, oraclePass=${oraclePass}/${oracle.nodes.length}`);
-        if (failed.size === 0 && oraclePass > 0) {
+        if (failed.size === 0 && answerPass({ reproPass, oraclePass }, oracleTotal) > 0) {
           survivors.push({ diff, sr: srOf(otext), reproPass, oraclePass, broke: [], norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
           oracleRepaired = a + 1;
           break;
@@ -570,7 +577,7 @@ async function runInstance(inst) {
     // call→fn map). This is the 6028 path — localization+insight the cheap model can't do unaided.
     const KNIGHT = Number((process.argv.find(a => a.startsWith("--knight=")) || "--knight=2").slice(9));
     let knighted = 0;
-    if (!survivors.some(s => answerPass(s) > 0) && KNIGHT > 0 && REPAIR_MODEL !== MODEL) {
+    if (!survivors.some(solvesTarget) && KNIGHT > 0 && REPAIR_MODEL !== MODEL) {
       reset();
       const { obs, callMap } = probeObserve(wd, cands, ctx, runner.py);
       const kctx = `${ctx}\n\nDIAGNOSTIC PROBE (actual runtime behavior of the suspect functions' calls — TRUST over assumptions about library internals):${obs}\nWHERE THOSE CALLS ARE USED (the fix likely belongs in the function that mishandles the observed value):\n${callMap}`;
@@ -602,18 +609,18 @@ async function runInstance(inst) {
         let kp = 0; for (const rp of gateRepros) { writeFileSync(join(wd, rp.path), rp.code); if (runner.run([rp.path]).code === 0) kp++; rmSync(join(wd, rp.path), { force: true }); }
         const oraclePass = scoreOracle();
         log(`  [${id.replace("psf__requests-", "#")}] KNIGHT attempt ${a}: applied, touches=${[...diff.matchAll(/^\+\+\+ b\/(\S+)/gm)].map(x => x[1]).join(",")}, regressions=${failed.size}, kReproPass=${kp}/${gateRepros.length}, oraclePass=${oraclePass}/${oracle.nodes.length}`);
-        if (failed.size === 0 && (kp > 0 || oraclePass > 0 || (gateRepros.length === 0 && !oracle.nodes.length))) { survivors.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, broke: [], norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length }); knighted = a + 1; break; }
+        if (failed.size === 0 && answerPass({ reproPass: kp || 0, oraclePass }, oracleTotal) > 0) { survivors.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, broke: [], norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length }); knighted = a + 1; break; }
         else failedCandidates.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
       }
     }
     const REPAIR_RUNG = Number((process.argv.find(a => a.startsWith("--repair-rung=")) || "--repair-rung=1").slice(14));
-    if (!survivors.some(s => answerPass(s) > 0) && REPAIR_RUNG > 0) {
+    if (!survivors.some(solvesTarget) && REPAIR_RUNG > 0) {
       const tracePath = `${SB}/repair-trace-${id}.jsonl`;
       const repairSurvivors = await runRepairRung({
         id, inst, wd, cands, ctx, oracle,
         candidates: [
           ...failedCandidates,
-          ...survivors.filter(s => !answerPass(s)).map(s => ({ ...s, broke: [], lintFindings: [], classification: "oracle_miss" })),
+          ...survivors.filter(s => !solvesTarget(s)).map(s => ({ ...s, broke: [], lintFindings: [], classification: "oracle_miss" })),
         ],
         reset,
         applyEdits,
@@ -633,16 +640,16 @@ async function runInstance(inst) {
       });
       if (repairSurvivors.length) survivors.push(...repairSurvivors);
     }
-    if (!survivors.length || (oracle.nodes.length && !survivors.some(s => answerPass(s) > 0))) return { id, status: "no-survivor", note: `${survivors.length} clean of ${K}, ${repros.length} repros, ${repairCands.length} repair-cand, oracle ${oracle.nodes.length ? "miss" : "off"}, knight ${knighted ? "y" : "n"}` };
+    if (!survivors.length || (oracle.nodes.length && !survivors.some(solvesTarget))) return { id, status: "no-survivor", note: `${survivors.length} clean of ${K}, ${repros.length} repros, ${repairCands.length} repair-cand, oracle ${oracle.nodes.length ? "miss" : "off"}, knight ${knighted ? "y" : "n"}` };
     // rank: most repro-passes, then majority vote, then smallest diff
     const counts = {}; for (const s of survivors) counts[s.norm] = (counts[s.norm] || 0) + 1;
-    survivors.sort((a, b) => (answerPass(b) - answerPass(a)) || (targetPass(b) - targetPass(a)) || (counts[b.norm] - counts[a.norm]) || (a.size - b.size));
+    survivors.sort((a, b) => (answerPass(b, oracleTotal) - answerPass(a, oracleTotal)) || (targetPass(b) - targetPass(a)) || (counts[b.norm] - counts[a.norm]) || (a.size - b.size));
     const w = survivors[0];
     appendFileSync(`${SB}/predictions-select.jsonl`, JSON.stringify({ instance_id: id, model_patch: w.diff, model_name_or_path: "ser-select-v2" }) + "\n");
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }
 }
-export { callLLM, makeRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, defBlocks, localizedReproHints, repoCfg };
+export { callLLM, makeRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, defBlocks, localizedReproHints, repoCfg };
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {

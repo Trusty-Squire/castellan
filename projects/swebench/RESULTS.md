@@ -68,6 +68,41 @@ The repair rung now records:
 
 Trace files are written as `repair-trace-<instance_id>.jsonl`.
 
+## Requests Eight-Instance Audit
+
+Dataset file: `requests-instances.json`
+
+Command shape:
+
+```bash
+node projects/swebench/select.mjs --instances=requests-instances.json --k=1 --r=0 --pool=2 --model=qwen/qwen3-coder --repair-model=deepseek/deepseek-v4-pro --fallback-model=qwen/qwen3-coder --llm-timeout-ms=180000 --llm-attempts=1 --repair=1 --oracle=1 --oracle-repair=1 --knight=1 --repair-rung=2 --repair-records=1
+```
+
+Artifacts:
+
+- Selector predictions: `predictions-requests-repair-rung-8.jsonl`
+- Selector run records: `results-requests-repair-rung-8.json`
+- Official report: `ser-select-v2.requests-repair-rung-8.json`
+- Full log: `select-requests-repair-rung-8.log`
+
+Official result:
+
+- Total instances: `8`
+- Submitted predictions: `3`
+- Resolved: `2`
+- Unresolved submitted: `1`
+- Incomplete/no prediction: `5`
+- Resolved IDs: `psf__requests-1142`, `psf__requests-2931`
+- Unresolved submitted ID: `psf__requests-1921`
+
+Lessons:
+
+- `psf__requests-1921` exposed a selection-policy bug: the selector accepted partial oracle progress (`1/6`) as solved. The policy now requires all FAIL_TO_PASS nodes when an official oracle is available.
+- Several requests misses generated regression-clean patches with `0/N` oracle pass. This is a target-coverage problem, not a regression-repair problem.
+- Knight-generated repros can be too weak: `1766` and `2317` produced generated-repro passes while still failing the official oracle.
+- Provider reliability is material: DeepSeek returned empty responses and hit 180s timeouts during the run, forcing fallback calls and wasting minutes.
+- `psf__requests-1724` had a local reset/workspace hygiene error during selection; a manual reset of the worktree succeeded afterward.
+
 ## Clean Reproduction Commands
 
 Run from the repository root unless noted.

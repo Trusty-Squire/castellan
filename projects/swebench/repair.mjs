@@ -11,6 +11,12 @@ function classify(record, oracle) {
   return "unknown";
 }
 
+function solvesTarget(record, oracle) {
+  const oracleTotal = oracle.nodes?.length || 0;
+  if (!oracleTotal) return (record.reproPass || 0) > 0;
+  return (record.oraclePass || 0) >= oracleTotal;
+}
+
 function touchedFiles(diff) {
   return [
     ...diff.matchAll(/^\+\+\+ b\/(\S+)/gm),
@@ -104,7 +110,7 @@ export async function runRepairRung(opts) {
       };
       appendTrace(tracePath, trace);
       log(`  [${id.replace("psf__requests-", "#")}] REPAIR attempt ${attempt}: regressions=${failed.size}, oraclePass=${oraclePass}/${oracle.nodes?.length || 0}, lints=${lintFindings.length}`);
-      if (failed.size === 0 && (oracle.nodes?.length ? oraclePass > 0 : reproPass > 0)) {
+      if (failed.size === 0 && solvesTarget({ reproPass, oraclePass }, oracle)) {
         survivors.push({
           diff,
           sr: text.match(/###[\s\S]*?>>>>>>> REPLACE/g)?.join("\n\n") || "",

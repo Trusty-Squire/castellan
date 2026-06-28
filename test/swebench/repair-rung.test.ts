@@ -104,4 +104,14 @@ describe("SWE-bench repair rung utilities", () => {
     ).toBe(1);
     expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 4\n");
   });
+
+  it("requires all oracle nodes before treating a candidate as solved", async () => {
+    const { answerPass } = await loadMjs<{ answerPass: (candidate: { reproPass?: number; oraclePass?: number }, oracleTotal?: number) => number }>(
+      "projects/swebench/select.mjs",
+    );
+
+    expect(answerPass({ oraclePass: 1 }, 1)).toBe(1);
+    expect(answerPass({ oraclePass: 1 }, 6)).toBe(0);
+    expect(answerPass({ reproPass: 1, oraclePass: 0 }, 0)).toBe(1);
+  });
 });

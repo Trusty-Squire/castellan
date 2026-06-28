@@ -1,0 +1,114 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8475ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 15963ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.2
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 36299ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 6705ms
+  [#1142] selected (repros=0 survivors=1 reproPass=0 oraclePass=1 votes=1 REPAIRED@1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 79857ms
+  [#2931] selected (repros=0 survivors=1 reproPass=0 oraclePass=1 votes=1 REPAIRED@1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 31759ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 17601ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 68135ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.4
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 62385ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 40446ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.4
+    [llm] qwen/qwen3-coder attempt 1 ok 6731ms
+  [#5414] KNIGHT: libCalls probed, kRepros=1, gateRepros=1
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8822ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.4
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 67116ms
+  [#5414] KNIGHT attempt 0: applied, touches=requests/models.py, regressions=8, kReproPass=1/1, oraclePass=1/1
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 94689ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.7
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 37439ms
+  [#6028] KNIGHT: libCalls probed, kRepros=0, gateRepros=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 26165ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 16587ms
+  [#6028] KNIGHT attempt 0: applied, touches=requests/sessions.py, regressions=0, kReproPass=0/0, oraclePass=0/2
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 6551ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7812ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.2
+    [llm] deepseek/deepseek-v4-pro attempt 1 failed 180002ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8893ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.2
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 27060ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 6821ms
+  [#5414] no-survivor — 0 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight n
+  [#1724] error — Error: Command failed: cd /home/lunchbox/proj-cs/projects/swebench/wd-psf__requests-1724 && git reset --hard 1ba83c47ce7b177efe90d5f51f7760680f72eda0 -q && git
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4210ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 25305ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.4
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 39163ms
+  [#1766] KNIGHT: libCalls probed, kRepros=1, gateRepros=1
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 failed 180000ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 11727ms
+  [#6028] REPAIR attempt 1: regressions=0, oraclePass=0/2, lints=0
+  [#6028] no-survivor — 1 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 51930ms
+  [#1766] KNIGHT attempt 0: applied, touches=requests/auth.py, regressions=0, kReproPass=1/1, oraclePass=0/6
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 11290ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 28475ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 14762ms
+  [#1766] REPAIR attempt 0: regressions=0, oraclePass=0/6, lints=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.2
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 34525ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.4
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 7434ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 16740ms
+  [#1766] REPAIR attempt 1: regressions=0, oraclePass=0/6, lints=0
+  [#1766] no-survivor — 1 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight y
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 25961ms
+  [#1921] KNIGHT: libCalls probed, kRepros=1, gateRepros=1
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 3498ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 empty 14768ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 14639ms
+  [#2317] ORACLE attempt 0: touches=requests/sessions.py, regressions=0, oraclePass=0/8
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.4
+    [llm] qwen/qwen3-coder attempt 1 ok 9852ms
+  [#1921] KNIGHT attempt 0: applied, touches=requests/sessions.py, regressions=0, kReproPass=0/1, oraclePass=1/6
+  [#1921] selected (repros=0 survivors=1 reproPass=0 oraclePass=1 votes=1 KNIGHTED@1)
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 25605ms
+  [#2317] KNIGHT: libCalls probed, kRepros=1, gateRepros=1
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 24195ms
+  [#2317] KNIGHT attempt 0: applied, touches=requests/sessions.py, regressions=0, kReproPass=1/1, oraclePass=0/8
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 69999ms
+  [#2317] REPAIR attempt 0: regressions=0, oraclePass=0/8, lints=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.2
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 46187ms
+  [#2317] REPAIR attempt 1: regressions=0, oraclePass=0/8, lints=0
+  [#2317] no-survivor — 2 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight y
+
+=== SELECT v2 DONE === 3 patches / 8 (#1142:selected #2931:selected #5414:no-survivor #6028:no-survivor #1724:error #1766:no-survivor #1921:selected #2317:no-survivor)

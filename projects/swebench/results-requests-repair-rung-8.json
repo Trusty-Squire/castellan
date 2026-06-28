@@ -1,0 +1,84 @@
+[
+ {
+  "id": "psf__requests-1142",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 1,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "requests/models.py",
+   "requests/packages/urllib3/request.py",
+   "requests/utils.py",
+   "requests/adapters.py",
+   "requests/packages/urllib3/response.py"
+  ]
+ },
+ {
+  "id": "psf__requests-2931",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 1,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "requests/utils.py",
+   "requests/__init__.py",
+   "requests/models.py",
+   "requests/sessions.py",
+   "requests/packages/urllib3/request.py"
+  ]
+ },
+ {
+  "id": "psf__requests-5414",
+  "status": "no-survivor",
+  "note": "0 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "psf__requests-6028",
+  "status": "no-survivor",
+  "note": "1 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "psf__requests-1724",
+  "status": "error",
+  "note": "Error: Command failed: cd /home/lunchbox/proj-cs/projects/swebench/wd-psf__requests-1724 && git reset --hard 1ba83c47ce7b177efe90d5f51f7760680f72eda0 -q && git "
+ },
+ {
+  "id": "psf__requests-1766",
+  "status": "no-survivor",
+  "note": "1 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight y"
+ },
+ {
+  "id": "psf__requests-1921",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 1,
+  "oracleRepaired": 0,
+  "cands": [
+   "requests/sessions.py",
+   "requests/adapters.py",
+   "requests/models.py",
+   "requests/api.py",
+   "requests/packages/urllib3/util.py"
+  ]
+ },
+ {
+  "id": "psf__requests-2317",
+  "status": "no-survivor",
+  "note": "2 clean of 1, 0 repros, 0 repair-cand, oracle miss, knight y"
+ }
+]
