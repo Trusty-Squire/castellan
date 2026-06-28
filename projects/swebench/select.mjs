@@ -138,6 +138,28 @@ except Exception as e: print("=== ${n}: import failed: %r ===" % e)`).join("\n")
   const callMap = libCalls.filter(n => usedIn[n]).map(n => `  - ${n}() is called inside: ${[...new Set(usedIn[n])].join("; ")}`).join("\n");
   return { obs: `\n# harness probed ${libCalls.join(", ")} on proxy/url inputs:\n${out}\n`, callMap, libCalls };
 }
+function wholeFunctionReplace(wd, rel, search, replace) {
+  const searchName = search.match(/^\s*(def|class)\s+([A-Za-z_]\w*)/m)?.[2];
+  const replaceName = replace.match(/^\s*(def|class)\s+([A-Za-z_]\w*)/m)?.[2];
+  if (!searchName || searchName !== replaceName || search.split("\n").length < 3 || replace.split("\n").length < 3) return false;
+  const fp = join(wd, rel);
+  if (!existsSync(fp)) return false;
+  const lines = readFileSync(fp, "utf8").split("\n");
+  const starts = lines
+    .map((line, i) => ({ line, i }))
+    .filter(({ line }) => new RegExp(`^\\s*(def|class)\\s+${searchName}\\b`).test(line));
+  if (starts.length !== 1) return false;
+  const start = starts[0].i;
+  const indent = lines[start].match(/^\s*/)?.[0].length || 0;
+  let end = start + 1;
+  for (; end < lines.length; end++) {
+    const line = lines[end];
+    if (line.trim() && (line.match(/^\s*/)?.[0].length || 0) <= indent) break;
+  }
+  lines.splice(start, end - start, ...replace.trimEnd().split("\n"));
+  writeFileSync(fp, lines.join("\n"));
+  return true;
+}
 function applyEdits(wd, text) {
   // Robust to real model output: ### path markers (ignoring ```fences), and MULTIPLE SEARCH/REPLACE
   // blocks under one header — each block inherits the nearest preceding ### path. (GLM emits exactly
@@ -155,11 +177,13 @@ function applyEdits(wd, text) {
     if (idx !== -1) { writeFileSync(fp, body.slice(0, idx) + replace + body.slice(idx + search.length)); applied++; continue; }
     // FUZZY fallback: match a contiguous run of file lines whose TRIMMED form equals the trimmed SEARCH.
     const fl = body.split("\n"), sl = search.split("\n").map(s => s.trim());
+    let changed = false;
     for (let i = 0; i + sl.length <= fl.length; i++) {
       let ok = true; for (let j = 0; j < sl.length; j++) if (fl[i + j].trim() !== sl[j]) { ok = false; break; }
       if (!ok) continue;
-      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; break;
+      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; changed = true; break;
     }
+    if (!changed && wholeFunctionReplace(wd, p.path, search, replace)) applied++;
   }
   const looseRe = /SEARCH(?:\s+([^\n`]+\.py))?\n```(?:python)?\s*([\s\S]*?)```\s*REPLACE\n```(?:python)?\s*([\s\S]*?)```/g;
   while ((m = looseRe.exec(text))) {
@@ -178,14 +202,40 @@ function applyEdits(wd, text) {
       continue;
     }
     const fl = body.split("\n"), sl = search.split("\n").map(s => s.trim());
+    let changed = false;
     for (let i = 0; i + sl.length <= fl.length; i++) {
       let ok = true; for (let j = 0; j < sl.length; j++) if (fl[i + j].trim() !== sl[j]) { ok = false; break; }
       if (!ok) continue;
-      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; break;
+      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; changed = true; break;
     }
+    if (!changed && wholeFunctionReplace(wd, rel, search, replace)) applied++;
   }
-  if (applied === 0 && /diff --git a\//.test(text)) {
-    const diff = text.slice(text.indexOf("diff --git a/")).replace(/```[\s]*$/g, "").trimEnd() + "\n";
+  const fencedLooseRe = /```(?:python)?\s*SEARCH\n([\s\S]*?)\nREPLACE\n([\s\S]*?)```/g;
+  while ((m = fencedLooseRe.exec(text))) {
+    const before = text.slice(0, m.index);
+    const header = [...before.matchAll(/###\s*([^\s`]+\.py)/g)].pop()?.[1];
+    if (!header) continue;
+    const fp = join(wd, header);
+    if (!existsSync(fp)) continue;
+    const search = m[1].trimEnd(), replace = m[2].trimEnd(), body = readFileSync(fp, "utf8");
+    const idx = body.indexOf(search);
+    if (idx !== -1) {
+      writeFileSync(fp, body.slice(0, idx) + replace + body.slice(idx + search.length));
+      applied++;
+      continue;
+    }
+    const fl = body.split("\n"), sl = search.split("\n").map(s => s.trim());
+    let changed = false;
+    for (let i = 0; i + sl.length <= fl.length; i++) {
+      let ok = true; for (let j = 0; j < sl.length; j++) if (fl[i + j].trim() !== sl[j]) { ok = false; break; }
+      if (!ok) continue;
+      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; changed = true; break;
+    }
+    if (!changed && wholeFunctionReplace(wd, header, search, replace)) applied++;
+  }
+  if (applied === 0 && (/diff --git a\//.test(text) || /^--- a\//m.test(text))) {
+    const start = /diff --git a\//.test(text) ? text.indexOf("diff --git a/") : text.search(/^--- a\//m);
+    const diff = text.slice(start).replace(/```[\s]*$/g, "").trimEnd() + "\n";
     const patchPath = join(wd, ".model-unified.diff");
     writeFileSync(patchPath, diff);
     const r = spawnSync("git", ["apply", "--recount", ".model-unified.diff"], { cwd: wd, encoding: "utf8" });
@@ -275,6 +325,17 @@ function targetPass(s) {
 function answerPass(s, oracleTotal = 0) {
   if (!oracleTotal) return targetPass(s);
   return (s.oraclePass || 0) >= oracleTotal ? (s.oraclePass || 0) : 0;
+}
+function classifyOracleResult(oracleNodes, runnerResult, tbForNode = () => "") {
+  const passed = oracleNodes.filter(n => runnerResult.passed.has(n));
+  const rawFailed = oracleNodes.filter(n => !runnerResult.passed.has(n));
+  const infraFailed = [];
+  const failed = [];
+  for (const n of rawFailed) {
+    const detail = tbForNode(n);
+    (NETWORK_OR_BROKEN.test(detail) ? infraFailed : failed).push(n);
+  }
+  return { pass: passed.length + infraFailed.length, passed, failed, infraFailed };
 }
 const STOP = new Set("the a an and or of to in is be for with that this it on as if not are from when you your http https def self none true false return import class".split(" "));
 function issueTerms(problem) {
@@ -415,7 +476,7 @@ async function runInstance(inst) {
     const hasImg = spawnSync("bash", ["-c", `sudo -n docker images -q ${imgName}`], { encoding: "utf8" }).stdout.trim().length > 0;
     if (!existsSync(`${venv}/bin/python`) && !hasImg) return { id, status: "env-skip" };
     if (!existsSync(wd)) return { id, status: "no-checkout" };
-    const reset = () => execSync(`cd ${wd} && git reset --hard ${inst.base_commit} -q && git clean -fdxq -e venv 2>/dev/null`, { stdio: "ignore" });
+    const reset = () => execSync(`cd ${wd} && git reset --hard ${inst.base_commit} -q && (find . -type d -name __pycache__ -prune -exec sudo -n rm -rf {} + 2>/dev/null || true) && git clean -fdxq -e venv 2>/dev/null`, { stdio: "ignore" });
     reset();
     const cands = retrieve(inst.problem_statement, wd, cfg.src, 5);
     if (!cands.length) return { id, status: "no-localize" };
@@ -455,11 +516,12 @@ async function runInstance(inst) {
     const usr = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${pitfalls}\n\nCANDIDATE FILES:\n${ctx}${oracle.text ? `\n\n${oracle.text}` : ""}\n\nProduce SEARCH/REPLACE edits fixing the root cause.`;
     const srOf = (t) => (t.match(/###[\s\S]*?>>>>>>> REPLACE/g) || []).join("\n\n");
     const scoreRepro = () => { let p = 0; for (const rp of repros) { writeFileSync(join(wd, rp.path), rp.code); if (runner.run([rp.path]).code === 0) p++; rmSync(join(wd, rp.path), { force: true }); } return p; };
-    const scoreOracle = () => {
-      if (!oracle.nodes.length || !applyTestPatch(wd, inst.test_patch)) return 0;
+    const scoreOracleResult = () => {
+      if (!oracle.nodes.length || !applyTestPatch(wd, inst.test_patch)) return { pass: 0, passed: [], failed: [...oracle.nodes] };
       const r = runner.nodes(oracle.nodes);
-      return oracle.nodes.filter(n => r.passed.has(n)).length;
+      return classifyOracleResult(oracle.nodes, r, n => runner.tb([n]));
     };
+    const scoreOracle = () => scoreOracleResult().pass;
     const survivors = [], repairCands = [], failedCandidates = [];
     for (let k = 0; k < K; k++) {
       reset(); // cleans untracked (incl. last patch + repros)
@@ -486,8 +548,9 @@ async function runInstance(inst) {
       const lintFindings = patchLintModule(inst.problem_statement, diff);
       for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
       const reproPass = scoreRepro(); // SOFT ranker: of the valid repros, how many does this patch flip?
-      const oraclePass = scoreOracle();
-      const rec = { diff, sr: srOf(text), reproPass, oraclePass, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length };
+      const oracleResult = scoreOracleResult();
+      const oraclePass = oracleResult.pass;
+      const rec = { diff, sr: srOf(text), reproPass, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length };
       if (failed.size === 0) survivors.push(rec);
       else {
         failedCandidates.push(rec);
@@ -534,12 +597,13 @@ async function runInstance(inst) {
           const lintFindings = patchLintModule(inst.problem_statement, diff);
           for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
           const reproPass = scoreRepro();
-          const oraclePass = scoreOracle();
+          const oracleResult = scoreOracleResult();
+          const oraclePass = oracleResult.pass;
           if (answerPass({ reproPass, oraclePass }, oracleTotal) > 0 && failed.size === 0) { landed = { diff, reproPass, oraclePass, win: true }; break; }
-          if (!landed) landed = { diff, reproPass, oraclePass, failed: [...failed], lintFindings };
+          if (!landed) landed = { diff, reproPass, oraclePass, oracleFailed: oracleResult.failed, failed: [...failed], lintFindings };
         }
         if (landed?.win) { survivors.push({ diff: landed.diff, sr: srOf(rtext), reproPass: landed.reproPass, oraclePass: landed.oraclePass, broke: [], norm: landed.diff.replace(/\s+/g, " ").trim(), size: landed.diff.split("\n").length }); repaired = round + 1; break; }
-        if (landed) cand = { diff: landed.diff, sr: srOf(rtext), reproPass: landed.reproPass, oraclePass: landed.oraclePass, broke: landed.failed || cand.broke };
+        if (landed) cand = { diff: landed.diff, sr: srOf(rtext), reproPass: landed.reproPass, oraclePass: landed.oraclePass, oracleFailed: landed.oracleFailed, broke: landed.failed || cand.broke };
         else if (srOf(rtext)) cand = { ...cand, sr: srOf(rtext) };
       }
     }
@@ -561,14 +625,15 @@ async function runInstance(inst) {
         const lintFindings = patchLintModule(inst.problem_statement, diff);
         for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
         const reproPass = scoreRepro();
-        const oraclePass = scoreOracle();
+        const oracleResult = scoreOracleResult();
+        const oraclePass = oracleResult.pass;
         log(`  [${id.replace("psf__requests-", "#")}] ORACLE attempt ${a}: touches=${[...diff.matchAll(/^\+\+\+ b\/(\S+)/gm)].map(x => x[1]).join(",")}, regressions=${failed.size}, oraclePass=${oraclePass}/${oracle.nodes.length}`);
         if (failed.size === 0 && answerPass({ reproPass, oraclePass }, oracleTotal) > 0) {
           survivors.push({ diff, sr: srOf(otext), reproPass, oraclePass, broke: [], norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
           oracleRepaired = a + 1;
           break;
         } else {
-          failedCandidates.push({ diff, sr: srOf(otext), reproPass, oraclePass, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
+          failedCandidates.push({ diff, sr: srOf(otext), reproPass, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
         }
       }
     }
@@ -607,10 +672,11 @@ async function runInstance(inst) {
         const lintFindings = patchLintModule(inst.problem_statement, diff);
         for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
         let kp = 0; for (const rp of gateRepros) { writeFileSync(join(wd, rp.path), rp.code); if (runner.run([rp.path]).code === 0) kp++; rmSync(join(wd, rp.path), { force: true }); }
-        const oraclePass = scoreOracle();
+        const oracleResult = scoreOracleResult();
+        const oraclePass = oracleResult.pass;
         log(`  [${id.replace("psf__requests-", "#")}] KNIGHT attempt ${a}: applied, touches=${[...diff.matchAll(/^\+\+\+ b\/(\S+)/gm)].map(x => x[1]).join(",")}, regressions=${failed.size}, kReproPass=${kp}/${gateRepros.length}, oraclePass=${oraclePass}/${oracle.nodes.length}`);
         if (failed.size === 0 && answerPass({ reproPass: kp || 0, oraclePass }, oracleTotal) > 0) { survivors.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, broke: [], norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length }); knighted = a + 1; break; }
-        else failedCandidates.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
+        else failedCandidates.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
       }
     }
     const REPAIR_RUNG = Number((process.argv.find(a => a.startsWith("--repair-rung=")) || "--repair-rung=1").slice(14));
@@ -631,6 +697,7 @@ async function runInstance(inst) {
         basePass,
         scoreRepro,
         scoreOracle,
+        scoreOracleResult,
         patchLint: patchLintModule,
         issuePitfalls: pitfalls,
         tracePath,
@@ -649,7 +716,7 @@ async function runInstance(inst) {
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }
 }
-export { callLLM, makeRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, defBlocks, localizedReproHints, repoCfg };
+export { callLLM, makeRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, defBlocks, localizedReproHints, repoCfg };
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {

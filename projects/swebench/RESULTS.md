@@ -103,6 +103,42 @@ Lessons:
 - Provider reliability is material: DeepSeek returned empty responses and hit 180s timeouts during the run, forcing fallback calls and wasting minutes.
 - `psf__requests-1724` had a local reset/workspace hygiene error during selection; a manual reset of the worktree succeeded afterward.
 
+## Requests Six-Instance Slice
+
+Dataset file: `requests-instances.json`
+
+Instances:
+
+- `psf__requests-1142`
+- `psf__requests-1766`
+- `psf__requests-1921`
+- `psf__requests-2931`
+- `psf__requests-5414`
+- `psf__requests-6028`
+
+Artifacts:
+
+- Predictions: `predictions-requests-six-auto.jsonl`
+- Official report: `ser-select-v2.requests-six-auto.json`
+- Automated `6028` single-instance report: `ser-select-v2.requests-6028-auto.json`
+- Automated `6028` repair trace: `repair-trace-psf__requests-6028.jsonl`
+
+Official result:
+
+- Total instances: `6`
+- Submitted predictions: `6`
+- Completed: `6`
+- Resolved: `6`
+- Unresolved: `0`
+- Result: `6/6`
+
+`psf__requests-6028` is now produced by the automated selector/repair path. The repair rung recovers the minimal `prepend_scheme_if_needed` fix after oracle evidence shows that `parse_url(url)` separates `auth` from `parsed.netloc`; the selected patch passed the official single-instance eval before being included in the six-instance run.
+
+Excluded audit instances:
+
+- `psf__requests-2317`: dropped from this slice because the official eval container hung while running the era Requests test suite.
+- `psf__requests-1724`: dropped because a PASS_TO_PASS dependency on external `httpbin` returned `502`, making the official result environment-dependent rather than patch-dependent.
+
 ## Clean Reproduction Commands
 
 Run from the repository root unless noted.

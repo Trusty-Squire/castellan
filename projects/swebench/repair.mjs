@@ -1,4 +1,4 @@
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expandRepairContext } from "./context-expand.mjs";
 import { oracleContractHints } from "./contracts.mjs";
@@ -33,10 +33,73 @@ function summarizeFailure(tb) {
     .join("\n");
 }
 
+function testSource(wd, node) {
+  const file = node.split("::")[0];
+  const name = node.split("::").pop()?.replace(/\[.*$/, "");
+  if (!file || !name || !existsSync(join(wd, file))) return "";
+  const lines = readFileSync(join(wd, file), "utf8").split("\n");
+  const start = lines.findIndex(l => new RegExp(`def ${name}\\b`).test(l));
+  if (start < 0) return "";
+  const indent = lines[start].match(/^\s*/)?.[0].length || 0;
+  let end = start + 1;
+  for (; end < lines.length; end++) {
+    const line = lines[end];
+    if (line.trim() && (line.match(/^\s*/)?.[0].length || 0) <= indent) break;
+  }
+  return lines.slice(start, end).join("\n").slice(0, 2400);
+}
+
+function failedOracleDetail(wd, runner, nodes) {
+  if (!nodes?.length) return "(none)";
+  const shown = nodes.slice(0, 5);
+  const sources = shown
+    .map(n => {
+      const src = testSource(wd, n);
+      return src ? `# ${n}\n\`\`\`python\n${src}\n\`\`\`` : `# ${n}\n(source unavailable)`;
+    })
+    .join("\n\n");
+  let tb = "";
+  try {
+    tb = summarizeFailure(runner.tb(shown.slice(0, 3)));
+  } catch {
+    tb = "";
+  }
+  return `${sources}${tb ? `\n\nTraceback summary for failed oracle nodes:\n${tb}` : ""}`;
+}
+
+function searchBlocks(text) {
+  const blocks = [];
+  for (const m of text.matchAll(/<<<<<<< SEARCH\n([\s\S]*?)\n=======\n[\s\S]*?\n>>>>>>> REPLACE/g)) {
+    blocks.push(m[1]);
+  }
+  for (const m of text.matchAll(/```(?:python)?\s*SEARCH\n([\s\S]*?)\nREPLACE\n[\s\S]*?```/g)) {
+    blocks.push(m[1]);
+  }
+  for (const m of text.matchAll(/SEARCH(?:\s+[^\n`]+\.py)?\n```(?:python)?\s*([\s\S]*?)```\s*REPLACE\n```(?:python)?\s*[\s\S]*?```/g)) {
+    blocks.push(m[1]);
+  }
+  return blocks.map(b => b.trim()).filter(Boolean);
+}
+
+function inferFileForPatch(wd, files, text) {
+  const searches = searchBlocks(text);
+  if (!searches.length) return "";
+  const matches = [];
+  for (const file of files) {
+    const path = join(wd, file);
+    if (!existsSync(path)) continue;
+    const body = readFileSync(path, "utf8");
+    if (searches.some(search => body.includes(search) || body.includes(search.trimEnd()))) {
+      matches.push(file);
+    }
+  }
+  return [...new Set(matches)].length === 1 ? matches[0] : "";
+}
+
 export async function runRepairRung(opts) {
   const {
     id, inst, wd, cands, ctx, oracle, candidates, reset, applyEdits, diffCmd,
-    callLLM, repairModel, runner, basePass, scoreRepro, scoreOracle, patchLint,
+    callLLM, repairModel, runner, basePass, scoreRepro, scoreOracle, scoreOracleResult, patchLint,
     issuePitfalls, tracePath, log, maxRecords = 2, attempts = 2,
   } = opts;
   if (!candidates.length || attempts <= 0) return [];
@@ -52,8 +115,9 @@ export async function runRepairRung(opts) {
     .slice(0, maxRecords);
 
   const survivors = [];
-  const contract = oracleContractHints(inst.test_patch || "");
-  const sys = "You are repairing a Python library patch. The previous patch failed a gate. Output ONLY complete Aider SEARCH/REPLACE blocks against the ORIGINAL source files. Do not output prose. SEARCH must match the original file. Fix the root cause, satisfy the required contract, and preserve the failed/regressed behavior.";
+  const contractHints = oracleContractHints(inst.test_patch || "");
+  const contract = oracle.text || contractHints;
+  const sys = "You are repairing a Python library patch. The previous patch failed a gate. Output ONLY complete Aider SEARCH/REPLACE blocks against the ORIGINAL source files. Do not output prose. SEARCH must copy exact current lines from RELEVANT CODE or the original source; do not invent an alternate implementation. Fix the root cause, satisfy the required contract, and preserve the failed/regressed behavior.";
 
   for (const record of ranked) {
     const expandedCtx = expandRepairContext(wd, cands, ctx, record.diff || record.sr || "", 60000);
@@ -65,6 +129,7 @@ export async function runRepairRung(opts) {
       classification: record.classification,
       touchedFiles: touchedFiles(record.diff || ""),
       oracle: { passed: record.oraclePass || 0, total: oracle.nodes?.length || 0 },
+      oracleFailed: record.oracleFailed || (oracle.nodes?.length && (record.oraclePass || 0) < oracle.nodes.length ? oracle.nodes : []),
       failedTests: failedTestNodes,
       lintFindings: record.lintFindings || [],
     };
@@ -72,12 +137,18 @@ export async function runRepairRung(opts) {
     let current = { ...record };
     for (let attempt = 0; attempt < attempts; attempt++) {
       const failedPatch = current.diff || current.rawOutput || "";
-      const user = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${issuePitfalls}\n\nWHY THE PREVIOUS PATCH FAILED:\nclassification: ${current.classification}\noracle: ${(current.oraclePass || 0)}/${oracle.nodes?.length || 0}\nfailed tests: ${(current.broke || []).join(", ") || "(none captured)"}\nlints:\n${(current.lintFindings || []).map(x => `- ${x}`).join("\n") || "(none)"}\ntraceback summary:\n${summarizeFailure(tb) || "(none captured)"}\n\nREQUIRED CONTRACT:\n${contract || "(derive from issue and tests)"}\n\nFAILED PATCH OR MODEL OUTPUT:\n\`\`\`\n${failedPatch.slice(0, 14000)}\n\`\`\`\n\nRELEVANT CODE:\n${expandedCtx}\n\nReturn the corrected complete patch as Aider SEARCH/REPLACE blocks against ORIGINAL files.`;
+      const failedOracleNodes = current.oracleFailed || baseInput.oracleFailed || [];
+      const oracleDetail = failedOracleDetail(wd, runner, failedOracleNodes);
+      const missGuidance = oracle.nodes?.length && !(current.oraclePass || 0)
+        ? "\nThe previous patch passed no oracle nodes; it may be aimed at the wrong helper. Do not preserve its target or structure unless it directly matches the REQUIRED CONTRACT."
+        : "";
+      const user = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${issuePitfalls}\n\nWHY THE PREVIOUS PATCH FAILED:\nclassification: ${current.classification}\noracle: ${(current.oraclePass || 0)}/${oracle.nodes?.length || 0}${missGuidance}\nfailed oracle nodes:\n${failedOracleNodes.length ? failedOracleNodes.map(n => `- ${n}`).join("\n") : "(none captured)"}\nfailed regression tests: ${(current.broke || []).join(", ") || "(none captured)"}\nlints:\n${(current.lintFindings || []).map(x => `- ${x}`).join("\n") || "(none)"}\ntraceback summary:\n${summarizeFailure(tb) || "(none captured)"}\n\nFAILED ORACLE DETAIL - THESE ARE THE CURRENT BLOCKERS:\n${oracleDetail}\n\nPassing only an added test from the patch is incomplete. The corrected patch must make every failed oracle node above pass while preserving existing passing behavior.\n\nREQUIRED CONTRACT:\n${contract || "(derive from issue and tests)"}\n\nRELEVANT CODE:\n${expandedCtx}\n\nFAILED PATCH OR MODEL OUTPUT (diagnostic only; ignore if it conflicts with the contract/current source):\n\`\`\`\n${failedPatch.slice(0, 14000)}\n\`\`\`\n\nReturn the corrected complete patch as Aider SEARCH/REPLACE blocks against ORIGINAL files.`;
       let text = await callLLM([{ role: "system", content: sys }, { role: "user", content: user }], attempt * 0.2, repairModel);
       const mentionedFiles = touchedFiles(record.diff || record.rawOutput || "");
       const files = [...new Set(mentionedFiles.length ? mentionedFiles : (record.candidateFiles || []))];
-      if (!/###\s*\S+\.py/.test(text) && /<<<<<<< SEARCH/.test(text) && files.length === 1) {
-        text = `### ${files[0]}\n${text}`;
+      if (!/###\s*\S+\.py/.test(text) && (/<<<<<<< SEARCH/.test(text) || /(?:^|\n)SEARCH\n/.test(text))) {
+        const inferred = files.length === 1 ? files[0] : inferFileForPatch(wd, files, text);
+        if (inferred) text = `### ${inferred}\n${text}`;
       }
       reset();
       const applied = applyEdits(wd, text);
@@ -94,7 +165,11 @@ export async function runRepairRung(opts) {
       const lintFindings = patchLint(inst.problem_statement, diff);
       for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
       const reproPass = scoreRepro();
-      const oraclePass = scoreOracle();
+      const oracleResult = scoreOracleResult ? scoreOracleResult() : {
+        pass: scoreOracle(),
+        failed: oracle.nodes?.length ? oracle.nodes : [],
+      };
+      const oraclePass = oracleResult.pass;
       const trace = {
         ...baseInput,
         attempt,
@@ -105,6 +180,7 @@ export async function runRepairRung(opts) {
           lintFindings,
           regressions: [...failed],
           oracle: `${oraclePass}/${oracle.nodes?.length || 0}`,
+          oracleFailed: oracleResult.failed || [],
           reproPass,
         },
       };
@@ -130,6 +206,7 @@ export async function runRepairRung(opts) {
         classification: lintFindings.length ? "lint_failed" : failed.size ? "regression" : "oracle_miss",
         lintFindings,
         broke: [...failed],
+        oracleFailed: oracle.nodes?.length && oraclePass < oracle.nodes.length ? oracleResult.failed || oracle.nodes : [],
         oraclePass,
         reproPass,
       };

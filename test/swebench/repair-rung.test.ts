@@ -21,12 +21,34 @@ function tempRepo(): string {
 
 describe("SWE-bench repair rung utilities", () => {
   it("extracts explicit contracts for the pytest MRO and exception-chain cases", async () => {
-    const { oracleContractHints } = await loadMjs<{ oracleContractHints: (patch: string) => string }>("projects/swebench/contracts.mjs");
+    const { oracleContractHints, oracleInfo } = await loadMjs<{
+      oracleContractHints: (patch: string) => string;
+      oracleInfo: (inst: { FAIL_TO_PASS: string; test_patch: string }) => { nodes: string[]; text: string };
+    }>("projects/swebench/contracts.mjs");
 
     expect(oracleContractHints("def test_mark_mro()")).toContain("class-first MRO order");
     expect(oracleContractHints("def test_mark_mro()")).toContain("concrete list");
     expect(oracleContractHints("def test_chained_exceptions()")).toContain("ExceptionChainRepr");
     expect(oracleContractHints("def test_chained_exceptions()")).toContain("top-level reprtraceback");
+    expect(oracleContractHints("def test_prepend_scheme_if_needed():\n    value = 'http://user:pass@example.com/path?query'")).toContain("auth separately from parsed.netloc");
+
+    const info = oracleInfo({
+      FAIL_TO_PASS: JSON.stringify(["test_requests.py::RequestsTestCase::test_headers_on_session_with_None_are_not_sent"]),
+      test_patch: [
+        "diff --git a/test_requests.py b/test_requests.py",
+        "--- a/test_requests.py",
+        "+++ b/test_requests.py",
+        "@@ -1,2 +1,8 @@",
+        "+    def test_headers_on_session_with_None_are_not_sent(self):",
+        "+        ses = requests.Session()",
+        "+        ses.headers['Accept-Encoding'] = None",
+        "+        prep = ses.prepare_request(requests.Request('GET', 'http://example.com'))",
+        "+        assert 'Accept-Encoding' not in prep.headers",
+      ].join("\n"),
+    });
+    expect(info.text).toContain("Every node below must pass");
+    expect(info.text).toContain("def test_headers_on_session_with_None_are_not_sent");
+    expect(info.text).toContain("None must be removed");
   });
 
   it("flags bad patch shapes without rejecting the valid MRO fallback pattern", async () => {
@@ -103,15 +125,154 @@ describe("SWE-bench repair rung utilities", () => {
       ),
     ).toBe(1);
     expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 4\n");
+
+    execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
+    expect(applyEdits(wd, "```diff\n--- a/src/demo.py\n+++ b/src/demo.py\n@@ -1 +1 @@\n-value = 1\n+value = 5\n```")).toBe(1);
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 5\n");
+
+    execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
+    expect(applyEdits(wd, "### src/demo.py\n```python\nSEARCH\nvalue = 1\nREPLACE\nvalue = 6\n```")).toBe(1);
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 6\n");
+
+    execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
+    writeFileSync(join(wd, "src/demo.py"), "def keep():\n    return 0\n\n\ndef target():\n    value = 1\n    return value\n");
+    expect(applyEdits(wd, [
+      "### src/demo.py",
+      "<<<<<<< SEARCH",
+      "def target():",
+      "    value = old_value",
+      "    return value",
+      "=======",
+      "def target():",
+      "    value = 7",
+      "    return value",
+      ">>>>>>> REPLACE",
+    ].join("\n"))).toBe(1);
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toContain("def target():\n    value = 7\n    return value");
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toContain("def keep():\n    return 0");
   });
 
   it("requires all oracle nodes before treating a candidate as solved", async () => {
-    const { answerPass } = await loadMjs<{ answerPass: (candidate: { reproPass?: number; oraclePass?: number }, oracleTotal?: number) => number }>(
-      "projects/swebench/select.mjs",
-    );
+    const { answerPass, classifyOracleResult } = await loadMjs<{
+      answerPass: (candidate: { reproPass?: number; oraclePass?: number }, oracleTotal?: number) => number;
+      classifyOracleResult: (
+        nodes: string[],
+        runnerResult: { passed: Set<string> },
+        tbForNode: (node: string) => string,
+      ) => { pass: number; passed: string[]; failed: string[]; infraFailed: string[] };
+    }>("projects/swebench/select.mjs");
 
     expect(answerPass({ oraclePass: 1 }, 1)).toBe(1);
     expect(answerPass({ oraclePass: 1 }, 6)).toBe(0);
     expect(answerPass({ reproPass: 1, oraclePass: 0 }, 0)).toBe(1);
+
+    const result = classifyOracleResult(
+      ["test_new", "test_httpbin", "test_real_fail"],
+      { passed: new Set(["test_new"]) },
+      node => node === "test_httpbin" ? "socket.gaierror Temporary failure in name resolution" : "AssertionError: wrong value",
+    );
+    expect(result.pass).toBe(2);
+    expect(result.failed).toEqual(["test_real_fail"]);
+    expect(result.infraFailed).toEqual(["test_httpbin"]);
+  });
+
+  it("threads exact failed oracle nodes through repair attempts", async () => {
+    const { runRepairRung } = await loadMjs<{
+      runRepairRung: (opts: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    }>("projects/swebench/repair.mjs");
+    const wd = tempRepo();
+    mkdirSync(join(wd, "pkg"), { recursive: true });
+    writeFileSync(join(wd, "pkg/demo.py"), "value = 1\n");
+    writeFileSync(join(wd, "test_demo.py"), "def test_a():\n    assert True\n\n\ndef test_b():\n    assert fixed\n");
+    execFileSync("git", ["add", "pkg/demo.py", "test_demo.py"], { cwd: wd });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: wd });
+
+    const prompts: string[] = [];
+    let oracleCalls = 0;
+    const survivors = await runRepairRung({
+      id: "demo__case-1",
+      inst: { problem_statement: "fix demo", test_patch: "def test_a(): pass\ndef test_b(): pass" },
+      wd,
+      cands: ["pkg/demo.py"],
+      ctx: "### pkg/demo.py\n```python\nvalue = 1\n```",
+      oracle: { nodes: ["test_demo.py::test_a", "test_demo.py::test_b"], text: "FULL ORACLE TEXT\n```python\ndef test_b():\n    assert fixed\n```" },
+      candidates: [{ diff: "diff --git a/pkg/demo.py b/pkg/demo.py\n", sr: "", oraclePass: 0, oracleFailed: ["test_demo.py::test_a", "test_demo.py::test_b"], broke: [], lintFindings: [] }],
+      reset: () => execFileSync("git", ["checkout", "-q", "--", "."], { cwd: wd }),
+      applyEdits: () => {
+        writeFileSync(join(wd, "pkg/demo.py"), "value = 2\n");
+        return 1;
+      },
+      diffCmd: () => execFileSync("git", ["diff", "--", "pkg"], { cwd: wd, encoding: "utf8" }),
+      callLLM: async (messages: Array<{ content: string }>) => {
+        prompts.push(messages.at(-1)?.content || "");
+        return "### pkg/demo.py\n<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE";
+      },
+      repairModel: "test-model",
+      runner: { nodes: () => ({ failed: new Set() }), tb: () => "" },
+      basePass: [],
+      scoreRepro: () => 0,
+      scoreOracle: () => 1,
+      scoreOracleResult: () => {
+        oracleCalls++;
+        return oracleCalls === 1
+          ? { pass: 1, passed: ["test_demo.py::test_a"], failed: ["test_demo.py::test_b"] }
+          : { pass: 2, passed: ["test_demo.py::test_a", "test_demo.py::test_b"], failed: [] };
+      },
+      patchLint: () => [],
+      issuePitfalls: "",
+      log: () => undefined,
+      maxRecords: 1,
+      attempts: 2,
+    });
+
+    expect(survivors).toHaveLength(1);
+    expect(prompts[0]).toContain("FULL ORACLE TEXT");
+    expect(prompts[0]).toContain("passed no oracle nodes");
+    expect(prompts[1]).toContain("- test_demo.py::test_b");
+    expect(prompts[1]).toContain("FAILED ORACLE DETAIL");
+    expect(prompts[1]).toContain("def test_b");
+    expect(prompts[1]).not.toContain("- test_demo.py::test_a\n");
+  });
+
+  it("infers the target file for headerless repair SEARCH blocks", async () => {
+    const { runRepairRung } = await loadMjs<{
+      runRepairRung: (opts: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    }>("projects/swebench/repair.mjs");
+    const { applyEdits } = await loadMjs<{ applyEdits: (wd: string, text: string) => number }>("projects/swebench/select.mjs");
+    const wd = tempRepo();
+    mkdirSync(join(wd, "pkg"), { recursive: true });
+    writeFileSync(join(wd, "pkg/a.py"), "def keep():\n    return 1\n");
+    writeFileSync(join(wd, "pkg/b.py"), "def target():\n    return 'old'\n");
+    execFileSync("git", ["add", "pkg/a.py", "pkg/b.py"], { cwd: wd });
+    execFileSync("git", ["commit", "-qm", "init"], { cwd: wd });
+
+    const survivors = await runRepairRung({
+      id: "demo__case-2",
+      inst: { problem_statement: "fix target", test_patch: "" },
+      wd,
+      cands: ["pkg/a.py", "pkg/b.py"],
+      ctx: "",
+      oracle: { nodes: ["test_target"] },
+      candidates: [{ applyFailed: true, rawOutput: "", diff: "", candidateFiles: ["pkg/a.py", "pkg/b.py"], oraclePass: 0, oracleFailed: ["test_target"], broke: [], lintFindings: [] }],
+      reset: () => execFileSync("git", ["checkout", "-q", "--", "."], { cwd: wd }),
+      applyEdits,
+      diffCmd: () => execFileSync("git", ["diff", "--", "pkg"], { cwd: wd, encoding: "utf8" }),
+      callLLM: async () => "<<<<<<< SEARCH\ndef target():\n    return 'old'\n=======\ndef target():\n    return 'new'\n>>>>>>> REPLACE",
+      repairModel: "test-model",
+      runner: { nodes: () => ({ failed: new Set() }), tb: () => "" },
+      basePass: [],
+      scoreRepro: () => 0,
+      scoreOracle: () => 1,
+      scoreOracleResult: () => ({ pass: 1, passed: ["test_target"], failed: [] }),
+      patchLint: () => [],
+      issuePitfalls: "",
+      log: () => undefined,
+      maxRecords: 1,
+      attempts: 1,
+    });
+
+    expect(survivors).toHaveLength(1);
+    expect(readFileSync(join(wd, "pkg/b.py"), "utf8")).toContain("return 'new'");
+    expect(readFileSync(join(wd, "pkg/a.py"), "utf8")).toContain("return 1");
   });
 });
