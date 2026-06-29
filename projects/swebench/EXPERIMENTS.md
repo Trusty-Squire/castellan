@@ -1217,3 +1217,46 @@ Artifacts:
 - `results-sympy-12419-before-after-observe.json`
 - `select-sympy-12419-before-after-observe.log`
 - `repair-trace-sympy-12419-before-after-observe.jsonl`
+
+## 2026-06-29 — DeepSeek before/after oracle observation
+
+Question:
+
+- Does the stronger repair model convert `sympy__sympy-12419` once it receives both base-tree and
+  failed-candidate oracle assertion observations?
+
+Configuration:
+
+- Qwen generation, DeepSeek repair (`deepseek/deepseek-v4-pro`), qwen fallback.
+- Same lean single-instance shape: `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `knight=0`,
+  `repair-rung=2`, `repair-records=1`, `llm-timeout-ms=240000`, `llm-attempts=1`.
+- General before/after oracle assertion observation enabled.
+
+Result:
+
+- Local selected: `0/1`
+- Summary: `2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n`.
+- No official score was run because there was no selected patch.
+
+Observations:
+
+- Provider was usable for this focused probe: DeepSeek calls returned in roughly 132s, 71s, and 10s.
+- The repair trace again produced the same wrong semantic family:
+  `Identity._entry(i, j) -> KroneckerDelta(i, j)`.
+- Oracle remained `0/1`.
+
+Interpretation:
+
+- This is the strongest evidence so far that `12419` is a model semantic ceiling under the current
+  general harness, not an unresolved harness-signal issue.
+- Ruled out classes for this branch now include localization/context omission, runner mismatch,
+  patch-application failure for the produced edits, regression-gate gap, production-file noise, local
+  oracle observation loss, candidate-vs-base observation loss, and provider timeout for DeepSeek.
+- The next honest move is to widen official scoring or design a new general symbolic-reasoning/probing
+  mechanism. Do not add a `12419`-specific answer patch.
+
+Artifacts:
+
+- `results-sympy-12419-deepseek-before-after-observe.json`
+- `select-sympy-12419-deepseek-before-after-observe.log`
+- `repair-trace-sympy-12419-deepseek-before-after-observe.jsonl`
