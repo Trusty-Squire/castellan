@@ -781,3 +781,71 @@ Success criterion:
   `official pass`, `bounded infra pass`, `honest harness-class miss`, or `honest model-capability miss`.
   The benchmark is more valuable if it exposes where the harness still leaks signal than if it inflates a
   combined number.
+
+## 2026-06-29 — Mixed-repo 24 baseline: PASS_TO_PASS-bounded generalization
+
+Question:
+
+- Does the lean Requests/Pytest/Django configuration carry to a fresh mixed slice instead of another
+  saturated rollup?
+
+Configuration:
+
+- Dataset: `mixed-24-instances.json`, selected from SWE-bench Lite and excluding the already-solved
+  Requests/Pytest/Django instances.
+- Slice: 6 new Django, 6 new Pytest, 6 Sympy, 6 Pylint.
+- Model: `qwen/qwen3-coder` for generation and repair.
+- Lean run shape: `k=3`, `r=0`, `oracle=1`, `oracle-repair=1`, `repair-rung=2`, `repair-records=1-2`,
+  `knight=0`.
+- Harness mutation: bounded regression checks now prefer SWE-bench `PASS_TO_PASS` whenever present, for
+  every repo, falling back to discovered test files only when `PASS_TO_PASS` is absent. This keeps Sympy
+  and Pylint from accidentally collecting broad repo suites while preserving the official regression
+  contract.
+
+Results:
+
+| slice | local selected | official resolved from selected | notes |
+|---|---:|---:|---|
+| Django partial | 3/5 selected | 2/3 resolved | `django__django-11564` was interrupted during a provider timeout path before classification. |
+| Pytest fresh six | 3/6 selected | 2/3 resolved | `pytest-dev__pytest-5221` was a local oracle false positive. |
+| Sympy fresh six | 0/6 selected | n/a | Bounded validation ran cleanly; misses were oracle misses, not collection failures. |
+| Pylint fresh six | 3/6 selected | 3/3 resolved | Confirms the bounded generalization is not Pytest-only. |
+
+Official resolved IDs:
+
+- Django: `django__django-11179`, `django__django-11283`
+- Pytest: `pytest-dev__pytest-11143`, `pytest-dev__pytest-5227`
+- Pylint: `pylint-dev__pylint-5859`, `pylint-dev__pylint-7114`, `pylint-dev__pylint-7993`
+
+Artifacts:
+
+- Django partial selector: `results-mixed24-django-partial.json`,
+  `predictions-mixed24-partial-django-selected.jsonl`,
+  `ser-select-v2.mixed24-django-selected.json`
+- Non-Django selector: `mixed-24-nondjango-18-instances.json`,
+  `results-mixed24-nondjango18.json`,
+  `predictions-mixed24-nondjango18-selected.jsonl`,
+  `ser-select-v2.mixed24-nondjango18-selected.json`
+
+Interpretation:
+
+- The mixed baseline is `7` official resolved patches out of the `9` locally selected patches scored so
+  far, with `6` selected from the 18 non-Django instances and `5/6` of those passing officially.
+- The PASS_TO_PASS-bounded mutation is the right lean harness shape: it prevented broad Sympy/Pylint
+  collection problems without adding repo-specific patches.
+- Sympy is now the clear hard frontier. The failures were mostly clean-regression oracle misses; one case
+  touched a test file, so a future general guard should strongly discourage or reject test-only production
+  patches unless the issue explicitly asks for tests.
+- Local oracle remains useful but not authoritative. Two selected patches false-positived locally
+  (`django__django-11422`, `pytest-dev__pytest-5221`), so official scoring must stay in the loop before
+  recording resolved counts.
+
+Next steps:
+
+1. Run the missing `django__django-11564` as a focused single instance with the same lean config and a
+   90s LLM timeout cap, so the Django partial becomes a complete 6-instance row.
+2. Inspect Sympy traces for localization quality before adding repair depth. If candidate files are right,
+   the next mutation should be prompt/context shape for mathematical invariants, not more samples.
+3. Add a general candidate filter or prompt rule against test-file-only fixes for benchmark repair tasks.
+4. Re-score any new selected patches officially immediately, then assemble a complete mixed-24 table with
+   `official pass`, `official fail`, `interrupted/provider`, or `honest no-survivor`.

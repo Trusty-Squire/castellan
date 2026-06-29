@@ -1,0 +1,39 @@
+{
+    "total_instances": 6,
+    "submitted_instances": 6,
+    "completed_instances": 6,
+    "resolved_instances": 5,
+    "unresolved_instances": 1,
+    "empty_patch_instances": 0,
+    "error_instances": 0,
+    "completed_ids": [
+        "pylint-dev__pylint-5859",
+        "pylint-dev__pylint-7114",
+        "pylint-dev__pylint-7993",
+        "pytest-dev__pytest-11143",
+        "pytest-dev__pytest-5221",
+        "pytest-dev__pytest-5227"
+    ],
+    "incomplete_ids": [],
+    "empty_patch_ids": [],
+    "submitted_ids": [
+        "pylint-dev__pylint-5859",
+        "pylint-dev__pylint-7114",
+        "pylint-dev__pylint-7993",
+        "pytest-dev__pytest-11143",
+        "pytest-dev__pytest-5221",
+        "pytest-dev__pytest-5227"
+    ],
+    "resolved_ids": [
+        "pylint-dev__pylint-5859",
+        "pylint-dev__pylint-7114",
+        "pylint-dev__pylint-7993",
+        "pytest-dev__pytest-11143",
+        "pytest-dev__pytest-5227"
+    ],
+    "unresolved_ids": [
+        "pytest-dev__pytest-5221"
+    ],
+    "error_ids": [],
+    "schema_version": 2
+}

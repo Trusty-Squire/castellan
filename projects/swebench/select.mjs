@@ -564,7 +564,8 @@ async function runInstance(inst) {
     const localRunner = cfg.runner === "django" ? makeDjangoRunner(wd, venv) : makeRunner(wd, venv, false);
     // Drop deliberately-slow/infra integration tests that PASS but are unstable per-patch gates.
     const passing = (runner) => {
-      const nodes = cfg.runner === "django" ? listField(inst.PASS_TO_PASS) : testFiles;
+      const passToPass = listField(inst.PASS_TO_PASS);
+      const nodes = passToPass.length ? passToPass : testFiles;
       return [...runner.nodes(nodes).passed].filter(n => !isSlowOrInfraNode(n)).slice(0, 500);
     };
     // detect local-venv incompatibility (can't run the era's tests) → fall back to in-container gating

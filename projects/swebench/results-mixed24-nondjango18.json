@@ -1,0 +1,176 @@
+[
+ {
+  "id": "pytest-dev__pytest-11143",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/assertion/rewrite.py",
+   "src/_pytest/config/__init__.py",
+   "src/_pytest/python.py",
+   "src/_pytest/pathlib.py",
+   "src/_pytest/main.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-11148",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "pytest-dev__pytest-5103",
+  "status": "no-survivor",
+  "note": "2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "pytest-dev__pytest-5221",
+  "status": "selected",
+  "survivors": 2,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 2,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/setuponly.py",
+   "src/_pytest/fixtures.py",
+   "src/_pytest/python.py",
+   "src/_pytest/unittest.py",
+   "src/_pytest/doctest.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-5227",
+  "status": "selected",
+  "survivors": 3,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 3,
+  "votes": 3,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/junitxml.py",
+   "src/_pytest/logging.py",
+   "src/_pytest/assertion/rewrite.py",
+   "src/_pytest/reports.py",
+   "src/_pytest/pastebin.py"
+  ]
+ },
+ {
+  "id": "pytest-dev__pytest-5413",
+  "status": "no-survivor",
+  "note": "1 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-11400",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-11870",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-11897",
+  "status": "no-survivor",
+  "note": "1 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-12171",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-12236",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-12419",
+  "status": "no-survivor",
+  "note": "1 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "pylint-dev__pylint-5859",
+  "status": "selected",
+  "survivors": 2,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "pylint/testutils/configuration_test.py",
+   "pylint/testutils/lint_module_test.py",
+   "pylint/checkers/misc.py",
+   "pylint/utils/utils.py",
+   "pylint/pyreverse/vcg_printer.py"
+  ]
+ },
+ {
+  "id": "pylint-dev__pylint-6506",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "pylint-dev__pylint-7080",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "pylint-dev__pylint-7114",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "pylint/lint/pylinter.py",
+   "pylint/checkers/base/basic_checker.py",
+   "pylint/checkers/refactoring/refactoring_checker.py",
+   "pylint/checkers/classes/class_checker.py",
+   "pylint/checkers/similar.py"
+  ]
+ },
+ {
+  "id": "pylint-dev__pylint-7228",
+  "status": "no-survivor",
+  "note": "3 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "pylint-dev__pylint-7993",
+  "status": "selected",
+  "survivors": 3,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "pylint/testutils/lint_module_test.py",
+   "pylint/testutils/configuration_test.py",
+   "pylint/lint/base_options.py",
+   "pylint/reporters/text.py",
+   "pylint/lint/pylinter.py"
+  ]
+ }
+]

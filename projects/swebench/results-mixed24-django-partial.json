@@ -1,0 +1,69 @@
+[
+ {
+  "id": "django__django-11099",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "django__django-11133",
+  "status": "no-survivor",
+  "note": "1 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "django__django-11179",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "django/db/models/deletion.py",
+   "django/contrib/admin/options.py",
+   "django/db/models/fields/related_descriptors.py",
+   "django/contrib/contenttypes/fields.py",
+   "django/db/models/query.py"
+  ]
+ },
+ {
+  "id": "django__django-11283",
+  "status": "selected",
+  "survivors": 4,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "django/contrib/auth/migrations/0011_update_proxy_permissions.py",
+   "django/contrib/auth/migrations/0001_initial.py",
+   "django/db/migrations/autodetector.py",
+   "django/db/migrations/executor.py",
+   "django/conf/global_settings.py"
+  ]
+ },
+ {
+  "id": "django__django-11422",
+  "status": "selected",
+  "survivors": 2,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 1,
+  "votes": 1,
+  "repaired": 0,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "django/utils/autoreload.py",
+   "django/core/management/__init__.py",
+   "django/core/management/commands/runserver.py",
+   "django/test/runner.py",
+   "django/core/management/base.py"
+  ]
+ }
+]
