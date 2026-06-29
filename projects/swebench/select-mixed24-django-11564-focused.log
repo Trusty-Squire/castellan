@@ -1,0 +1,17 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 27931ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 6576ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 9952ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 10283ms
+  [django__django-11564] ORACLE attempt 0: touches=django/templatetags/static.py, regressions=0, oraclePass=1/2
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5617ms
+  [django__django-11564] REPAIR attempt 0: regressions=0, oraclePass=1/2, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 37296ms
+  [django__django-11564] no-survivor — 3 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+
+=== SELECT v2 DONE === 0 patches / 1 (django__django-11564:no-survivor)

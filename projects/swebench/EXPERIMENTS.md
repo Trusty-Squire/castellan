@@ -806,7 +806,7 @@ Results:
 
 | slice | local selected | official resolved from selected | notes |
 |---|---:|---:|---|
-| Django partial | 3/5 selected | 2/3 resolved | `django__django-11564` was interrupted during a provider timeout path before classification. |
+| Django fresh six | 3/6 selected | 2/3 resolved | `django__django-11564` was rerun as a focused single and ended as an honest no-survivor at 1/2 oracle. |
 | Pytest fresh six | 3/6 selected | 2/3 resolved | `pytest-dev__pytest-5221` was a local oracle false positive. |
 | Sympy fresh six | 0/6 selected | n/a | Bounded validation ran cleanly; misses were oracle misses, not collection failures. |
 | Pylint fresh six | 3/6 selected | 3/3 resolved | Confirms the bounded generalization is not Pytest-only. |
@@ -822,6 +822,8 @@ Artifacts:
 - Django partial selector: `results-mixed24-django-partial.json`,
   `predictions-mixed24-partial-django-selected.jsonl`,
   `ser-select-v2.mixed24-django-selected.json`
+- Django focused completion: `results-mixed24-django-11564-focused.json`,
+  `select-mixed24-django-11564-focused.log`
 - Non-Django selector: `mixed-24-nondjango-18-instances.json`,
   `results-mixed24-nondjango18.json`,
   `predictions-mixed24-nondjango18-selected.jsonl`,
@@ -829,8 +831,8 @@ Artifacts:
 
 Interpretation:
 
-- The mixed baseline is `7` official resolved patches out of the `9` locally selected patches scored so
-  far, with `6` selected from the 18 non-Django instances and `5/6` of those passing officially.
+- The mixed baseline is now fully classified across all 24 instances: `9` local selections, `7` official
+  resolved from those selections, and `15` honest no-survivors.
 - The PASS_TO_PASS-bounded mutation is the right lean harness shape: it prevented broad Sympy/Pylint
   collection problems without adding repo-specific patches.
 - Sympy is now the clear hard frontier. The failures were mostly clean-regression oracle misses; one case
@@ -842,10 +844,8 @@ Interpretation:
 
 Next steps:
 
-1. Run the missing `django__django-11564` as a focused single instance with the same lean config and a
-   90s LLM timeout cap, so the Django partial becomes a complete 6-instance row.
-2. Inspect Sympy traces for localization quality before adding repair depth. If candidate files are right,
+1. Inspect Sympy traces for localization quality before adding repair depth. If candidate files are right,
    the next mutation should be prompt/context shape for mathematical invariants, not more samples.
-3. Add a general candidate filter or prompt rule against test-file-only fixes for benchmark repair tasks.
-4. Re-score any new selected patches officially immediately, then assemble a complete mixed-24 table with
+2. Add a general candidate filter or prompt rule against test-file-only fixes for benchmark repair tasks.
+3. Re-score any new selected patches officially immediately, then assemble a complete mixed-24 table with
    `official pass`, `official fail`, `interrupted/provider`, or `honest no-survivor`.
