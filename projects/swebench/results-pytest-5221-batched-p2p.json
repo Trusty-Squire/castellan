@@ -1,0 +1,21 @@
+[
+ {
+  "id": "pytest-dev__pytest-5221",
+  "status": "selected",
+  "survivors": 1,
+  "repros": 0,
+  "reproPass": 0,
+  "oraclePass": 2,
+  "votes": 1,
+  "repaired": 1,
+  "knighted": 0,
+  "oracleRepaired": 0,
+  "cands": [
+   "src/_pytest/setuponly.py",
+   "src/_pytest/fixtures.py",
+   "src/_pytest/python.py",
+   "src/_pytest/unittest.py",
+   "src/_pytest/doctest.py"
+  ]
+ }
+]

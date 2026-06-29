@@ -99,17 +99,23 @@ function makeRunner(wd, venv, useC, img, flags = "") {
   // it can write /testbed (ephemeral --rm; only /work is mounted, read-only → no host pollution).
   // --network none keeps network tests failing fast (measured 15x: 62s->4s).
   const PY = "/opt/miniconda3/envs/testbed/bin/python";
+  const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+  const shArgs = (items) => items.map(shQuote).join(" ");
   const writeDiff = () => { try { writeFileSync(join(wd, ".gate.diff"), execSync(`cd ${wd} && git diff`, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }) || "\n"); } catch { writeFileSync(join(wd, ".gate.diff"), "\n"); } };
-  const dock = (a) => `sudo -n docker run --rm --network none -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v ${wd}:/work:ro ${img} bash -c 'cd /testbed && git apply -p1 --recount /work/.gate.diff 2>/dev/null; cp /work/test_repro_*.py /work/test_knight_*.py . 2>/dev/null; ${PY} -m pytest -p no:cacheprovider ${flags} ${a}'`;
+  const dock = (a) => {
+    const script = `cd /testbed && git apply -p1 --recount /work/.gate.diff 2>/dev/null; cp /work/test_repro_*.py /work/test_knight_*.py . 2>/dev/null; ${PY} -m pytest -p no:cacheprovider ${flags} ${a}`;
+    return `sudo -n docker run --rm --network none -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v ${wd}:/work:ro ${img} bash -lc ${shQuote(script)}`;
+  };
   return {
-    nodes: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`-v --tb=no ${f.join(" ")}`)], { encoding: "utf8", timeout: 12 * 60000 }); const o = (r.stdout || "") + (r.stderr || ""); const passed = new Set(), failed = new Set(); for (const m of o.matchAll(/^(\S+::\S+)\s+(PASSED|FAILED|ERROR)/gm)) (m[2] === "PASSED" ? passed : failed).add(m[1]); if (r.status !== 0 && failed.size === 0) for (const n of f) failed.add(n); for (const n of failed) passed.delete(n); return { code: r.status, passed, failed }; },
-    run: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`-q --no-header ${f.join(" ")}`)], { encoding: "utf8", timeout: 6 * 60000 }); const o = (r.stdout || "") + (r.stderr || ""); return { code: r.status, failed: new Set([...o.matchAll(/^FAILED (\S+)/gm)].map(m => m[1])), out: o }; },
-    tb: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`--tb=short -q ${f.join(" ")}`)], { encoding: "utf8", timeout: 6 * 60000 }); return ((r.stdout || "") + (r.stderr || "")); },
+    nodes: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`-v --tb=no ${shArgs(f)}`)], { encoding: "utf8", timeout: 12 * 60000 }); const o = (r.stdout || "") + (r.stderr || ""); const passed = new Set(), failed = new Set(); for (const m of o.matchAll(/^(\S+::\S+)\s+(PASSED|FAILED|ERROR)/gm)) (m[2] === "PASSED" ? passed : failed).add(m[1]); if (r.status !== 0 && failed.size === 0) for (const n of f) failed.add(n); for (const n of failed) passed.delete(n); return { code: r.status, passed, failed }; },
+    run: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`-q --no-header ${shArgs(f)}`)], { encoding: "utf8", timeout: 6 * 60000 }); const o = (r.stdout || "") + (r.stderr || ""); return { code: r.status, failed: new Set([...o.matchAll(/^FAILED (\S+)/gm)].map(m => m[1])), out: o }; },
+    tb: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`--tb=short -q ${shArgs(f)}`)], { encoding: "utf8", timeout: 6 * 60000 }); return ((r.stdout || "") + (r.stderr || "")); },
     py: (code) => { writeFileSync(join(wd, "_probe.py"), code); const r = spawnSync("bash", ["-c", `sudo -n docker run --rm --network none -e HOME=/tmp -v ${wd}:/work:ro ${img} bash -c 'cd /testbed && ${PY} /work/_probe.py'`], { encoding: "utf8", timeout: 3 * 60000 }); rmSync(join(wd, "_probe.py"), { force: true }); return ((r.stdout || "") + (r.stderr || "")).slice(0, 2000); },
     compile: (f) => {
       if (!f.length) return "";
       writeDiff();
-      const r = spawnSync("bash", ["-c", `sudo -n docker run --rm --network none -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v ${wd}:/work:ro ${img} bash -c 'cd /testbed && git apply -p1 --recount /work/.gate.diff 2>/dev/null; ${PY} -m py_compile ${f.join(" ")}'`], { encoding: "utf8", timeout: 2 * 60000 });
+      const script = `cd /testbed && git apply -p1 --recount /work/.gate.diff 2>/dev/null; ${PY} -m py_compile ${shArgs(f)}`;
+      const r = spawnSync("bash", ["-c", `sudo -n docker run --rm --network none -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v ${wd}:/work:ro ${img} bash -lc ${shQuote(script)}`], { encoding: "utf8", timeout: 2 * 60000 });
       return r.status === 0 ? "" : ((r.stdout || "") + (r.stderr || "")).slice(0, 1000);
     },
   };
@@ -454,6 +460,19 @@ function isSlowOrInfraNode(node) {
   // still run them when its environment is stable.
   return /TestTimeout|connect_timeout|total_timeout|test_errors\[|doesnotexist|test_system_ssl|test_requests_after_timeout|test_connection_error/.test(node);
 }
+function runNodesBatched(runner, nodes, batchSize = 5) {
+  if (!nodes?.length) return { code: 0, passed: new Set(), failed: new Set() };
+  const passed = new Set(), failed = new Set();
+  let code = 0;
+  for (let i = 0; i < nodes.length; i += batchSize) {
+    const r = runner.nodes(nodes.slice(i, i + batchSize));
+    if (r.code) code = r.code;
+    for (const n of r.passed || []) passed.add(n);
+    for (const n of r.failed || []) failed.add(n);
+  }
+  for (const n of failed) passed.delete(n);
+  return { code, passed, failed };
+}
 const STOP = new Set("the a an and or of to in is be for with that this it on as if not are from when you your http https def self none true false return import class".split(" "));
 function issueTerms(problem) {
   const t = new Set();
@@ -611,7 +630,8 @@ async function runInstance(inst) {
     // (a dir, which pytest collects recursively, or a root test file) — repo-parametric via cfg.
     const testFiles = cfg.testRoots.filter(t => existsSync(join(wd, t)));
     const img = `swebench/sweb.eval.x86_64.${id.replace("__", "_1776_")}:latest`; // requests repo id
-    const localRunner = cfg.runner === "django" ? makeDjangoRunner(wd, venv) : makeRunner(wd, venv, false);
+    const localRunnerRaw = cfg.runner === "django" ? makeDjangoRunner(wd, venv) : makeRunner(wd, venv, false);
+    const localRunner = { ...localRunnerRaw, nodes: (f) => runNodesBatched(localRunnerRaw, f) };
     // Drop deliberately-slow/infra integration tests that PASS but are unstable per-patch gates.
     const passing = (runner) => {
       const passToPass = listField(inst.PASS_TO_PASS);
@@ -621,7 +641,8 @@ async function runInstance(inst) {
     // detect local-venv incompatibility (can't run the era's tests) → fall back to in-container gating
     let basePass = passing(localRunner);
     const useC = cfg.runner !== "django" && ((cfg.preferContainer && hasImg) || (!basePass.length && testFiles.length > 0));
-    const runner = cfg.runner === "django" ? localRunner : makeRunner(wd, venv, useC, img, cfg.flags);
+    const rawRunner = cfg.runner === "django" ? localRunnerRaw : makeRunner(wd, venv, useC, img, cfg.flags);
+    const runner = { ...rawRunner, nodes: (f) => runNodesBatched(rawRunner, f) };
     if (useC) basePass = passing(runner);
     const ORACLE = Number((process.argv.find(a => a.startsWith("--oracle=")) || "--oracle=0").slice(9));
     const oracle = ORACLE ? oracleInfoModule(inst) : { nodes: [], text: "" };
@@ -849,7 +870,7 @@ async function runInstance(inst) {
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }
 }
-export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, defBlocks, localizedReproHints, repoCfg, sourceHintsFromTestPatch };
+export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, runNodesBatched, defBlocks, localizedReproHints, repoCfg, sourceHintsFromTestPatch };
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {

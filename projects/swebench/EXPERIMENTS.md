@@ -1382,3 +1382,49 @@ Artifacts:
 - `select-pytest-fp-compile-gate.log`
 - `ser-select-v2.pytest-fp-compile-gate.json`
 - `repair-trace-pytest-fp-compile-gate-11143.jsonl`
+
+## 2026-06-29 — Batched Pytest PASS_TO_PASS gate
+
+Question:
+
+- Why did `pytest-dev__pytest-5221` sometimes select a patch that official scoring rejected, even after
+  container-preferred Pytest gates and `py_compile`?
+
+Failure classification:
+
+- Runner/environment mismatch inside the local verifier: the container runner passed all PASS_TO_PASS node
+  IDs through one shell command without robust handling for parametrized node IDs and long Pytest command
+  groups.
+- Base PASS_TO_PASS discovery for `5221` returned an empty or incomplete `basePass`, so the regression gate
+  did not include the show-fixtures tests that official eval later failed.
+
+General harness mutation:
+
+- Shell-quote test node/path arguments when invoking the container runner.
+- Run `runner.nodes()` in bounded batches and merge passed/failed sets, with failed status still winning.
+- Use batch size `5`, which recovers the relevant show-fixtures PASS_TO_PASS nodes without the full cost of
+  one Docker run per node.
+
+Focused probe:
+
+- Instance: `pytest-dev__pytest-5221`
+- Same lean qwen config: `k=3`, `r=0`, `oracle=1`, `oracle-repair=1`, `repair-rung=2`, `knight=0`.
+- Direct verifier check: the previously losing full-run patch now fails the local regression gate on seven
+  show-fixtures PASS_TO_PASS nodes.
+- Focused selector result: selected after repair (`REPAIRED@1`).
+- Official eval of selected patch: `1/1` resolved, `0` errors.
+
+Interpretation:
+
+- This closes a real harness signal-loss path: PASS_TO_PASS was present in the benchmark metadata, but the
+  local runner command shape prevented it from being used reliably.
+- The fix is general for Pytest-style parametrized node IDs and long PASS_TO_PASS sets.
+- Next step is another full mixed-24 run with the batched gate. Expected score should be `>=7/24` if prior
+  resolved patches remain stable and `5221` keeps resolving.
+
+Artifacts:
+
+- `predictions-pytest-5221-batched-p2p.jsonl`
+- `results-pytest-5221-batched-p2p.json`
+- `select-pytest-5221-batched-p2p.log`
+- `ser-select-v2.pytest-5221-batched-p2p.json`

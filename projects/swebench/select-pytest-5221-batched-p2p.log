@@ -1,0 +1,11 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 11582ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8099ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 6899ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 8441ms
+  [pytest-dev__pytest-5221] selected (repros=0 survivors=1 reproPass=0 oraclePass=2 votes=1 REPAIRED@1)
+
+=== SELECT v2 DONE === 1 patches / 1 (pytest-dev__pytest-5221:selected)
