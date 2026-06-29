@@ -1047,3 +1047,49 @@ Artifacts:
 - `results-sympy-12419-no-test-retrieve.json`
 - `select-sympy-12419-no-test-retrieve.log`
 - `repair-trace-sympy-12419-no-test-retrieve.jsonl`
+
+## 2026-06-29 — Sympy 12419 strong repair + Identity contract
+
+Question:
+
+- Once `sympy__sympy-12419` has clean production localization and class context, is the remaining miss
+  solved by stronger repair or by a clearer oracle-derived contract?
+
+Strong repair probe:
+
+- Repair model: `deepseek/deepseek-v4-pro`
+- Timeout: `240000ms`
+- Config otherwise lean: qwen generation, `k=3`, `r=0`, `oracle=1`, `oracle-repair=1`, `knight=0`,
+  `repair-rung=2`, `repair-records=1`
+- Result: `0/1`, no survivor.
+- DeepSeek was operationally healthy and produced clean production patches, but stayed in the same
+  semantic family: `KroneckerDelta(i, j)` or `Piecewise((1, Eq(i, j)), (0, True))`; oracle stayed `0/1`.
+
+Contract mutation:
+
+- Added oracle-derived hints for `test_Identity` with `Sum(In[i, j], ...)`:
+  - symbolic `Identity(n)[i, j]` must not collapse to `S.Zero`,
+  - numeric diagonal/off-diagonal behavior must be preserved,
+  - full and nested sums over symbolic entries must evaluate to `n`.
+- Qwen rerun result: still `0/1`, no survivor.
+- Qwen's explanation improved ("symbolic equality") but the patch remained semantically wrong:
+  `if Eq(i, j): return S.One else S.Zero`, which still treats symbolic equality as a branch condition
+  instead of returning a summable symbolic entry.
+
+Interpretation:
+
+- This is now a clean semantic miss after ruling out localization, class context, test-file pollution,
+  provider instability for DeepSeek, and basic contract omission.
+- The next harness-shaped move is an observation/probe loop for this exact behavior: run `Identity(n)[i,j]`,
+  `KroneckerDelta(i,j)`, `Piecewise(...).doit()`, and the target `Sum(...)` in the era environment, then
+  feed the observed symbolic behavior back to repair. That stays within the project thesis: replace model
+  recall with objective runtime facts.
+
+Artifacts:
+
+- `results-sympy-12419-deepseek-repair.json`
+- `select-sympy-12419-deepseek-repair.log`
+- `repair-trace-sympy-12419-deepseek-repair.jsonl`
+- `results-sympy-12419-identity-contract.json`
+- `select-sympy-12419-identity-contract.log`
+- `repair-trace-sympy-12419-identity-contract.jsonl`

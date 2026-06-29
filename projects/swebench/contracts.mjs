@@ -51,6 +51,12 @@ export function oracleContractHints(testPatch = "") {
     hints.push("- Deserialization must reconstruct ExceptionChainRepr so isinstance(longrepr, ExceptionChainRepr), sections, chain length, descriptions, and toterminal() all work for both TestReport and CollectReport.");
     hints.push("- Existing deserialization failure behavior for unknown reprentry types must still raise the original RuntimeError.");
   }
+  if (/def test_Identity/.test(testPatch) && /Sum\(In\[i, j\]/.test(testPatch)) {
+    hints.push("- For symbolic indices i and j, Identity(n)[i, j] must remain a symbolic Kronecker-delta-like entry, not collapse to S.Zero from Python object inequality.");
+    hints.push("- Numeric Identity entries must preserve existing behavior: diagonal entries are 1 and off-diagonal entries are 0.");
+    hints.push("- Summing all symbolic entries Sum(Identity(n)[i, j], i=0..n-1, j=0..n-1) must evaluate to n after substituting n=3.");
+    hints.push("- Nested sums over the same Identity entry must also evaluate to n; the fix must work with SymPy's summation/doit path, not only direct indexing.");
+  }
   return hints.join("\n");
 }
 

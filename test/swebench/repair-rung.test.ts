@@ -95,6 +95,9 @@ describe("SWE-bench repair rung utilities", () => {
     expect(oracleContractHints("def test_chained_exceptions()")).toContain("ExceptionChainRepr");
     expect(oracleContractHints("def test_chained_exceptions()")).toContain("top-level reprtraceback");
     expect(oracleContractHints("def test_prepend_scheme_if_needed():\n    value = 'http://user:pass@example.com/path?query'")).toContain("auth separately from parsed.netloc");
+    expect(oracleContractHints("def test_Identity():\n    assert Sum(In[i, j], (i, 0, n-1), (j, 0, n-1)).subs(n,3).doit() == 3")).toContain(
+      "symbolic Kronecker-delta-like entry",
+    );
 
     const info = oracleInfo({
       FAIL_TO_PASS: JSON.stringify(["test_requests.py::RequestsTestCase::test_headers_on_session_with_None_are_not_sent"]),
