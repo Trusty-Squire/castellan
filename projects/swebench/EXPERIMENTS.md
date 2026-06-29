@@ -1093,3 +1093,42 @@ Artifacts:
 - `results-sympy-12419-identity-contract.json`
 - `select-sympy-12419-identity-contract.log`
 - `repair-trace-sympy-12419-identity-contract.jsonl`
+
+## 2026-06-29 — General oracle assertion observation
+
+Question:
+
+- Can the Identity-specific contract experiment be replaced with a general harness feature that observes
+  oracle assertion behavior in the target runtime?
+
+Harness mutation:
+
+- Removed the `test_Identity`-specific default contract hint from `contracts.mjs`; the experiment remains
+  recorded, but the default harness no longer hardcodes that case.
+- Added `oracleAssertionProbes()` / `oracleAssertionObservation()` to the repair rung:
+  - reconstruct added oracle assertion setup from the test patch,
+  - evaluate assertion sides and whole assertions with the runner's era-correct Python,
+  - feed observed values into repair as verifier feedback.
+- This is general oracle-derived observation, not an Identity/Sympy-specific answer patch.
+
+Focused probe:
+
+- Instance: `sympy__sympy-12419`
+- The observation correctly reported:
+  - `In[i, j]` evaluates to `0`,
+  - both target `Sum(...)` expressions evaluate to `0`,
+  - expected side evaluates to `3`.
+- Qwen rerun result: `0/1`, no survivor.
+- Repair output still stayed in the wrong family: `Piecewise((S.One, Eq(i, j)), (S.Zero, True))`.
+
+Interpretation:
+
+- The harness feature is the right general shape and supplies the missing runtime facts.
+- Cheap qwen still failed to use those facts on this case. The remaining fair test is one reliable
+  strong repair run with the observation signal included.
+
+Artifacts:
+
+- `results-sympy-12419-oracle-observe.json`
+- `select-sympy-12419-oracle-observe.log`
+- `repair-trace-sympy-12419-oracle-observe.jsonl`

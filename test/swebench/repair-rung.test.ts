@@ -95,9 +95,6 @@ describe("SWE-bench repair rung utilities", () => {
     expect(oracleContractHints("def test_chained_exceptions()")).toContain("ExceptionChainRepr");
     expect(oracleContractHints("def test_chained_exceptions()")).toContain("top-level reprtraceback");
     expect(oracleContractHints("def test_prepend_scheme_if_needed():\n    value = 'http://user:pass@example.com/path?query'")).toContain("auth separately from parsed.netloc");
-    expect(oracleContractHints("def test_Identity():\n    assert Sum(In[i, j], (i, 0, n-1), (j, 0, n-1)).subs(n,3).doit() == 3")).toContain(
-      "symbolic Kronecker-delta-like entry",
-    );
 
     const info = oracleInfo({
       FAIL_TO_PASS: JSON.stringify(["test_requests.py::RequestsTestCase::test_headers_on_session_with_None_are_not_sent"]),
@@ -116,6 +113,28 @@ describe("SWE-bench repair rung utilities", () => {
     expect(info.text).toContain("Every node below must pass");
     expect(info.text).toContain("def test_headers_on_session_with_None_are_not_sent");
     expect(info.text).toContain("None must be removed");
+  });
+
+  it("extracts oracle assertion probes from added test patch assertions", async () => {
+    const { oracleAssertionProbes } = await loadMjs<{
+      oracleAssertionProbes: (inst: { test_patch: string }) => Array<{ setup: string; expr: string }>;
+    }>("projects/swebench/repair.mjs");
+
+    const probes = oracleAssertionProbes({
+      test_patch: [
+        "diff --git a/pkg/tests/test_demo.py b/pkg/tests/test_demo.py",
+        " def test_demo():",
+        "     value = make_value()",
+        "+    observed = transform(value)",
+        "+    assert observed == 3",
+        "+    assert observed != 0",
+      ].join("\n"),
+    });
+
+    expect(probes).toEqual([
+      { setup: "value = make_value()\nobserved = transform(value)", expr: "observed == 3" },
+      { setup: "value = make_value()\nobserved = transform(value)", expr: "observed != 0" },
+    ]);
   });
 
   it("flags bad patch shapes without rejecting the valid MRO fallback pattern", async () => {

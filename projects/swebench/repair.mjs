@@ -67,6 +67,91 @@ function failedOracleDetail(wd, runner, nodes) {
   return `${sources}${tb ? `\n\nTraceback summary for failed oracle nodes:\n${tb}` : ""}`;
 }
 
+function oracleAssertionProbes(inst, limit = 4) {
+  const patch = inst.test_patch || "";
+  const probes = [];
+  let inTest = false;
+  let setup = [];
+  for (const raw of patch.split("\n")) {
+    if (!/^[ +]/.test(raw)) continue;
+    const prefix = raw[0];
+    const line = raw.slice(1);
+    if (/^\s*def test_/.test(line)) {
+      inTest = true;
+      setup = [];
+      continue;
+    }
+    if (!inTest) continue;
+    if (/^\s*def test_/.test(line) || /^diff --git /.test(line)) {
+      inTest = false;
+      setup = [];
+      continue;
+    }
+    const body = line.replace(/^    /, "");
+    if (!body.trim()) continue;
+    if (prefix === "+" && /^\s*assert\s+/.test(body)) {
+      probes.push({ setup: setup.join("\n"), expr: body.replace(/^\s*assert\s+/, "").trim() });
+      if (probes.length >= limit) break;
+    } else if (!/^\s*assert\s+/.test(body)) {
+      setup.push(body);
+    }
+  }
+  return probes;
+}
+
+function oracleAssertionObservation(inst, runner) {
+  const probes = oracleAssertionProbes(inst);
+  if (!probes.length || !runner?.py) return "";
+  const pkg = (inst.repo || "").split("/")[1]?.replace(/-/g, "_") || "";
+  const setupImports = [
+    "import traceback",
+    pkg ? `try:\n    import ${pkg}\nexcept Exception as e:\n    print("IMPORT ${pkg} failed", repr(e))` : "",
+    pkg ? `try:\n    from ${pkg} import *\nexcept Exception:\n    pass` : "",
+    "try:\n    n, m, i, j, k, x, y, z, t, a, b = symbols('n m i j k x y z t a b')\nexcept Exception:\n    pass",
+  ].filter(Boolean).join("\n");
+  const code = `${setupImports}
+
+def _show(label, expr, ns):
+    print("=== " + label + " ===")
+    print("expr:", expr)
+    try:
+        value = eval(expr, ns, ns)
+        print("value:", repr(value))
+        try: print("type:", type(value).__name__)
+        except Exception: pass
+        try: print("doit:", repr(value.doit()))
+        except Exception: pass
+    except Exception as e:
+        print("raised:", type(e).__name__ + ": " + str(e))
+
+def _run():
+${probes.map((p, i) => {
+  const setup = p.setup.trim() ? p.setup.split("\n").map(l => `    ${l}`).join("\n") : "    pass";
+  const expr = JSON.stringify(p.expr);
+  const parts = [];
+  const eq = p.expr.match(/^(.+?)\s*(==|!=)\s*(.+)$/);
+  if (eq) {
+    parts.push(eq[1].trim(), eq[3].trim(), p.expr);
+  } else {
+    parts.push(p.expr);
+  }
+  return `    ns = globals().copy()
+    try:
+${setup.split("\n").map(l => `        ${l.replace(/^    /, "")}`).join("\n")}
+    except Exception as e:
+        print("=== probe ${i + 1} setup failed ===")
+        print(type(e).__name__ + ": " + str(e))
+        return
+    locals().update(ns)
+${parts.map((part, j) => `    _show("probe ${i + 1}.${j + 1}", ${JSON.stringify(part)}, locals())`).join("\n")}`;
+}).join("\n")}
+
+_run()
+`;
+  const out = runner.py(code).trim();
+  return out ? `ORACLE ASSERTION OBSERVATIONS (executed from oracle test setup in the target environment):\n${out}` : "";
+}
+
 function searchBlocks(text) {
   const blocks = [];
   for (const m of text.matchAll(/<<<<<<< SEARCH\n([\s\S]*?)\n=======\n[\s\S]*?\n>>>>>>> REPLACE/g)) {
@@ -151,7 +236,9 @@ export async function runRepairRung(opts) {
       const missGuidance = oracle.nodes?.length && !(current.oraclePass || 0)
         ? "\nThe previous patch passed no oracle nodes; it may be aimed at the wrong helper. Do not preserve its target or structure unless it directly matches the REQUIRED CONTRACT."
         : "";
-      const user = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${issuePitfalls}\n\nWHY THE PREVIOUS PATCH FAILED:\nclassification: ${current.classification}\noracle: ${(current.oraclePass || 0)}/${oracle.nodes?.length || 0}${missGuidance}\nfailed oracle nodes:\n${failedOracleNodes.length ? failedOracleNodes.map(n => `- ${n}`).join("\n") : "(none captured)"}\nfailed regression tests: ${(current.broke || []).join(", ") || "(none captured)"}\nlints:\n${(current.lintFindings || []).map(x => `- ${x}`).join("\n") || "(none)"}\ntraceback summary:\n${summarizeFailure(tb) || "(none captured)"}\n\nFAILED ORACLE DETAIL - THESE ARE THE CURRENT BLOCKERS:\n${oracleDetail}\n\nPassing only an added test from the patch is incomplete. The corrected patch must make every failed oracle node above pass while preserving existing passing behavior.\n\nEDITABLE PRODUCTION FILES:\n${editableFiles.length ? editableFiles.map(f => `- ${f}`).join("\n") : "(use only production files shown in RELEVANT CODE)"}\n\nREQUIRED CONTRACT:\n${contract || "(derive from issue and tests)"}\n\nRELEVANT CODE:\n${expandedCtx}\n\nFAILED PATCH OR MODEL OUTPUT (diagnostic only; ignore if it conflicts with the contract/current source):\n\`\`\`\n${failedPatch.slice(0, 14000)}\n\`\`\`\n\nReturn the corrected complete patch as Aider SEARCH/REPLACE blocks against ORIGINAL production files only.`;
+      reset();
+      const oracleObservation = oracleAssertionObservation(inst, runner);
+      const user = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${issuePitfalls}\n\nWHY THE PREVIOUS PATCH FAILED:\nclassification: ${current.classification}\noracle: ${(current.oraclePass || 0)}/${oracle.nodes?.length || 0}${missGuidance}\nfailed oracle nodes:\n${failedOracleNodes.length ? failedOracleNodes.map(n => `- ${n}`).join("\n") : "(none captured)"}\nfailed regression tests: ${(current.broke || []).join(", ") || "(none captured)"}\nlints:\n${(current.lintFindings || []).map(x => `- ${x}`).join("\n") || "(none)"}\ntraceback summary:\n${summarizeFailure(tb) || "(none captured)"}\n\nFAILED ORACLE DETAIL - THESE ARE THE CURRENT BLOCKERS:\n${oracleDetail}${oracleObservation ? `\n\n${oracleObservation}` : ""}\n\nPassing only an added test from the patch is incomplete. The corrected patch must make every failed oracle node above pass while preserving existing passing behavior.\n\nEDITABLE PRODUCTION FILES:\n${editableFiles.length ? editableFiles.map(f => `- ${f}`).join("\n") : "(use only production files shown in RELEVANT CODE)"}\n\nREQUIRED CONTRACT:\n${contract || "(derive from issue and tests)"}\n\nRELEVANT CODE:\n${expandedCtx}\n\nFAILED PATCH OR MODEL OUTPUT (diagnostic only; ignore if it conflicts with the contract/current source):\n\`\`\`\n${failedPatch.slice(0, 14000)}\n\`\`\`\n\nReturn the corrected complete patch as Aider SEARCH/REPLACE blocks against ORIGINAL production files only.`;
       let text = await callLLM([{ role: "system", content: sys }, { role: "user", content: user }], attempt * 0.2, repairModel);
       const files = editableFiles;
       if (!/###\s*\S+\.py/.test(text) && (/<<<<<<< SEARCH/.test(text) || /(?:^|\n)SEARCH\n/.test(text))) {
@@ -232,3 +319,5 @@ export function writeRepairRecords(tracePath, records) {
   if (!tracePath) return;
   writeFileSync(tracePath, records.map(r => JSON.stringify(r)).join("\n") + (records.length ? "\n" : ""));
 }
+
+export { oracleAssertionProbes, oracleAssertionObservation };
