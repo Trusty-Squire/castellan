@@ -323,7 +323,7 @@ function applyEdits(wd, text) {
   }
   return applied;
 }
-const NETWORK_OR_BROKEN = /ConnectionError|ConnectTimeout|MaxRetryError|NewConnectionError|getaddrinfo|socket\.|Failed to establish|no tests ran|cannot collect|SyntaxError|ImportError|ModuleNotFound|INTERNALERROR/i;
+const NETWORK_OR_BROKEN = /ConnectionError|ConnectTimeout|MaxRetryError|NewConnectionError|getaddrinfo|socket\.(?:gaierror|timeout|error)|Temporary failure in name resolution|Failed to establish|Name or service not known|Network is unreachable/i;
 function listField(v) {
   if (Array.isArray(v)) return v;
   if (typeof v === "string") { try { const j = JSON.parse(v); return Array.isArray(j) ? j : []; } catch { return []; } }
@@ -404,6 +404,13 @@ function applyTestPatch(wd, patch) {
   writeFileSync(join(wd, ".oracle-tests.diff"), patch);
   const r = spawnSync("git", ["apply", "--recount", ".oracle-tests.diff"], { cwd: wd, encoding: "utf8" });
   rmSync(join(wd, ".oracle-tests.diff"), { force: true });
+  return r.status === 0;
+}
+function applyUnifiedPatch(wd, patch) {
+  if (!patch || !patch.trim()) return false;
+  writeFileSync(join(wd, ".candidate.diff"), patch);
+  const r = spawnSync("git", ["apply", "--recount", ".candidate.diff"], { cwd: wd, encoding: "utf8" });
+  rmSync(join(wd, ".candidate.diff"), { force: true });
   return r.status === 0;
 }
 function touchedPyFiles(diff) {
@@ -910,7 +917,24 @@ async function runInstance(inst) {
     // rank: most repro-passes, then majority vote, then smallest diff
     const counts = {}; for (const s of survivors) counts[s.norm] = (counts[s.norm] || 0) + 1;
     survivors.sort((a, b) => (answerPass(b, oracleTotal) - answerPass(a, oracleTotal)) || (targetPass(b) - targetPass(a)) || (counts[b.norm] - counts[a.norm]) || (a.size - b.size));
-    const w = survivors[0];
+    let w = null;
+    for (const candidate of survivors) {
+      reset();
+      if (!applyUnifiedPatch(wd, candidate.diff)) continue;
+      const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
+      addCompileFailure(failed, runner, touchedPyFiles(candidate.diff));
+      const lintFindings = patchLintModule(inst.problem_statement, candidate.diff);
+      for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
+      const reproPass = scoreRepro();
+      const oracleResult = scoreOracleResult();
+      const oraclePass = oracleResult.pass;
+      if (failed.size === 0 && answerPass({ reproPass, oraclePass }, oracleTotal) > 0) {
+        w = { ...candidate, reproPass, oraclePass };
+        break;
+      }
+      log(`  [${id.replace("psf__requests-", "#")}] FINAL recheck rejected: regressions=${failed.size}, oraclePass=${oraclePass}/${oracleTotal}, lints=${lintFindings.length}`);
+    }
+    if (!w) return { id, status: "no-survivor", note: `${survivors.length} local survivors rejected by final clean recheck` };
     appendFileSync(`${SB}/predictions-select.jsonl`, JSON.stringify({ instance_id: id, model_patch: w.diff, model_name_or_path: "ser-select-v2" }) + "\n");
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }

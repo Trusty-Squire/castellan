@@ -1546,3 +1546,52 @@ Artifacts:
 - `results-pytest-modified-p2p-filter.json`
 - `select-pytest-modified-p2p-filter.log`
 - `ser-select-v2.pytest-modified-p2p-filter.json`
+
+## 2026-06-29 — Final clean recheck and strict infra oracle
+
+Question:
+
+- Why did the mixed-24 modified-P2P run still submit two official false positives?
+
+Result before mutation:
+
+- Full selector submitted `9/24`; official eval resolved `7/9`, honest full-slice `7/24`.
+- Official unresolved: `django-11422`, `pytest-5221`.
+
+Failure classification:
+
+- `django-11422`: oracle/local false positive. The local oracle failure traceback contained ordinary paths
+  such as `/usr/lib/python3.12/socket.py`; the infra classifier matched `socket.` and incorrectly counted
+  the failed oracle node as infra-pass.
+- `pytest-5221`: oracle/local false positive and selection variance. The selected full-run patch added
+  `[function scope]` to verbose output; official `test_show_fixtures_verbose` expects function-scoped
+  fixtures to stay unannotated.
+
+General harness mutation:
+
+- Tightened the infra regex from broad `socket.`/import-error matching to concrete network exception
+  names/messages.
+- Added a final clean-tree recheck before writing a prediction: apply the selected unified diff from base,
+  run unchanged PASS_TO_PASS, then apply the official `test_patch` and rerun oracle nodes.
+
+Focused result:
+
+- Slice: `django-11422`, `pytest-5221`
+- Same lean qwen config.
+- Selector result after mutation: `0/2` submitted.
+- `django-11422` now correctly classifies as oracle miss/regression instead of selected.
+- `pytest-5221` now rejects the bad `[function scope]` patch (`oraclePass=0/2`, regressions=7), but did
+  not recover the earlier focused good patch in this run.
+
+Interpretation:
+
+- This improves honesty and removes two official false positives.
+- Next recovery target is `pytest-5221` selection variance: the harness has evidence a narrow official-valid
+  patch exists, but current sampling/repair does not reliably rediscover it after strict oracle parsing.
+
+Artifacts:
+
+- `predictions-mixed24-modified-p2p-qwen.jsonl`
+- `results-mixed24-modified-p2p-qwen.json`
+- `select-mixed24-modified-p2p-qwen.log`
+- `ser-select-v2.mixed24-modified-p2p-qwen.json`

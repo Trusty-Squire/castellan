@@ -386,6 +386,14 @@ describe("SWE-bench repair rung utilities", () => {
     expect(result.failed).toEqual(["test_real_fail"]);
     expect(result.infraFailed).toEqual(["test_httpbin"]);
 
+    const socketPathResult = classifyOracleResult(
+      ["test_real_fail"],
+      { passed: new Set() },
+      () => "AssertionError: PosixPath('/usr/lib/python3.12/socket.py') not found",
+    );
+    expect(socketPathResult.pass).toBe(0);
+    expect(socketPathResult.failed).toEqual(["test_real_fail"]);
+
     expect(isSlowOrInfraNode("test_requests.py::RequestsTestCase::test_connection_error")).toBe(true);
     expect(isSlowOrInfraNode("test_requests.py::RequestsTestCase::test_basic_building")).toBe(false);
     expect(djangoNode("test_callable_path (model_fields.test_filepathfield.FilePathFieldTests)")).toBe(
