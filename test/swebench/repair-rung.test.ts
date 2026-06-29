@@ -160,6 +160,7 @@ describe("SWE-bench repair rung utilities", () => {
         ].join("\n"),
       ),
     ).toContain("FilePathField.formfield() must preserve form_class=forms.FilePathField while evaluating callable path.");
+    expect(patchLint("fix anything", "+=======\n+def broken():\n+    pass")).toContain("Patch contains leaked conflict or SEARCH/REPLACE delimiter lines.");
   });
 
   it("injects contract-required serializer symbols for exception-chain repair", async () => {

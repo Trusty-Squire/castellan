@@ -1,0 +1,40 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7165ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 30799ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 16672ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 21998ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9679ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 33616ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8336ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 15450ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 8893ms
+  [pytest-dev__pytest-11148] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5576ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 14911ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 6915ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 12020ms
+  [pytest-dev__pytest-5221] selected (repros=0 survivors=3 reproPass=0 oraclePass=2 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 ok 35879ms
+  [pytest-dev__pytest-11143] ORACLE attempt 0: touches=src/_pytest/assertion/rewrite.py, regressions=1, oraclePass=1/1
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 11094ms
+  [pytest-dev__pytest-11143] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 6309ms
+  [pytest-dev__pytest-11143] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [pytest-dev__pytest-11143] no-survivor — 0 clean of 3, 0 repros, 2 repair-cand, oracle miss, knight n
+
+=== SELECT v2 DONE === 1 patches / 3 (pytest-dev__pytest-11143:no-survivor pytest-dev__pytest-11148:no-survivor pytest-dev__pytest-5221:selected)

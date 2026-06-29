@@ -1,6 +1,9 @@
 export function patchLint(problem, diff) {
   const p = problem.toLowerCase();
   const issues = [];
+  if (/^\+?(<<<<<<<|=======|>>>>>>>)(?:\s|$)/m.test(diff)) {
+    issues.push("Patch contains leaked conflict or SEARCH/REPLACE delimiter lines.");
+  }
   if (/\bmro\b/.test(p) && /mark/.test(p) && /class/.test(p) && /pytestmark/.test(diff)) {
     if (/reversed\s*\(\s*obj\.__mro__\s*\)/.test(diff)) {
       issues.push("MRO marks patch reverses obj.__mro__; expected class-before-base MRO order.");

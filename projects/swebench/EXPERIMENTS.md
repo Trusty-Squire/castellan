@@ -1324,3 +1324,61 @@ Artifacts:
 - `select-mixed24-current-qwen.log`
 - `ser-select-v2.mixed24-current-qwen.json`
 - `repair-trace-mixed24-current-*.jsonl`
+
+## 2026-06-29 — Pytest false-positive verifier tightening
+
+Question:
+
+- Why did the current mixed-24 run submit three Pytest patches that failed official scoring, and what is
+  the smallest general harness mutation that reduces those false positives?
+
+Failure classification before mutation:
+
+- `pytest-dev__pytest-11143`: patch-application/output-integrity gap. The selected patch leaked malformed
+  edit/conflict delimiter text into `src/_pytest/assertion/rewrite.py`, and official eval failed with a
+  syntax/import crash plus broad PASS_TO_PASS failures.
+- `pytest-dev__pytest-11148`: runner/environment mismatch. The local gate was less authoritative than the
+  SWE-bench image path and selected a patch that official eval rejected.
+- `pytest-dev__pytest-5221`: oracle/local false positive on the first focused rerun; after runner tightening
+  the remaining selected patch changed shape and resolved officially.
+
+General harness mutations:
+
+- Pytest now prefers the SWE-bench container runner when the instance image exists, matching official
+  environment semantics instead of relying on the host era venv.
+- `runner.nodes()` treats collection/syntax crashes with no parsed failed nodes as failures, rather than
+  an empty failure set.
+- If a node appears in both parsed passed and failed sets, failed wins. This handles nested pytester output
+  where inner test output can contain misleading `PASSED ...` lines.
+- Candidate gates now run `py_compile` on touched production Python files in the same runner environment,
+  including repair-rung candidates.
+- Patch lint now rejects leaked conflict/Aider delimiter lines (`<<<<<<<`, `=======`, `>>>>>>>`) as a general
+  patch-integrity failure.
+
+Focused result:
+
+- Rerun slice: `pytest-dev__pytest-11143`, `pytest-dev__pytest-11148`, `pytest-dev__pytest-5221`
+- Config: same lean qwen-only setup as mixed-24 (`k=3`, `r=0`, `pool=2`, `oracle=1`,
+  `oracle-repair=1`, `repair-rung=2`, `knight=0`, one LLM attempt).
+- Selector after mutation:
+  - `11143`: no-survivor; compile/regression evidence blocks malformed assertion-rewrite patches.
+  - `11148`: no-survivor; no clean oracle survivor under container gating.
+  - `5221`: selected.
+- Official eval for selected `5221`: `1/1` resolved, `0` errors.
+
+Interpretation:
+
+- This is the desired verifier-first outcome: reduce false submissions without adding per-instance answer
+  patches or stronger models.
+- The previous Pytest false-positive cluster moved from `0/3` official on submitted false positives to
+  `1/1` official on the only remaining submitted patch, with two bad submissions suppressed.
+- Next wider check should rerun mixed-24 with the tightened harness. Expected honest score should improve
+  from `6/24` to at least `7/24` if the prior resolved set is stable and `5221` remains selected/resolved.
+
+Artifacts:
+
+- `predictions-pytest-fp-compile-gate.jsonl`
+- `results-pytest-fp-compile-gate.json`
+- `select-pytest-fp-compile-gate.log`
+- `ser-select-v2.pytest-fp-compile-gate.json`
+- `repair-trace-pytest-fp-compile-gate-11143.jsonl`

@@ -78,6 +78,8 @@ function pytestNodes(wd, venv, files, timeoutS = 12) {
   const out = (r.stdout || "") + (r.stderr || "");
   const passed = new Set(), failed = new Set();
   for (const m of out.matchAll(/^(\S+::\S+)\s+(PASSED|FAILED|ERROR)/gm)) (m[2] === "PASSED" ? passed : failed).add(m[1]);
+  if (r.status !== 0 && failed.size === 0) for (const f of files) failed.add(f);
+  for (const f of failed) passed.delete(f);
   return { code: r.status, passed, failed };
 }
 // Old instances (e.g. requests 2.9.0) need their ERA python — the local venv (3.12) can't even import
@@ -88,6 +90,7 @@ function makeRunner(wd, venv, useC, img, flags = "") {
     nodes: (f) => pytestNodes(wd, venv, f), run: (f) => pytest(wd, venv, f),
     tb: (f) => { const r = spawnSync(`${venv}/bin/python`, ["-m", "pytest", "-p", "no:cacheprovider", "--tb=short", "-q", ...f], { cwd: wd, encoding: "utf8", timeout: 4 * 60000 }); return ((r.stdout || "") + (r.stderr || "")); },
     py: (code) => { writeFileSync(join(wd, "_probe.py"), code); const r = spawnSync(`${venv}/bin/python`, ["_probe.py"], { cwd: wd, encoding: "utf8", timeout: 3 * 60000 }); rmSync(join(wd, "_probe.py"), { force: true }); return ((r.stdout || "") + (r.stderr || "")).slice(0, 2000); },
+    compile: (f) => { if (!f.length) return ""; const r = spawnSync(`${venv}/bin/python`, ["-m", "py_compile", ...f], { cwd: wd, encoding: "utf8", timeout: 2 * 60000 }); return r.status === 0 ? "" : ((r.stdout || "") + (r.stderr || "")).slice(0, 1000); },
   };
   // PATCH-IN-CONTAINER (not bind-mount-checkout): a full `-v wd:/testbed` mount of a RAW git checkout
   // breaks setuptools_scm/editable installs — e.g. pytest collection dies with "Invalid version
@@ -99,10 +102,16 @@ function makeRunner(wd, venv, useC, img, flags = "") {
   const writeDiff = () => { try { writeFileSync(join(wd, ".gate.diff"), execSync(`cd ${wd} && git diff`, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }) || "\n"); } catch { writeFileSync(join(wd, ".gate.diff"), "\n"); } };
   const dock = (a) => `sudo -n docker run --rm --network none -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v ${wd}:/work:ro ${img} bash -c 'cd /testbed && git apply -p1 --recount /work/.gate.diff 2>/dev/null; cp /work/test_repro_*.py /work/test_knight_*.py . 2>/dev/null; ${PY} -m pytest -p no:cacheprovider ${flags} ${a}'`;
   return {
-    nodes: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`-v --tb=no ${f.join(" ")}`)], { encoding: "utf8", timeout: 12 * 60000 }); const o = (r.stdout || "") + (r.stderr || ""); const passed = new Set(), failed = new Set(); for (const m of o.matchAll(/^(\S+::\S+)\s+(PASSED|FAILED|ERROR)/gm)) (m[2] === "PASSED" ? passed : failed).add(m[1]); return { code: r.status, passed, failed }; },
+    nodes: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`-v --tb=no ${f.join(" ")}`)], { encoding: "utf8", timeout: 12 * 60000 }); const o = (r.stdout || "") + (r.stderr || ""); const passed = new Set(), failed = new Set(); for (const m of o.matchAll(/^(\S+::\S+)\s+(PASSED|FAILED|ERROR)/gm)) (m[2] === "PASSED" ? passed : failed).add(m[1]); if (r.status !== 0 && failed.size === 0) for (const n of f) failed.add(n); for (const n of failed) passed.delete(n); return { code: r.status, passed, failed }; },
     run: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`-q --no-header ${f.join(" ")}`)], { encoding: "utf8", timeout: 6 * 60000 }); const o = (r.stdout || "") + (r.stderr || ""); return { code: r.status, failed: new Set([...o.matchAll(/^FAILED (\S+)/gm)].map(m => m[1])), out: o }; },
     tb: (f) => { writeDiff(); const r = spawnSync("bash", ["-c", dock(`--tb=short -q ${f.join(" ")}`)], { encoding: "utf8", timeout: 6 * 60000 }); return ((r.stdout || "") + (r.stderr || "")); },
     py: (code) => { writeFileSync(join(wd, "_probe.py"), code); const r = spawnSync("bash", ["-c", `sudo -n docker run --rm --network none -e HOME=/tmp -v ${wd}:/work:ro ${img} bash -c 'cd /testbed && ${PY} /work/_probe.py'`], { encoding: "utf8", timeout: 3 * 60000 }); rmSync(join(wd, "_probe.py"), { force: true }); return ((r.stdout || "") + (r.stderr || "")).slice(0, 2000); },
+    compile: (f) => {
+      if (!f.length) return "";
+      writeDiff();
+      const r = spawnSync("bash", ["-c", `sudo -n docker run --rm --network none -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 -v ${wd}:/work:ro ${img} bash -c 'cd /testbed && git apply -p1 --recount /work/.gate.diff 2>/dev/null; ${PY} -m py_compile ${f.join(" ")}'`], { encoding: "utf8", timeout: 2 * 60000 });
+      return r.status === 0 ? "" : ((r.stdout || "") + (r.stderr || "")).slice(0, 1000);
+    },
   };
 }
 function djangoNode(node) {
@@ -146,6 +155,7 @@ function makeDjangoRunner(wd, venv) {
       rmSync(join(wd, "_probe.py"), { force: true });
       return output(r).slice(0, 2000);
     },
+    compile: (f) => { if (!f.length) return ""; const r = spawnSync(PY, ["-m", "py_compile", ...f], { cwd: wd, encoding: "utf8", timeout: 2 * 60000 }); return r.status === 0 ? "" : output(r).slice(0, 1000); },
   };
 }
 // AUTONOMOUS observe step: deterministically probe the library calls the SUSPECT functions make (on
@@ -346,6 +356,13 @@ function applyTestPatch(wd, patch) {
   rmSync(join(wd, ".oracle-tests.diff"), { force: true });
   return r.status === 0;
 }
+function touchedPyFiles(diff) {
+  return [...diff.matchAll(/^\+\+\+ b\/(\S+\.py)$/gm)].map(m => m[1]);
+}
+function addCompileFailure(failed, runner, files) {
+  const out = runner.compile?.(files);
+  if (out) failed.add(`SER_COMPILE::${out.split("\n").find(Boolean) || "py_compile failed"}`);
+}
 function oracleInfo(inst) {
   const nodes = listField(inst.FAIL_TO_PASS);
   if (!nodes.length || !inst.test_patch) return { nodes: [], text: "" };
@@ -384,6 +401,9 @@ function issuePitfalls(problem) {
 function patchLint(problem, diff) {
   const p = problem.toLowerCase();
   const issues = [];
+  if (/^\+?(<<<<<<<|=======|>>>>>>>)(?:\s|$)/m.test(diff)) {
+    issues.push("Patch contains leaked conflict or SEARCH/REPLACE delimiter lines.");
+  }
   if (/\bmro\b/.test(p) && /mark/.test(p) && /class/.test(p) && /pytestmark/.test(diff)) {
     if (/reversed\s*\(\s*obj\.__mro__\s*\)/.test(diff)) {
       issues.push("MRO marks patch reverses obj.__mro__; expected class-before-base MRO order.");
@@ -416,8 +436,9 @@ function answerPass(s, oracleTotal = 0) {
   return (s.oraclePass || 0) >= oracleTotal ? (s.oraclePass || 0) : 0;
 }
 function classifyOracleResult(oracleNodes, runnerResult, tbForNode = () => "") {
-  const passed = oracleNodes.filter(n => runnerResult.passed.has(n));
-  const rawFailed = oracleNodes.filter(n => !runnerResult.passed.has(n));
+  const failedSet = runnerResult.failed || new Set();
+  const passed = oracleNodes.filter(n => runnerResult.passed.has(n) && !failedSet.has(n));
+  const rawFailed = oracleNodes.filter(n => !runnerResult.passed.has(n) || failedSet.has(n));
   const infraFailed = [];
   const failed = [];
   for (const n of rawFailed) {
@@ -563,7 +584,7 @@ function localizedReproHints(cands, ctx, problem) {
 // for `git diff`, the test roots (pytest collects a directory recursively), and the import name for repros.
 const REPO_CFG = {
   "psf/requests": { src: ["requests"], pkg: "requests", testRoots: ["tests", "test_requests.py"], imp: "requests", flags: "" },
-  "pytest-dev/pytest": { src: ["src"], pkg: "src", testRoots: ["testing"], imp: "pytest", flags: "--continue-on-collection-errors" },
+  "pytest-dev/pytest": { src: ["src"], pkg: "src", testRoots: ["testing"], imp: "pytest", flags: "--continue-on-collection-errors", preferContainer: true },
   "django/django": { src: ["django"], pkg: "django", testRoots: ["tests"], imp: "django", flags: "--continue-on-collection-errors", runner: "django" },
   "pylint-dev/pylint": { src: ["pylint"], pkg: "pylint", testRoots: ["tests"], imp: "pylint", flags: "--continue-on-collection-errors" },
   "sympy/sympy": { src: ["sympy"], pkg: "sympy", testRoots: ["sympy"], imp: "sympy", flags: "--continue-on-collection-errors" },
@@ -599,7 +620,7 @@ async function runInstance(inst) {
     };
     // detect local-venv incompatibility (can't run the era's tests) → fall back to in-container gating
     let basePass = passing(localRunner);
-    const useC = cfg.runner !== "django" && !basePass.length && testFiles.length > 0;
+    const useC = cfg.runner !== "django" && ((cfg.preferContainer && hasImg) || (!basePass.length && testFiles.length > 0));
     const runner = cfg.runner === "django" ? localRunner : makeRunner(wd, venv, useC, img, cfg.flags);
     if (useC) basePass = passing(runner);
     const ORACLE = Number((process.argv.find(a => a.startsWith("--oracle=")) || "--oracle=0").slice(9));
@@ -653,6 +674,7 @@ async function runInstance(inst) {
       const diff = execSync(`cd ${wd} && git diff -- ${cfg.pkg}`, { encoding: "utf8" });
       if (!diff.trim()) continue;
       const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
+      addCompileFailure(failed, runner, touchedPyFiles(diff));
       const lintFindings = patchLintModule(inst.problem_statement, diff);
       for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
       const reproPass = scoreRepro(); // SOFT ranker: of the valid repros, how many does this patch flip?
@@ -702,6 +724,7 @@ async function runInstance(inst) {
           const diff = execSync(`cd ${wd} && git diff -- ${cfg.pkg}`, { encoding: "utf8" });
           if (!diff.trim()) continue;
           const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
+          addCompileFailure(failed, runner, touchedPyFiles(diff));
           const lintFindings = patchLintModule(inst.problem_statement, diff);
           for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
           const reproPass = scoreRepro();
@@ -730,6 +753,7 @@ async function runInstance(inst) {
         const diff = execSync(`cd ${wd} && git diff -- ${cfg.pkg}`, { encoding: "utf8" });
         if (!diff.trim()) continue;
         const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
+        addCompileFailure(failed, runner, touchedPyFiles(diff));
         const lintFindings = patchLintModule(inst.problem_statement, diff);
         for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
         const reproPass = scoreRepro();
@@ -777,6 +801,7 @@ async function runInstance(inst) {
         const diff = execSync(`cd ${wd} && git diff -- ${cfg.pkg}`, { encoding: "utf8" });
         if (!diff.trim()) continue;
         const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
+        addCompileFailure(failed, runner, touchedPyFiles(diff));
         const lintFindings = patchLintModule(inst.problem_statement, diff);
         for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
         let kp = 0; for (const rp of gateRepros) { writeFileSync(join(wd, rp.path), rp.code); if (runner.run([rp.path]).code === 0) kp++; rmSync(join(wd, rp.path), { force: true }); }

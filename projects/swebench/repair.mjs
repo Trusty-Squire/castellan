@@ -25,6 +25,15 @@ function touchedFiles(diff) {
   ].map(m => m[1]);
 }
 
+function touchedPyFiles(diff) {
+  return [...diff.matchAll(/^\+\+\+ b\/(\S+\.py)$/gm)].map(m => m[1]);
+}
+
+function addCompileFailure(failed, runner, files) {
+  const out = runner.compile?.(files);
+  if (out) failed.add(`SER_COMPILE::${out.split("\n").find(Boolean) || "py_compile failed"}`);
+}
+
 function summarizeFailure(tb) {
   return (tb || "")
     .split("\n")
@@ -264,6 +273,7 @@ export async function runRepairRung(opts) {
         continue;
       }
       const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
+      addCompileFailure(failed, runner, touchedPyFiles(diff));
       const lintFindings = patchLint(inst.problem_statement, diff);
       for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
       const reproPass = scoreRepro();
