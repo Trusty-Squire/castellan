@@ -76,6 +76,17 @@ function failedOracleDetail(wd, runner, nodes) {
   return `${sources}${tb ? `\n\nTraceback summary for failed oracle nodes:\n${tb}` : ""}`;
 }
 
+function failedRegressionDetail(wd, nodes) {
+  const sources = (nodes || [])
+    .slice(0, 5)
+    .map(n => {
+      const src = testSource(wd, n);
+      return src ? `# ${n}\n\`\`\`python\n${src}\n\`\`\`` : `# ${n}\n(source unavailable)`;
+    })
+    .join("\n\n");
+  return sources || "(none)";
+}
+
 function oracleAssertionProbes(inst, limit = 4) {
   const patch = inst.test_patch || "";
   const probes = [];
@@ -241,6 +252,7 @@ export async function runRepairRung(opts) {
       const failedPatch = current.diff || current.rawOutput || "";
       const failedOracleNodes = current.oracleFailed || baseInput.oracleFailed || [];
       const oracleDetail = failedOracleDetail(wd, runner, failedOracleNodes);
+      const regressionDetail = failedRegressionDetail(wd, current.broke || []);
       const editableFiles = productionFiles([...(record.candidateFiles || []), ...touchedFiles(record.diff || record.rawOutput || "")]);
       const missGuidance = oracle.nodes?.length && !(current.oraclePass || 0)
         ? "\nThe previous patch passed no oracle nodes; it may be aimed at the wrong helper. Do not preserve its target or structure unless it directly matches the REQUIRED CONTRACT."
@@ -254,7 +266,7 @@ export async function runRepairRung(opts) {
       }
       reset();
       const oracleObservation = [baseObservation, candidateObservation].filter(Boolean).join("\n\n");
-      const user = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${issuePitfalls}\n\nWHY THE PREVIOUS PATCH FAILED:\nclassification: ${current.classification}\noracle: ${(current.oraclePass || 0)}/${oracle.nodes?.length || 0}${missGuidance}\nfailed oracle nodes:\n${failedOracleNodes.length ? failedOracleNodes.map(n => `- ${n}`).join("\n") : "(none captured)"}\nfailed regression tests: ${(current.broke || []).join(", ") || "(none captured)"}\nlints:\n${(current.lintFindings || []).map(x => `- ${x}`).join("\n") || "(none)"}\ntraceback summary:\n${summarizeFailure(tb) || "(none captured)"}\n\nFAILED ORACLE DETAIL - THESE ARE THE CURRENT BLOCKERS:\n${oracleDetail}${oracleObservation ? `\n\n${oracleObservation}` : ""}\n\nPassing only an added test from the patch is incomplete. The corrected patch must make every failed oracle node above pass while preserving existing passing behavior.\n\nEDITABLE PRODUCTION FILES:\n${editableFiles.length ? editableFiles.map(f => `- ${f}`).join("\n") : "(use only production files shown in RELEVANT CODE)"}\n\nREQUIRED CONTRACT:\n${contract || "(derive from issue and tests)"}\n\nRELEVANT CODE:\n${expandedCtx}\n\nFAILED PATCH OR MODEL OUTPUT (diagnostic only; ignore if it conflicts with the contract/current source):\n\`\`\`\n${failedPatch.slice(0, 14000)}\n\`\`\`\n\nReturn the corrected complete patch as Aider SEARCH/REPLACE blocks against ORIGINAL production files only.`;
+      const user = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${issuePitfalls}\n\nWHY THE PREVIOUS PATCH FAILED:\nclassification: ${current.classification}\noracle: ${(current.oraclePass || 0)}/${oracle.nodes?.length || 0}${missGuidance}\nfailed oracle nodes:\n${failedOracleNodes.length ? failedOracleNodes.map(n => `- ${n}`).join("\n") : "(none captured)"}\nfailed regression tests: ${(current.broke || []).join(", ") || "(none captured)"}\nlints:\n${(current.lintFindings || []).map(x => `- ${x}`).join("\n") || "(none)"}\ntraceback summary:\n${summarizeFailure(tb) || "(none captured)"}\n\nFAILED REGRESSION DETAIL - THIS PREVIOUSLY PASSING BEHAVIOR MUST BE PRESERVED:\n${regressionDetail}\n\nFAILED ORACLE DETAIL - THESE ARE THE CURRENT BLOCKERS:\n${oracleDetail}${oracleObservation ? `\n\n${oracleObservation}` : ""}\n\nPassing only an added test from the patch is incomplete. The corrected patch must make every failed oracle node above pass while preserving existing passing behavior.\n\nEDITABLE PRODUCTION FILES:\n${editableFiles.length ? editableFiles.map(f => `- ${f}`).join("\n") : "(use only production files shown in RELEVANT CODE)"}\n\nREQUIRED CONTRACT:\n${contract || "(derive from issue and tests)"}\n\nRELEVANT CODE:\n${expandedCtx}\n\nFAILED PATCH OR MODEL OUTPUT (diagnostic only; ignore if it conflicts with the contract/current source):\n\`\`\`\n${failedPatch.slice(0, 14000)}\n\`\`\`\n\nReturn the corrected complete patch as Aider SEARCH/REPLACE blocks against ORIGINAL production files only.`;
       let text = await callLLM([{ role: "system", content: sys }, { role: "user", content: user }], attempt * 0.2, repairModel);
       const files = editableFiles;
       if (!/###\s*\S+\.py/.test(text) && (/<<<<<<< SEARCH/.test(text) || /(?:^|\n)SEARCH\n/.test(text))) {

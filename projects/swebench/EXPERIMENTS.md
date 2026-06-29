@@ -1428,3 +1428,78 @@ Artifacts:
 - `results-pytest-5221-batched-p2p.json`
 - `select-pytest-5221-batched-p2p.log`
 - `ser-select-v2.pytest-5221-batched-p2p.json`
+
+## 2026-06-29 — Mixed-24 after batched Pytest PASS_TO_PASS gate
+
+Question:
+
+- What is the honest wider score after the Pytest PASS_TO_PASS command-shape fix?
+
+Config:
+
+- Slice: `mixed-24-instances.json`
+- Model config: qwen-only, `k=3`, `r=0`, `pool=2`, `oracle=1`, `oracle-repair=1`,
+  `repair=1`, `repair-rung=2`, `knight=0`, one LLM attempt.
+
+Result:
+
+- Selector submitted `5/24`: `django-11099`, `django-11179`, `pytest-5413`, `pylint-5859`,
+  `pylint-7993`.
+- Official eval: `5/5` submitted resolved, so honest full-slice score is `5/24`.
+
+Failure classification:
+
+- The score drop from the prior `6/24` is expected verifier tightening, not an official regression:
+  the batched gate now blocks Pytest candidates that pass the oracle while breaking PASS_TO_PASS behavior.
+- `pytest-5221` and `pytest-5227` are regression-feedback targets: both can produce oracle-passing patches,
+  but repair did not reliably narrow the change to preserve existing behavior.
+- Most remaining Django/Sympy/Pylint misses are still clean oracle misses or semantic misses under current
+  context, not runner mismatches.
+
+Next mutation:
+
+- General, not focused: feed failed PASS_TO_PASS regression test source into the reusable repair rung, the
+  same way failed oracle test source is already shown.
+
+Artifacts:
+
+- `predictions-mixed24-batched-qwen.jsonl`
+- `results-mixed24-batched-qwen.json`
+- `select-mixed24-batched-qwen.log`
+- `ser-select-v2.mixed24-batched-qwen.json`
+
+## 2026-06-29 — Regression-source repair feedback
+
+Question:
+
+- When a candidate passes the oracle but regresses PASS_TO_PASS, is repair losing signal by naming failed
+  regression nodes without showing the behavior they assert?
+
+General harness mutation:
+
+- `runRepairRung` now includes source snippets for failed regression tests in the repair prompt.
+- This is the regression-side analogue of the existing failed-oracle source detail; it does not encode any
+  instance-specific expected answer.
+
+Focused result:
+
+- Slice: `pytest-dev__pytest-5221`, `pytest-dev__pytest-5227`
+- Same lean qwen config as above, `pool=1` for focused determinism.
+- `pytest-5221`: selected cleanly under the batched PASS_TO_PASS gate; official eval `1/1` resolved.
+- `pytest-5227`: still no-survivor; classification remains regression. It passes `3/3` oracle nodes but
+  breaks `test_log_cli_level` and `test_log_cli_ini_level`.
+
+Interpretation:
+
+- The mutation changed the failure class for `5221` from regression-blocked/no-survivor in the full batched
+  run to official-resolved focused selection.
+- `5227` provides the next focused target: repair sees the regression source but still repeats the same
+  global `DEFAULT_LOG_FORMAT` change, so the next general mutation should improve regression feedback or
+  candidate diversification, not weaken the P2P gate.
+
+Artifacts:
+
+- `predictions-pytest-regression-detail.jsonl`
+- `results-pytest-regression-detail.json`
+- `select-pytest-regression-detail.log`
+- `ser-select-v2.pytest-regression-detail.json`
