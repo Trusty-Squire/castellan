@@ -355,6 +355,50 @@ function sourceHintsFromTestPatch(wd, cfg, patch, limit = 5) {
   }
   return hints.slice(0, limit);
 }
+function testNodeKey(node) {
+  const parts = String(node || "").split("::");
+  const file = parts[0] || "";
+  const name = (parts[parts.length - 1] || "").replace(/\[.*$/, "");
+  return file && name ? `${file}::${name}` : "";
+}
+function enclosingTestKey(wd, file, lineNo) {
+  const path = join(wd, file);
+  if (!existsSync(path) || !lineNo) return "";
+  const lines = readFileSync(path, "utf8").split("\n");
+  for (let i = Math.min(lineNo - 1, lines.length - 1); i >= 0; i--) {
+    const m = lines[i].match(/^(\s*)(?:async\s+def|def)\s+(test_[A-Za-z_]\w*)\b/);
+    if (m && m[1].length > 4) continue;
+    if (m) return `${file}::${m[2]}`;
+    if (/^class\s+/.test(lines[i])) break;
+  }
+  return "";
+}
+function modifiedTestNodeKeys(wd, testPatch = "") {
+  const keys = new Set();
+  let file = "";
+  for (const line of String(testPatch || "").split("\n")) {
+    const diff = line.match(/^diff --git a\/(\S+\.py) b\/\S+\.py$/);
+    if (diff) {
+      file = diff[1];
+      continue;
+    }
+    const plus = line.match(/^\+\+\+ b\/(\S+\.py)$/);
+    if (plus) {
+      file = plus[1];
+      continue;
+    }
+    const header = line.match(/^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/);
+    if (file && header) {
+      const key = enclosingTestKey(wd, file, Number(header[1]));
+      if (key) keys.add(key);
+      const headerDef = header[2].match(/\b(?:async\s+def|def)\s+([A-Za-z_]\w*)\b/);
+      if (headerDef) keys.add(`${file}::${headerDef[1]}`);
+    }
+    const changedDef = line.match(/^[+-]\s*(?:async\s+def|def)\s+([A-Za-z_]\w*)\b/);
+    if (file && changedDef) keys.add(`${file}::${changedDef[1]}`);
+  }
+  return keys;
+}
 function applyTestPatch(wd, patch) {
   if (!patch || !patch.trim()) return false;
   writeFileSync(join(wd, ".oracle-tests.diff"), patch);
@@ -635,7 +679,8 @@ async function runInstance(inst) {
     // Drop deliberately-slow/infra integration tests that PASS but are unstable per-patch gates.
     const passing = (runner) => {
       const passToPass = listField(inst.PASS_TO_PASS);
-      const nodes = passToPass.length ? passToPass : testFiles;
+      const modifiedP2P = modifiedTestNodeKeys(wd, inst.test_patch);
+      const nodes = passToPass.length ? passToPass.filter(n => !modifiedP2P.has(testNodeKey(n))) : testFiles;
       return [...runner.nodes(nodes).passed].filter(n => !isSlowOrInfraNode(n)).slice(0, 500);
     };
     // detect local-venv incompatibility (can't run the era's tests) → fall back to in-container gating

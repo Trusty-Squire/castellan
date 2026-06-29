@@ -1503,3 +1503,46 @@ Artifacts:
 - `results-pytest-regression-detail.json`
 - `select-pytest-regression-detail.log`
 - `ser-select-v2.pytest-regression-detail.json`
+
+## 2026-06-29 — Modified PASS_TO_PASS test filter
+
+Question:
+
+- Why did `pytest-5227` look regression-blocked locally even though an earlier official score accepted the
+  same global logging-format patch?
+
+Failure classification:
+
+- Oracle/local false negative caused by local regression-gate mismatch.
+- SWE-bench official scoring applies the benchmark `test_patch` before running both FAIL_TO_PASS and
+  PASS_TO_PASS nodes. Some `pytest-5227` PASS_TO_PASS nodes have their assertions updated by `test_patch`
+  to accept the new logging format.
+- The local verifier was running those nodes against the original test source, so it enforced stale
+  pre-patch expectations and incorrectly rejected an official-valid patch.
+
+General harness mutation:
+
+- Parse `test_patch` hunks, map changed test hunks back to their enclosing base test function, and exclude
+  those modified PASS_TO_PASS nodes from the stale original-source regression gate.
+- Unmodified PASS_TO_PASS nodes still gate regressions. The filter avoids treating embedded generated-test
+  functions inside multiline strings as real outer test nodes.
+
+Focused result:
+
+- Slice: `pytest-dev__pytest-5227`
+- Same lean qwen config: `k=3`, `r=0`, `oracle=1`, `oracle-repair=1`, `repair-rung=2`, `knight=0`.
+- Selector result: selected cleanly (`3` survivors, `3/3` oracle).
+- Official eval: `1/1` resolved.
+
+Interpretation:
+
+- This recovers a valid patch without weakening the honest regression gate for unmodified P2P tests.
+- Together with the prior `pytest-5221` focused recovery, the mixed-24 resolved set should return to at
+  least `7/24` if Django/Pylint/Pytest-5413 remain stable.
+
+Artifacts:
+
+- `predictions-pytest-modified-p2p-filter.jsonl`
+- `results-pytest-modified-p2p-filter.json`
+- `select-pytest-modified-p2p-filter.log`
+- `ser-select-v2.pytest-modified-p2p-filter.json`
