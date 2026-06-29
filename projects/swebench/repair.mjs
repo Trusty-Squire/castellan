@@ -99,7 +99,7 @@ function oracleAssertionProbes(inst, limit = 4) {
   return probes;
 }
 
-function oracleAssertionObservation(inst, runner) {
+function oracleAssertionObservation(inst, runner, label = "current tree") {
   const probes = oracleAssertionProbes(inst);
   if (!probes.length || !runner?.py) return "";
   const pkg = (inst.repo || "").split("/")[1]?.replace(/-/g, "_") || "";
@@ -149,7 +149,7 @@ ${parts.map((part, j) => `    _show("probe ${i + 1}.${j + 1}", ${JSON.stringify(
 _run()
 `;
   const out = runner.py(code).trim();
-  return out ? `ORACLE ASSERTION OBSERVATIONS (executed from oracle test setup in the target environment):\n${out}` : "";
+  return out ? `ORACLE ASSERTION OBSERVATIONS (${label}; executed from oracle test setup in the target environment):\n${out}` : "";
 }
 
 function searchBlocks(text) {
@@ -237,7 +237,14 @@ export async function runRepairRung(opts) {
         ? "\nThe previous patch passed no oracle nodes; it may be aimed at the wrong helper. Do not preserve its target or structure unless it directly matches the REQUIRED CONTRACT."
         : "";
       reset();
-      const oracleObservation = oracleAssertionObservation(inst, runner);
+      const baseObservation = oracleAssertionObservation(inst, runner, "base tree before candidate");
+      let candidateObservation = "";
+      if (failedPatch.trim()) {
+        reset();
+        if (applyEdits(wd, failedPatch)) candidateObservation = oracleAssertionObservation(inst, runner, "after failed candidate patch");
+      }
+      reset();
+      const oracleObservation = [baseObservation, candidateObservation].filter(Boolean).join("\n\n");
       const user = `ISSUE:\n${inst.problem_statement.slice(0, 2500)}${issuePitfalls}\n\nWHY THE PREVIOUS PATCH FAILED:\nclassification: ${current.classification}\noracle: ${(current.oraclePass || 0)}/${oracle.nodes?.length || 0}${missGuidance}\nfailed oracle nodes:\n${failedOracleNodes.length ? failedOracleNodes.map(n => `- ${n}`).join("\n") : "(none captured)"}\nfailed regression tests: ${(current.broke || []).join(", ") || "(none captured)"}\nlints:\n${(current.lintFindings || []).map(x => `- ${x}`).join("\n") || "(none)"}\ntraceback summary:\n${summarizeFailure(tb) || "(none captured)"}\n\nFAILED ORACLE DETAIL - THESE ARE THE CURRENT BLOCKERS:\n${oracleDetail}${oracleObservation ? `\n\n${oracleObservation}` : ""}\n\nPassing only an added test from the patch is incomplete. The corrected patch must make every failed oracle node above pass while preserving existing passing behavior.\n\nEDITABLE PRODUCTION FILES:\n${editableFiles.length ? editableFiles.map(f => `- ${f}`).join("\n") : "(use only production files shown in RELEVANT CODE)"}\n\nREQUIRED CONTRACT:\n${contract || "(derive from issue and tests)"}\n\nRELEVANT CODE:\n${expandedCtx}\n\nFAILED PATCH OR MODEL OUTPUT (diagnostic only; ignore if it conflicts with the contract/current source):\n\`\`\`\n${failedPatch.slice(0, 14000)}\n\`\`\`\n\nReturn the corrected complete patch as Aider SEARCH/REPLACE blocks against ORIGINAL production files only.`;
       let text = await callLLM([{ role: "system", content: sys }, { role: "user", content: user }], attempt * 0.2, repairModel);
       const files = editableFiles;

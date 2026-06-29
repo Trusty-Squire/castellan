@@ -407,7 +407,15 @@ describe("SWE-bench repair rung utilities", () => {
     let oracleCalls = 0;
     const survivors = await runRepairRung({
       id: "demo__case-1",
-      inst: { problem_statement: "fix demo", test_patch: "def test_a(): pass\ndef test_b(): pass" },
+      inst: {
+        repo: "demo/pkg",
+        problem_statement: "fix demo",
+        test_patch: [
+          "diff --git a/test_demo.py b/test_demo.py",
+          " def test_b():",
+          "+    assert value == 2",
+        ].join("\n"),
+      },
       wd,
       cands: ["pkg/demo.py"],
       ctx: "### pkg/demo.py\n```python\nvalue = 1\n```",
@@ -432,7 +440,11 @@ describe("SWE-bench repair rung utilities", () => {
         return "### pkg/demo.py\n<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE";
       },
       repairModel: "test-model",
-      runner: { nodes: () => ({ failed: new Set() }), tb: () => "" },
+      runner: {
+        nodes: () => ({ failed: new Set() }),
+        tb: () => "",
+        py: () => `value: ${readFileSync(join(wd, "pkg/demo.py"), "utf8").trim()}`,
+      },
       basePass: [],
       scoreRepro: () => 0,
       scoreOracle: () => 1,
@@ -454,6 +466,8 @@ describe("SWE-bench repair rung utilities", () => {
     expect(prompts[0]).toContain("EDITABLE PRODUCTION FILES");
     expect(prompts[0]).toContain("- pkg/demo.py");
     expect(prompts[0]).not.toContain("- pkg/tests/test_demo.py");
+    expect(prompts[0]).toContain("base tree before candidate");
+    expect(prompts[0]).toContain("after failed candidate patch");
     expect(prompts[0]).toContain("passed no oracle nodes");
     expect(prompts[1]).toContain("- test_demo.py::test_b");
     expect(prompts[1]).toContain("FAILED ORACLE DETAIL");

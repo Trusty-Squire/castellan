@@ -1174,3 +1174,46 @@ Artifacts:
 - `results-sympy-12419-deepseek-observe.json`
 - `select-sympy-12419-deepseek-observe.log`
 - `repair-trace-sympy-12419-deepseek-observe.jsonl`
+
+## 2026-06-29 — Before/after oracle assertion observation
+
+Question:
+
+- Was the oracle observation still losing signal because it only described the current tree, rather than
+  comparing base behavior to the failed candidate's behavior?
+
+Harness mutation:
+
+- `runRepairRung()` now gathers oracle assertion observations in two states:
+  - base tree before applying the failed candidate,
+  - tree after applying the failed candidate, when the candidate is applicable.
+- The repair prompt labels both observations explicitly, so the model can see whether the failed patch
+  moved the oracle behavior, made it worse, or left the same failing semantics intact.
+- This is a general verifier-feedback improvement. It is not tied to Sympy or `Identity`.
+
+Focused probe:
+
+- Instance: `sympy__sympy-12419`
+- Model: qwen for generation, repair, and fallback.
+- Config: `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `knight=0`, `repair-rung=2`,
+  `repair-records=1`, `llm-timeout-ms=90000`, `llm-attempts=1`
+- Result: local selected `0/1`, no survivor.
+- Summary: `3 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n`.
+- The trace shows qwen repeated the same wrong semantic family, returning `KroneckerDelta(i, j)` after
+  receiving the before/after observation.
+
+Interpretation:
+
+- The mutation improves verifier signal in a scalable way: repair can now distinguish base behavior from
+  candidate behavior instead of seeing an unlabeled runtime snapshot.
+- It did not convert `12419`. With localization, production-file retrieval, class context, oracle contract,
+  runtime oracle observation, before/after candidate observation, and a strong DeepSeek probe already ruled
+  out, this focused branch remains a clean semantic miss.
+- The next useful work should be a wider official score or a new general Sympy reasoning mechanism, not an
+  instance-specific patch.
+
+Artifacts:
+
+- `results-sympy-12419-before-after-observe.json`
+- `select-sympy-12419-before-after-observe.log`
+- `repair-trace-sympy-12419-before-after-observe.jsonl`
