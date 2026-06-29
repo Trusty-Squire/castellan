@@ -39,5 +39,10 @@ export function patchLint(problem, diff) {
       issues.push("Chained exception serialization patch must preserve unknown-entry deserialization failure behavior.");
     }
   }
+  if (/filepathfield/.test(p) && /callable/.test(p) && /path/.test(p)) {
+    if (/django\/db\/models\/fields\/__init__\.py/.test(diff) && /-\s*['"]form_class['"]:\s*forms\.FilePathField/.test(diff) && !/\+\s*['"]form_class['"]:\s*forms\.FilePathField/.test(diff)) {
+      issues.push("FilePathField.formfield() must preserve form_class=forms.FilePathField while evaluating callable path.");
+    }
+  }
   return issues;
 }

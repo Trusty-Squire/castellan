@@ -64,6 +64,16 @@ describe("SWE-bench repair rung utilities", () => {
         '+ mark_list = cls.__dict__.get("pytestmark", [])\n+ mark_list = getattr(obj, "pytestmark", [])',
       ),
     ).toHaveLength(0);
+    expect(
+      patchLint(
+        "Allow FilePathField path to accept a callable.",
+        [
+          "diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py",
+          "-            'form_class': forms.FilePathField,",
+          "+            'path': path,",
+        ].join("\n"),
+      ),
+    ).toContain("FilePathField.formfield() must preserve form_class=forms.FilePathField while evaluating callable path.");
   });
 
   it("injects contract-required serializer symbols for exception-chain repair", async () => {
@@ -100,6 +110,50 @@ describe("SWE-bench repair rung utilities", () => {
     expect(ctx).toContain("def _to_json");
     expect(ctx).toContain("def _from_json");
     expect(ctx).toContain("class ExceptionChainRepr");
+  });
+
+  it("injects Django media ordering helpers for media conflict repair", async () => {
+    const { contractContext } = await loadMjs<{ contractContext: (wd: string, problem: string) => string }>("projects/swebench/context-expand.mjs");
+    const wd = mkdtempSync(join(tmpdir(), "ser-swebench-media-"));
+    mkdirSync(join(wd, "django/utils"), { recursive: true });
+    writeFileSync(
+      join(wd, "django/utils/topological_sort.py"),
+      [
+        "class CyclicDependencyError(ValueError):",
+        "    pass",
+        "def stable_topological_sort(l, dependency_graph):",
+        "    return list(l)",
+      ].join("\n"),
+    );
+    writeFileSync(join(wd, "django/utils/datastructures.py"), "class OrderedSet:\n    pass\n");
+
+    const ctx = contractContext(wd, "Merging 3 or more media objects can throw MediaOrderConflictWarning.");
+    expect(ctx).toContain("stable_topological_sort");
+    expect(ctx).toContain("class OrderedSet");
+  });
+
+  it("keeps exact quoted literals in function context", async () => {
+    const { funcContext } = await loadMjs<{ funcContext: (wd: string, cands: string[], problem: string) => string }>("projects/swebench/select.mjs");
+    const wd = mkdtempSync(join(tmpdir(), "ser-swebench-literal-"));
+    mkdirSync(join(wd, "pkg"), { recursive: true });
+    writeFileSync(
+      join(wd, "pkg/fields.py"),
+      [
+        "class DurationField:",
+        "    default_error_messages = {",
+        "        'invalid': \"'%(value)s' value has an invalid format. It must be in [DD] [HH:[MM:]]ss[.uuuuuu] format.\"",
+        "    }",
+        "    def target(self):",
+        "        return self.default_error_messages",
+        "",
+        "def unrelated():",
+        "    return 'duration field help text'",
+      ].join("\n"),
+    );
+
+    const ctx = funcContext(wd, ["pkg/fields.py"], "Correct duration format [DD] [HH:[MM:]]ss[.uuuuuu] in the invalid error message.");
+    expect(ctx).toContain("[DD] [HH:[MM:]]ss[.uuuuuu]");
+    expect(ctx.indexOf("def target")).toBeLessThan(ctx.indexOf("def unrelated"));
   });
 
   it("applies Aider, loose SEARCH/REPLACE, and unified diff patches", async () => {
@@ -150,10 +204,78 @@ describe("SWE-bench repair rung utilities", () => {
     ].join("\n"))).toBe(1);
     expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toContain("def target():\n    value = 7\n    return value");
     expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toContain("def keep():\n    return 0");
+
+    execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
+    writeFileSync(
+      join(wd, "src/demo.py"),
+      [
+        "class A:",
+        "    def formfield(self, **kwargs):",
+        "        return super().formfield(**{",
+        "            'path': self.path,",
+        "            'match': self.match,",
+        "            **kwargs,",
+        "        })",
+        "",
+        "class B:",
+        "    def formfield(self, **kwargs):",
+        "        return super().formfield(**kwargs)",
+        "",
+      ].join("\n"),
+    );
+    expect(applyEdits(wd, [
+      "### src/demo.py",
+      "<<<<<<< SEARCH",
+      "    def formfield(self, **kwargs):",
+      "        return super().formfield(**{",
+      "            'match': self.match,",
+      "            'path': self.path,",
+      "            **kwargs,",
+      "        })",
+      "=======",
+      "    def formfield(self, **kwargs):",
+      "        path = self.path() if callable(self.path) else self.path",
+      "        return super().formfield(**{",
+      "            'path': path,",
+      "            'match': self.match,",
+      "            **kwargs,",
+      "        })",
+      ">>>>>>> REPLACE",
+    ].join("\n"))).toBe(1);
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toContain("path = self.path() if callable(self.path) else self.path");
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toContain("class B:\n    def formfield(self, **kwargs):\n        return super().formfield(**kwargs)");
+
+    execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
+    writeFileSync(join(wd, "src/demo.py"), "value = 1\n");
+    expect(applyEdits(wd, "```python\nsrc/demo.py\n<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 8\n>>>>>>> REPLACE\n```")).toBe(1);
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 8\n");
+
+    execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
+    writeFileSync(join(wd, "src/demo.py"), "value = 1\n");
+    expect(applyEdits(wd, [
+      "```python",
+      "tests/test_demo.py",
+      "<<<<<<< SEARCH",
+      "=======",
+      "def test_new():",
+      "    assert True",
+      ">>>>>>> REPLACE",
+      "```",
+      "",
+      "```python",
+      "src/demo.py",
+      "<<<<<<< SEARCH",
+      "value = 1",
+      "=======",
+      "value = 9",
+      ">>>>>>> REPLACE",
+      "```",
+    ].join("\n"))).toBe(1);
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 9\n");
   });
 
   it("requires all oracle nodes before treating a candidate as solved", async () => {
-    const { answerPass, classifyOracleResult, isSlowOrInfraNode } = await loadMjs<{
+    const { answerPass, classifyOracleResult, isSlowOrInfraNode, djangoNode } = await loadMjs<{
       answerPass: (candidate: { reproPass?: number; oraclePass?: number }, oracleTotal?: number) => number;
       classifyOracleResult: (
         nodes: string[],
@@ -161,6 +283,7 @@ describe("SWE-bench repair rung utilities", () => {
         tbForNode: (node: string) => string,
       ) => { pass: number; passed: string[]; failed: string[]; infraFailed: string[] };
       isSlowOrInfraNode: (node: string) => boolean;
+      djangoNode: (node: string) => string;
     }>("projects/swebench/select.mjs");
 
     expect(answerPass({ oraclePass: 1 }, 1)).toBe(1);
@@ -178,6 +301,9 @@ describe("SWE-bench repair rung utilities", () => {
 
     expect(isSlowOrInfraNode("test_requests.py::RequestsTestCase::test_connection_error")).toBe(true);
     expect(isSlowOrInfraNode("test_requests.py::RequestsTestCase::test_basic_building")).toBe(false);
+    expect(djangoNode("test_callable_path (model_fields.test_filepathfield.FilePathFieldTests)")).toBe(
+      "model_fields.test_filepathfield.FilePathFieldTests.test_callable_path",
+    );
   });
 
   it("threads exact failed oracle nodes through repair attempts", async () => {

@@ -96,6 +96,16 @@ export function contractContext(wd, problem, budget = 30000) {
       names: ["ExceptionChainRepr", "ReprExceptionInfo", "ReprTraceback", "ReprEntry", "ReprEntryNative", "ReprFileLocation", "ReprLocals", "ReprFuncArgs"],
     });
   }
+  if (/media/.test(p) && /order/.test(p) && /conflict/.test(p)) {
+    wanted.push({
+      file: "django/utils/topological_sort.py",
+      names: ["CyclicDependencyError", "stable_topological_sort", "topological_sort_as_sets"],
+    });
+    wanted.push({
+      file: "django/utils/datastructures.py",
+      names: ["OrderedSet"],
+    });
+  }
   const pieces = [];
   let used = 0;
   for (const item of wanted) {

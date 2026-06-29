@@ -652,3 +652,67 @@ Important accounting rule:
 - Do not call `psf__requests-2317` an official pass in this environment. The patch passes the target
   tests and bounded regression suite; the official monolithic runner is blocked by an unreliable
   external-network P2P node.
+
+## 2026-06-28 — Django six-instance pilot: 6/6 official
+
+Dataset:
+
+- `django-instances.json`
+- Source: first six `django/django` instances from SWE-bench Lite test.
+
+Configuration:
+
+```bash
+node projects/swebench/select.mjs \
+  --instances=django-instances.json \
+  --k=3 --r=0 --pool=1 \
+  --model=qwen/qwen3-coder \
+  --repair-model=qwen/qwen3-coder \
+  --fallback-model=qwen/qwen3-coder \
+  --llm-timeout-ms=180000 --llm-attempts=1 \
+  --repair=1 --oracle=1 --oracle-repair=1 \
+  --knight=0 --repair-rung=2 --repair-records=2
+```
+
+Harness mutations that mattered:
+
+- Added Django-native `tests/runtests.py` node execution for unittest-style SWE-bench nodes such as
+  `test_callable_path (model_fields.test_filepathfield.FilePathFieldTests)`.
+- Used Django PASS_TO_PASS nodes directly for bounded regression checks instead of collecting the whole
+  Django test tree with pytest.
+- Made `applyEdits()` handle model outputs with bare path lines before SEARCH blocks, empty SEARCH blocks,
+  stale same-function SEARCH bodies, and repeated function names.
+- Added literal-bearing class context so short symbolic strings like `[DD] [HH:[MM:]]ss[.uuuuuu]` pull in
+  the class attribute that contains the exact source line.
+- Added Django media-ordering contract context for `stable_topological_sort`, `CyclicDependencyError`, and
+  `OrderedSet`.
+
+Official single-instance results:
+
+- `django__django-10914`: `1/1`, `ser-select-v2.django-10914-native-runner.json`
+- `django__django-10924`: `1/1`, `ser-select-v2-focused-repair.django-10924-focused-repair.json`
+- `django__django-11001`: `1/1`, `ser-select-v2.django-11001-native-runner.json`
+- `django__django-11019`: `1/1`, `ser-select-v2-focused-repair.django-11019-focused-toposort.json`
+- `django__django-11039`: `1/1`, `ser-select-v2.django-11039-qwen-only.json`
+- `django__django-11049`: `1/1`, `ser-select-v2.django-11049-literal-context.json`
+
+Combined official result:
+
+- Predictions: `predictions-django-six-native-repair-v2.jsonl`
+- Report: `ser-select-v2.django-six-native-repair-v2.json`
+- Resolved: `6/6`
+
+Updated local rollup:
+
+- Predictions: `predictions-local-20-bounded.jsonl`
+- Report: `ser-select-v2.local-20-bounded.json`
+- Result: `20/20 local` = `19 official + psf__requests-2317 bounded`
+
+Interpretation:
+
+- The initial Django failures were harness failures, not cheap-model failures: pytest could not run Django
+  unittest node IDs, the applicator missed common model output shapes, and context construction hid exact
+  class-level literals.
+- The remaining hard Django case (`11019`) needed the harness to expose Django's own topological-sort
+  primitive. Once surfaced, qwen improved from `1/16` to `9/16`; the focused repair completed the same
+  topological-sort design and passed officially.

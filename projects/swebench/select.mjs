@@ -105,6 +105,49 @@ function makeRunner(wd, venv, useC, img, flags = "") {
     py: (code) => { writeFileSync(join(wd, "_probe.py"), code); const r = spawnSync("bash", ["-c", `sudo -n docker run --rm --network none -e HOME=/tmp -v ${wd}:/work:ro ${img} bash -c 'cd /testbed && ${PY} /work/_probe.py'`], { encoding: "utf8", timeout: 3 * 60000 }); rmSync(join(wd, "_probe.py"), { force: true }); return ((r.stdout || "") + (r.stderr || "")).slice(0, 2000); },
   };
 }
+function djangoNode(node) {
+  const m = node.match(/^(\S+)\s+\(([^)]+)\)$/);
+  return m ? `${m[2]}.${m[1]}` : node;
+}
+function makeDjangoRunner(wd, venv) {
+  const PY = `${venv}/bin/python`;
+  const runOne = (node, extra = []) => {
+    const target = djangoNode(node);
+    return spawnSync(PY, ["tests/runtests.py", target, "--verbosity", "1", "--parallel", "1", ...extra], {
+      cwd: wd,
+      encoding: "utf8",
+      timeout: 90 * 1000,
+    });
+  };
+  const output = (r) => (r.stdout || "") + (r.stderr || "");
+  return {
+    nodes: (f) => {
+      const passed = new Set(), failed = new Set();
+      for (const n of f) {
+        const r = runOne(n);
+        (r.status === 0 ? passed : failed).add(n);
+      }
+      return { code: failed.size ? 1 : 0, passed, failed };
+    },
+    run: (f) => {
+      const failed = new Set();
+      let out = "";
+      for (const n of f) {
+        const r = runOne(n);
+        out += output(r);
+        if (r.status !== 0) failed.add(n);
+      }
+      return { code: failed.size ? 1 : 0, failed, out };
+    },
+    tb: (f) => f.map(n => output(runOne(n, ["--verbosity", "2"]))).join("\n"),
+    py: (code) => {
+      writeFileSync(join(wd, "_probe.py"), code);
+      const r = spawnSync(PY, ["_probe.py"], { cwd: wd, encoding: "utf8", timeout: 3 * 60000 });
+      rmSync(join(wd, "_probe.py"), { force: true });
+      return output(r).slice(0, 2000);
+    },
+  };
+}
 // AUTONOMOUS observe step: deterministically probe the library calls the SUSPECT functions make (on
 // issue-representative url inputs), dumping ALL result attrs so the decisive internal value (e.g.
 // parse_url(url).netloc dropping auth) is captured — plus a call→function map. Grounds the knight rung.
@@ -148,8 +191,22 @@ function wholeFunctionReplace(wd, rel, search, replace) {
   const starts = lines
     .map((line, i) => ({ line, i }))
     .filter(({ line }) => new RegExp(`^\\s*(def|class)\\s+${searchName}\\b`).test(line));
-  if (starts.length !== 1) return false;
-  const start = starts[0].i;
+  let start = starts[0]?.i;
+  if (starts.length !== 1) {
+    const searchLines = new Set(search.split("\n").map(s => s.trim()).filter(Boolean));
+    const scored = starts.map(({ i }) => {
+      const candIndent = lines[i].match(/^\s*/)?.[0].length || 0;
+      let candEnd = i + 1;
+      for (; candEnd < lines.length; candEnd++) {
+        const line = lines[candEnd];
+        if (line.trim() && (line.match(/^\s*/)?.[0].length || 0) <= candIndent) break;
+      }
+      const overlap = lines.slice(i, candEnd).map(s => s.trim()).filter(s => searchLines.has(s)).length;
+      return { i, overlap };
+    }).sort((a, b) => b.overlap - a.overlap);
+    if (!scored.length || scored[0].overlap < 3 || scored[0].overlap === scored[1]?.overlap) return false;
+    start = scored[0].i;
+  }
   const indent = lines[start].match(/^\s*/)?.[0].length || 0;
   let end = start + 1;
   for (; end < lines.length; end++) {
@@ -165,12 +222,18 @@ function applyEdits(wd, text) {
   // blocks under one header — each block inherits the nearest preceding ### path. (GLM emits exactly
   // this shape; the old "### immediately before <<<<<<<" parser silently dropped correct multi-edit fixes.)
   const paths = [...text.matchAll(/###\s*([^\s`]+\.\w+)/g)].map(m => ({ pos: m.index, path: m[1].trim() }));
-  const srRe = /<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE/g;
+  const pathBefore = (pos) => {
+    const p = paths.filter(x => x.pos < pos).pop();
+    if (p) return p.path;
+    const lines = text.slice(0, pos).split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("```"));
+    return lines.reverse().find(l => /^[A-Za-z0-9_./-]+\.py$/.test(l));
+  };
+  const srRe = /<<<<<<< SEARCH\n([\s\S]*?)^=======\n([\s\S]*?)^>>>>>>> REPLACE/gm;
   let applied = 0, m;
   while ((m = srRe.exec(text))) {
-    const p = paths.filter(x => x.pos < m.index).pop(); // nearest ### path before this block
-    if (!p) continue;
-    const fp = join(wd, p.path);
+    const rel = pathBefore(m.index); // nearest ### path, or a bare path line before this block
+    if (!rel) continue;
+    const fp = join(wd, rel);
     if (!existsSync(fp) || m[1].trim() === "") continue;
     const search = m[1], replace = m[2], body = readFileSync(fp, "utf8");
     const idx = body.indexOf(search);
@@ -183,7 +246,7 @@ function applyEdits(wd, text) {
       if (!ok) continue;
       fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; changed = true; break;
     }
-    if (!changed && wholeFunctionReplace(wd, p.path, search, replace)) applied++;
+    if (!changed && wholeFunctionReplace(wd, rel, search, replace)) applied++;
   }
   const looseRe = /SEARCH(?:\s+([^\n`]+\.py))?\n```(?:python)?\s*([\s\S]*?)```\s*REPLACE\n```(?:python)?\s*([\s\S]*?)```/g;
   while ((m = looseRe.exec(text))) {
@@ -369,12 +432,16 @@ function defBlocks(src) {
 // even when the issue never names it. This is the cheap static-call-graph stage of the isolation spec.
 function funcContext(wd, cands, problem, budget = 13000) {
   const terms = issueTerms(problem), blocks = [];
+  const literals = [...problem.matchAll(/`([^`]{8,})`|'([^']{8,})'|"([^"]{8,})"/g)]
+    .map(m => (m[1] || m[2] || m[3]).trim())
+    .concat([...problem.matchAll(/\[DD\][^"\n]+uuuuuu\]/g)].map(m => m[0].trim()))
+    .filter(Boolean);
   for (const c of cands) {
     const src = readFileSync(join(wd, c), "utf8");
     const ci = src.indexOf("\nclass ");
     const header = src.slice(0, ci > 0 ? Math.min(ci, 1200) : 1200);
     for (const b of defBlocks(src)) {
-      if (b.kind === "class") continue; // rank methods/functions, not whole classes
+      if (b.kind === "class" && !literals.some(lit => b.text.includes(lit))) continue; // rank methods/functions, plus literal-bearing classes
       blocks.push({ c, header, name: b.name, text: b.text, score: 0, term: 0 });
     }
   }
@@ -390,6 +457,7 @@ function funcContext(wd, cands, problem, budget = 13000) {
   const k1 = 1.5, b = 0.75;
   for (const d of docs) {
     let score = 0;
+    for (const lit of literals) if (d.block.text.includes(lit)) score += 50;
     for (const t of terms) {
       if (d.block.name.toLowerCase().includes(t)) score += 5; // keep exact-name boost
       const f = d.tf[t] || 0; if (!f) continue;
@@ -468,6 +536,7 @@ function localizedReproHints(cands, ctx, problem) {
 const REPO_CFG = {
   "psf/requests": { src: ["requests"], pkg: "requests", testRoots: ["tests", "test_requests.py"], imp: "requests", flags: "" },
   "pytest-dev/pytest": { src: ["src"], pkg: "src", testRoots: ["testing"], imp: "pytest", flags: "--continue-on-collection-errors" },
+  "django/django": { src: ["django"], pkg: "django", testRoots: ["tests"], imp: "django", flags: "--continue-on-collection-errors", runner: "django" },
   "pylint-dev/pylint": { src: ["pylint"], pkg: "pylint", testRoots: ["tests"], imp: "pylint", flags: "--continue-on-collection-errors" },
   "sympy/sympy": { src: ["sympy"], pkg: "sympy", testRoots: ["sympy"], imp: "sympy", flags: "--continue-on-collection-errors" },
 };
@@ -491,13 +560,17 @@ async function runInstance(inst) {
     // regression set = EVERY offline-passing test node across the suite. Pass the repo's test ROOTS
     // (a dir, which pytest collects recursively, or a root test file) — repo-parametric via cfg.
     const testFiles = cfg.testRoots.filter(t => existsSync(join(wd, t)));
-    // Drop deliberately-slow/infra integration tests that PASS but are unstable per-patch gates.
-    const passing = (runner) => [...runner.nodes(testFiles).passed].filter(n => !isSlowOrInfraNode(n)).slice(0, 500);
-    // detect local-venv incompatibility (can't run the era's tests) → fall back to in-container gating
-    let basePass = passing(makeRunner(wd, venv, false));
-    const useC = !basePass.length && testFiles.length > 0;
     const img = `swebench/sweb.eval.x86_64.${id.replace("__", "_1776_")}:latest`; // requests repo id
-    const runner = makeRunner(wd, venv, useC, img, cfg.flags);
+    const localRunner = cfg.runner === "django" ? makeDjangoRunner(wd, venv) : makeRunner(wd, venv, false);
+    // Drop deliberately-slow/infra integration tests that PASS but are unstable per-patch gates.
+    const passing = (runner) => {
+      const nodes = cfg.runner === "django" ? listField(inst.PASS_TO_PASS) : testFiles;
+      return [...runner.nodes(nodes).passed].filter(n => !isSlowOrInfraNode(n)).slice(0, 500);
+    };
+    // detect local-venv incompatibility (can't run the era's tests) → fall back to in-container gating
+    let basePass = passing(localRunner);
+    const useC = cfg.runner !== "django" && !basePass.length && testFiles.length > 0;
+    const runner = cfg.runner === "django" ? localRunner : makeRunner(wd, venv, useC, img, cfg.flags);
     if (useC) basePass = passing(runner);
     const ORACLE = Number((process.argv.find(a => a.startsWith("--oracle=")) || "--oracle=0").slice(9));
     const oracle = ORACLE ? oracleInfoModule(inst) : { nodes: [], text: "" };
@@ -721,7 +794,7 @@ async function runInstance(inst) {
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }
 }
-export { callLLM, makeRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, defBlocks, localizedReproHints, repoCfg };
+export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, defBlocks, localizedReproHints, repoCfg };
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {
