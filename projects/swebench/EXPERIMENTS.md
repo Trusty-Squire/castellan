@@ -1595,3 +1595,43 @@ Artifacts:
 - `results-mixed24-modified-p2p-qwen.json`
 - `select-mixed24-modified-p2p-qwen.log`
 - `ser-select-v2.mixed24-modified-p2p-qwen.json`
+
+## 2026-06-29 — Focused DeepSeek repair for `pytest-5221`
+
+Question:
+
+- After strict oracle parsing, is `pytest-5221` a harness feedback gap or a cheap-model repair ceiling?
+
+Config:
+
+- Slice: `pytest-dev__pytest-5221`
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `knight=0`, `llm-timeout-ms=180000`.
+
+Result:
+
+- Qwen-only `k=6` immediately before this did not recover a survivor under strict oracle parsing.
+- DeepSeek repair produced a clean survivor: `0` regressions, `2/2` oracle.
+- Official eval: `1/1` resolved.
+
+Failure classification:
+
+- Semantic/model-capability miss for qwen repair after harness signal was cleaned up.
+- Not a verifier issue: the strict final gate and official eval agree on the DeepSeek-repaired patch.
+
+Interpretation:
+
+- `pytest-5221` is recoverable with a narrow stronger repair escalation.
+- Best known mixed-24 resolved set is now `8/24`: the strict mixed run's `7/24` plus this official `5221`
+  repair.
+- Next wider run should use qwen generation with DeepSeek only as repair model if provider latency is
+  acceptable, then classify whether remaining misses are still semantic or provider-bound.
+
+Artifacts:
+
+- `predictions-pytest-5221-deepseek-repair.jsonl`
+- `results-pytest-5221-deepseek-repair.json`
+- `select-pytest-5221-deepseek-repair.log`
+- `ser-select-v2.pytest-5221-deepseek-repair.json`
