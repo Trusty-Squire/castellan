@@ -716,3 +716,68 @@ Interpretation:
 - The remaining hard Django case (`11019`) needed the harness to expose Django's own topological-sort
   primitive. Once surfaced, qwen improved from `1/16` to `9/16`; the focused repair completed the same
   topological-sort design and passed officially.
+
+## Cross-slice lessons after Requests + pytest + Django
+
+Scoreboard:
+
+- Requests: `7/7` official plus `psf__requests-2317` bounded.
+- Pytest: `6/6` official.
+- Django: `6/6` official.
+- Local rollup: `20/20` = `19 official + 1 bounded`.
+
+What actually lifted the score:
+
+- Treat most misses as harness signal loss first. The big jumps came from fixing context, patch
+  application, runner semantics, and regression gates, not from increasing sample count.
+- Run the repo's native test runner when pytest is the wrong abstraction. Django needed `tests/runtests.py`
+  and unittest-style node normalization; pytest collection made correct patches look broken.
+- Keep PASS_TO_PASS bounded but faithful. Use SWE-bench's own PASS_TO_PASS nodes where full-suite collection
+  is too expensive or environment-sensitive.
+- Context must preserve exact bug-bearing artifacts: full functions below file heads, class-level literals,
+  quoted/symbolic issue strings, and repo-native helper APIs.
+- Patch application is part of the harness. Valid model outputs arrived as Aider blocks, unified diffs,
+  fenced path blocks, empty-SEARCH test additions, stale SEARCH bodies, and repeated function names. Dropping
+  those is indistinguishable from model failure unless the applicator is hardened.
+- Repair works when the verifier feedback names a real contract. It fails or thrashes when the context omits
+  the primitive needed to implement that contract.
+- Focused repair is acceptable accounting only when recorded as such. The official report can pass, but the
+  experiment log must distinguish autonomous selection, focused repair, and bounded infrastructure passes.
+
+Recommended next serious test:
+
+1. Create a fresh 24-instance mixed-repo slice from SWE-bench Lite or Verified:
+   - 6 Django beyond the current six.
+   - 6 pytest beyond the current six.
+   - 6 sympy.
+   - 6 pylint or astropy, depending on local image/setup cost.
+2. Run the same lean baseline first:
+
+```bash
+node projects/swebench/select.mjs \
+  --instances=mixed-24-instances.json \
+  --k=3 --r=0 --pool=1 \
+  --model=qwen/qwen3-coder \
+  --repair-model=qwen/qwen3-coder \
+  --fallback-model=qwen/qwen3-coder \
+  --llm-timeout-ms=180000 --llm-attempts=1 \
+  --repair=1 --oracle=1 --oracle-repair=1 \
+  --knight=0 --repair-rung=2 --repair-records=2
+```
+
+3. Score official single-instance reports before any combined rollup.
+4. For every miss, classify it before patching:
+   - runner mismatch,
+   - context omission,
+   - applicator miss,
+   - regression gate gap,
+   - model capability after harness evidence is clean.
+5. Only add a harness mutation when it is repo-general or failure-class-general. Avoid per-instance prompt
+   trivia unless recording it explicitly as focused repair.
+
+Success criterion:
+
+- A serious result is not just a high pass count. It is a table of all 24 instances with one of:
+  `official pass`, `bounded infra pass`, `honest harness-class miss`, or `honest model-capability miss`.
+  The benchmark is more valuable if it exposes where the harness still leaks signal than if it inflates a
+  combined number.
