@@ -48,6 +48,18 @@ describe("SWE-bench repair rung utilities", () => {
     ]);
   });
 
+  it("excludes package tests from production retrieval", async () => {
+    const { retrieve } = await loadMjs<{
+      retrieve: (problem: string, root: string, srcDirs: string[], topN?: number) => string[];
+    }>("projects/swebench/retrieve.mjs");
+    const wd = tempRepo();
+    mkdirSync(join(wd, "pkg", "tests"), { recursive: true });
+    writeFileSync(join(wd, "pkg", "feature.py"), "def feature_identity_matrix():\n    return 'production'\n");
+    writeFileSync(join(wd, "pkg", "tests", "test_feature.py"), "def test_identity_matrix():\n    assert False\n");
+
+    expect(retrieve("identity matrix feature", wd, ["pkg"], 5)).toEqual(["pkg/feature.py"]);
+  });
+
   it("keeps issue-named classes in function context", async () => {
     const { funcContext } = await loadMjs<{
       funcContext: (wd: string, cands: string[], problem: string, budget?: number) => string;

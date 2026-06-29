@@ -1014,3 +1014,36 @@ Artifacts:
 - `results-sympy-class-context-3.json`
 - `select-sympy-class-context-3.log`
 - `repair-trace-class-context-sympy__sympy-*.jsonl`
+
+## 2026-06-29 — Production retrieval excludes package tests
+
+Question:
+
+- Is production localization still polluted by package test files in repos whose tests live under the
+  package root, such as Sympy?
+
+Harness mutation:
+
+- `retrieve.listPyFiles()` now skips `tests/` and `testing/` directories while walking source roots.
+- Verification/oracle tests are unaffected; official `FAIL_TO_PASS` and `PASS_TO_PASS` still drive gates.
+
+Focused probe:
+
+- Instance: `sympy__sympy-12419`
+- Before candidate list included `sympy/assumptions/tests/test_matrices.py`.
+- After candidate list is all production files:
+  `matexpr.py`, `handlers/matrices.py`, `ask.py`, `matrices.py`, `matmul.py`.
+- Local selected: `0/1`.
+- Best attempt touched `sympy/matrices/expressions/matexpr.py`, had zero regressions, and missed oracle
+  `0/1`.
+
+Interpretation:
+
+- This closes a real retrieval leak but does not lift the score. The remaining `12419` failure is now a
+  clean semantic oracle miss on visible production code.
+
+Artifacts:
+
+- `results-sympy-12419-no-test-retrieve.json`
+- `select-sympy-12419-no-test-retrieve.log`
+- `repair-trace-sympy-12419-no-test-retrieve.jsonl`
