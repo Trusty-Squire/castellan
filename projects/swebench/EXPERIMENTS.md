@@ -1260,3 +1260,67 @@ Artifacts:
 - `results-sympy-12419-deepseek-before-after-observe.json`
 - `select-sympy-12419-deepseek-before-after-observe.log`
 - `repair-trace-sympy-12419-deepseek-before-after-observe.jsonl`
+
+## 2026-06-29 — Current harness mixed-24 official score
+
+Question:
+
+- After the general Sympy observation work, what is the honest wider official score of the current lean
+  harness?
+
+Configuration:
+
+- Dataset: `mixed-24-instances.json`
+- Model: qwen for generation, repair, and fallback.
+- Selector: `k=3`, `r=0`, `pool=2`, `oracle=1`, `oracle-repair=1`, `repair=1`, `knight=0`,
+  `repair-rung=2`, `repair-records=1`, `llm-timeout-ms=90000`, `llm-attempts=1`.
+- Official eval: submitted patches only, `max_workers=3`, cached instance images, `clean=False`.
+
+Result:
+
+- Selector submitted: `9/24`.
+- Official submitted score: `6/9` resolved, `3/9` unresolved, `0` eval errors.
+- Honest full-slice score: `6/24` resolved, with `15/24` incomplete/no-survivor by design.
+
+Official resolved:
+
+- `django__django-11099`
+- `django__django-11179`
+- `pytest-dev__pytest-5227`
+- `pytest-dev__pytest-5413`
+- `pylint-dev__pylint-5859`
+- `pylint-dev__pylint-7993`
+
+Official unresolved submitted:
+
+- `pytest-dev__pytest-11143`
+- `pytest-dev__pytest-11148`
+- `pytest-dev__pytest-5221`
+
+No-survivor pattern:
+
+- Django: 2 selected / 6, both selected resolved; remaining misses are clean oracle misses or regression
+  blocks.
+- Pytest: 5 selected / 6, 2 resolved / 5 submitted; three local oracle positives were official false
+  positives.
+- Sympy: 0 selected / 6; all remain clean no-survivors under the current general harness.
+- Pylint: 2 selected / 6, both selected resolved; some tail calls had provider timeouts, but no selected
+  patch was provider-bound.
+
+Interpretation:
+
+- The current harness is honest enough to avoid submitting most Sympy/Pylint/Django misses, but local
+  Pytest oracle remains too permissive: three locally selected Pytest patches failed official scoring.
+- The next smallest general harness mutation should target the local-vs-official Pytest mismatch by
+  inspecting the official failing reports for `11143`, `11148`, and `5221`, then strengthening the
+  bounded PASS_TO_PASS/oracle gate only if a shared gap appears.
+- Do not spend the next iteration on Sympy instance-specific repairs; the wider score says Pytest
+  false-positive reduction is the higher-leverage general verifier problem.
+
+Artifacts:
+
+- `predictions-mixed24-current-qwen.jsonl`
+- `results-mixed24-current-qwen.json`
+- `select-mixed24-current-qwen.log`
+- `ser-select-v2.mixed24-current-qwen.json`
+- `repair-trace-mixed24-current-*.jsonl`

@@ -1,0 +1,298 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 11978ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 33195ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8046ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 22901ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8858ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7048ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 6561ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5486ms
+  [django__django-11133] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 23739ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 13682ms
+  [django__django-11133] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [django__django-11133] no-survivor — 1 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 32673ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8121ms
+  [django__django-11099] REPAIR attempt 0: regressions=0, oraclePass=3/3, lints=0
+  [django__django-11099] selected (repros=0 survivors=1 reproPass=0 oraclePass=3 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 20523ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 11676ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 15970ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 15552ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 12944ms
+  [django__django-11179] selected (repros=0 survivors=2 reproPass=0 oraclePass=1 votes=2)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 36731ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9639ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 15888ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 15571ms
+  [django__django-11283] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 18641ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 12169ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 14388ms
+  [django__django-11283] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [django__django-11283] no-survivor — 3 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 74621ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9099ms
+  [django__django-11422] REPAIR attempt 0: regressions=1, oraclePass=1/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 5916ms
+  [django__django-11422] REPAIR attempt 1: regressions=1, oraclePass=1/1, lints=0
+  [django__django-11422] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 55172ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 9897ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 78226ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8044ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 75929ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 5749ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5319ms
+  [django__django-11564] REPAIR attempt 0: regressions=0, oraclePass=1/2, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 81604ms
+  [pytest-dev__pytest-11143] selected (repros=0 survivors=1 reproPass=0 oraclePass=1 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8832ms
+  [django__django-11564] REPAIR attempt 1: regressions=0, oraclePass=1/2, lints=0
+  [django__django-11564] no-survivor — 2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 70091ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 20050ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 24989ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 20428ms
+  [pytest-dev__pytest-11148] selected (repros=0 survivors=1 reproPass=0 oraclePass=2 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5770ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 28382ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 4826ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8040ms
+  [pytest-dev__pytest-5221] selected (repros=0 survivors=3 reproPass=0 oraclePass=2 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 3381ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 2909ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8148ms
+  [pytest-dev__pytest-5227] selected (repros=0 survivors=3 reproPass=0 oraclePass=3 votes=3)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 45690ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 19582ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 6960ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 21792ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9679ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5153ms
+  [pytest-dev__pytest-5413] ORACLE attempt 0: touches=src/_pytest/_code/code.py, regressions=0, oraclePass=0/1
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4551ms
+  [pytest-dev__pytest-5413] REPAIR attempt 0: regressions=0, oraclePass=1/1, lints=0
+  [pytest-dev__pytest-5413] selected (repros=0 survivors=2 reproPass=0 oraclePass=1 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 17017ms
+  [pytest-dev__pytest-5103] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 6354ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8069ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 14806ms
+  [pytest-dev__pytest-5103] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [pytest-dev__pytest-5103] no-survivor — 2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9327ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5609ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 12280ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 27084ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 9515ms
+  [sympy__sympy-11400] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 16321ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 32457ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 12167ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 21727ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 31658ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 17577ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 28514ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 20995ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 9964ms
+  [sympy__sympy-11897] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5429ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 3977ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 24698ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 7049ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 6529ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8426ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 23933ms
+  [sympy__sympy-11870] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7595ms
+  [sympy__sympy-12171] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9039ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 11674ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 7947ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 9716ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4572ms
+  [sympy__sympy-12419] ORACLE attempt 0: touches=sympy/matrices/expressions/matexpr.py, regressions=0, oraclePass=0/1
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4661ms
+  [sympy__sympy-12419] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 4717ms
+  [sympy__sympy-12419] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [sympy__sympy-12419] no-survivor — 3 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 50387ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 5160ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8451ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 20687ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 6700ms
+  [pylint-dev__pylint-5859] selected (repros=0 survivors=1 reproPass=0 oraclePass=1 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7945ms
+  [sympy__sympy-12236] ORACLE attempt 0: touches=sympy/polys/partfrac.py, regressions=0, oraclePass=0/1
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7118ms
+  [sympy__sympy-12236] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 12906ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 9987ms
+  [sympy__sympy-12236] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [sympy__sympy-12236] no-survivor — 1 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 12704ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 25391ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 13468ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 10515ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5608ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7598ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 19638ms
+  [pylint-dev__pylint-7080] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [pylint-dev__pylint-7080] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 failed 94071ms AbortError: This operation was aborted
+    [llm] exhausted all model attempts
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 10698ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 11250ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 failed 90001ms AbortError: This operation was aborted
+    [llm] exhausted all model attempts
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5550ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 7570ms
+  [pylint-dev__pylint-6506] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7444ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 failed 92709ms AbortError: This operation was aborted
+    [llm] exhausted all model attempts
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7526ms
+  [pylint-dev__pylint-7114] ORACLE attempt 0: touches=pylint/lint/pylinter.py, regressions=0, oraclePass=0/1
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 14923ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 11370ms
+  [pylint-dev__pylint-7114] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 12058ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9850ms
+  [pylint-dev__pylint-7114] no-survivor — 1 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9506ms
+  [pylint-dev__pylint-7228] ORACLE attempt 0: touches=pylint/config/arguments_manager.py, regressions=0, oraclePass=0/2
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9225ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 7103ms
+  [pylint-dev__pylint-7228] REPAIR attempt 0: regressions=0, oraclePass=0/2, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 10419ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 5900ms
+  [pylint-dev__pylint-7993] selected (repros=0 survivors=2 reproPass=0 oraclePass=1 votes=1)
+    [llm] qwen/qwen3-coder attempt 1 ok 8183ms
+  [pylint-dev__pylint-7228] REPAIR attempt 1: regressions=0, oraclePass=0/2, lints=0
+  [pylint-dev__pylint-7228] no-survivor — 3 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+
+=== SELECT v2 DONE === 9 patches / 24 (django__django-11099:selected django__django-11133:no-survivor django__django-11179:selected django__django-11283:no-survivor django__django-11422:no-survivor django__django-11564:no-survivor pytest-dev__pytest-11143:selected pytest-dev__pytest-11148:selected pytest-dev__pytest-5103:no-survivor pytest-dev__pytest-5221:selected pytest-dev__pytest-5227:selected pytest-dev__pytest-5413:selected sympy__sympy-11400:no-survivor sympy__sympy-11870:no-survivor sympy__sympy-11897:no-survivor sympy__sympy-12171:no-survivor sympy__sympy-12236:no-survivor sympy__sympy-12419:no-survivor pylint-dev__pylint-5859:selected pylint-dev__pylint-6506:no-survivor pylint-dev__pylint-7080:no-survivor pylint-dev__pylint-7114:no-survivor pylint-dev__pylint-7228:no-survivor pylint-dev__pylint-7993:selected)
