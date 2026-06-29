@@ -656,7 +656,7 @@ async function runInstance(inst) {
       const reproPass = scoreRepro(); // SOFT ranker: of the valid repros, how many does this patch flip?
       const oracleResult = scoreOracleResult();
       const oraclePass = oracleResult.pass;
-      const rec = { diff, sr: srOf(text), reproPass, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length };
+      const rec = { diff, sr: srOf(text), candidateFiles: cands, reproPass, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length };
       if (failed.size === 0) survivors.push(rec);
       else {
         failedCandidates.push(rec);
@@ -739,7 +739,7 @@ async function runInstance(inst) {
           oracleRepaired = a + 1;
           break;
         } else {
-          failedCandidates.push({ diff, sr: srOf(otext), reproPass, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
+          failedCandidates.push({ diff, sr: srOf(otext), candidateFiles: cands, reproPass, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
         }
       }
     }
@@ -782,7 +782,7 @@ async function runInstance(inst) {
         const oraclePass = oracleResult.pass;
         log(`  [${id.replace("psf__requests-", "#")}] KNIGHT attempt ${a}: applied, touches=${[...diff.matchAll(/^\+\+\+ b\/(\S+)/gm)].map(x => x[1]).join(",")}, regressions=${failed.size}, kReproPass=${kp}/${gateRepros.length}, oraclePass=${oraclePass}/${oracle.nodes.length}`);
         if (failed.size === 0 && answerPass({ reproPass: kp || 0, oraclePass }, oracleTotal) > 0) { survivors.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, broke: [], norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length }); knighted = a + 1; break; }
-        else failedCandidates.push({ diff, sr: srOf(ktext), reproPass: kp || 0, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
+        else failedCandidates.push({ diff, sr: srOf(ktext), candidateFiles: cands, reproPass: kp || 0, oraclePass, oracleFailed: oracleResult.failed, broke: [...failed], lintFindings, norm: diff.replace(/\s+/g, " ").trim(), size: diff.split("\n").length });
       }
     }
     const REPAIR_RUNG = Number((process.argv.find(a => a.startsWith("--repair-rung=")) || "--repair-rung=1").slice(14));

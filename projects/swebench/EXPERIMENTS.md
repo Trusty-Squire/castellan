@@ -890,3 +890,37 @@ Artifacts:
 - `results-mixed24-sympy-source-hints.json`
 - `select-mixed24-sympy-source-hints.log`
 - `repair-trace-source-hints-sympy__sympy-*.jsonl`
+
+## 2026-06-29 — Production-file-constrained repair probe
+
+Question:
+
+- Can a small repair-rung prompt/context mutation reduce Sympy repair noise without adding samples or a
+  stronger model?
+
+Harness mutation:
+
+- Every applied failed candidate now carries the original candidate-file list into `runRepairRung()`.
+- Repair prompts now list `EDITABLE PRODUCTION FILES`, built from candidate files plus touched files while
+  filtering out `tests/`, `testing/`, and `test_*.py`.
+- Repair system prompt explicitly forbids editing tests or copying REQUIRED CONTRACT snippets into tests.
+
+Focused probe:
+
+- Instance: `sympy__sympy-12236`
+- Result: still `no-survivor`.
+- Behavior: first repair attempt remained headerless/apply-failed; second repair attempt applied cleanly to
+  `sympy/polys/partfrac.py`, had zero regressions, and still failed oracle `0/1`.
+
+Interpretation:
+
+- The mutation is directionally right but not a pass lift. It keeps repair aimed at production source once
+  the model emits a usable block, but qwen still proposes the wrong Sympy algorithm for `apart`.
+- Next useful step is not more generic repair plumbing for this case; it is either Sympy-specific semantic
+  context/contracts or a stronger repair model on the now-cleanly-localized Sympy failures.
+
+Artifacts:
+
+- `results-sympy-12236-production-repair.json`
+- `select-sympy-12236-production-repair.log`
+- `repair-trace-sympy-12236-production-repair.jsonl`

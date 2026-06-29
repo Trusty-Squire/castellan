@@ -354,7 +354,15 @@ describe("SWE-bench repair rung utilities", () => {
       cands: ["pkg/demo.py"],
       ctx: "### pkg/demo.py\n```python\nvalue = 1\n```",
       oracle: { nodes: ["test_demo.py::test_a", "test_demo.py::test_b"], text: "FULL ORACLE TEXT\n```python\ndef test_b():\n    assert fixed\n```" },
-      candidates: [{ diff: "diff --git a/pkg/demo.py b/pkg/demo.py\n", sr: "", oraclePass: 0, oracleFailed: ["test_demo.py::test_a", "test_demo.py::test_b"], broke: [], lintFindings: [] }],
+      candidates: [{
+        diff: "diff --git a/pkg/demo.py b/pkg/demo.py\n",
+        sr: "",
+        candidateFiles: ["pkg/demo.py", "pkg/tests/test_demo.py"],
+        oraclePass: 0,
+        oracleFailed: ["test_demo.py::test_a", "test_demo.py::test_b"],
+        broke: [],
+        lintFindings: [],
+      }],
       reset: () => execFileSync("git", ["checkout", "-q", "--", "."], { cwd: wd }),
       applyEdits: () => {
         writeFileSync(join(wd, "pkg/demo.py"), "value = 2\n");
@@ -385,6 +393,9 @@ describe("SWE-bench repair rung utilities", () => {
 
     expect(survivors).toHaveLength(1);
     expect(prompts[0]).toContain("FULL ORACLE TEXT");
+    expect(prompts[0]).toContain("EDITABLE PRODUCTION FILES");
+    expect(prompts[0]).toContain("- pkg/demo.py");
+    expect(prompts[0]).not.toContain("- pkg/tests/test_demo.py");
     expect(prompts[0]).toContain("passed no oracle nodes");
     expect(prompts[1]).toContain("- test_demo.py::test_b");
     expect(prompts[1]).toContain("FAILED ORACLE DETAIL");

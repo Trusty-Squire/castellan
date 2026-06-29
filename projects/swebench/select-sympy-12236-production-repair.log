@@ -1,0 +1,18 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 20458ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8620ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 failed 90006ms AbortError: This operation was aborted
+    [llm] exhausted all model attempts
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 82109ms
+  [sympy__sympy-12236] ORACLE attempt 0: touches=sympy/polys/partfrac.py, regressions=0, oraclePass=0/1
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 6221ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 7430ms
+  [sympy__sympy-12236] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [sympy__sympy-12236] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+
+=== SELECT v2 DONE === 0 patches / 1 (sympy__sympy-12236:no-survivor)
