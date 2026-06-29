@@ -1,0 +1,99 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 7891ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 6673ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 10476ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90007ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 12599ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.4
+    [llm] moonshotai/kimi-k2.7-code attempt 1 ok 58481ms
+  [sympy__sympy-11400] KNIGHT: libCalls probed, kRepros=1, gateRepros=1
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 ok 51787ms
+  [sympy__sympy-11400] KNIGHT attempt 0: applied, touches=sympy/printing/ccode.py, regressions=0, kReproPass=0/1, oraclePass=0/2
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.3
+    [llm] moonshotai/kimi-k2.7-code attempt 1 ok 49708ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 empty 141ms
+    [llm] moonshotai/kimi-k2.7-code error {"message":"Provider returned error","code":429,"metadata":{"raw":"moonshotai/kimi-k2.7-code is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/inte
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8385ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.2
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90003ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 8345ms
+  [sympy__sympy-11400] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 failed 90000ms AbortError: This operation was aborted
+    [llm] exhausted all model attempts
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 14885ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 39732ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90002ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 9137ms
+  [sympy__sympy-12236] ORACLE attempt 0: touches=sympy/polys/partfrac.py, regressions=0, oraclePass=0/1
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.4
+    [llm] moonshotai/kimi-k2.7-code attempt 1 ok 47875ms
+  [sympy__sympy-12236] KNIGHT: libCalls probed, kRepros=1, gateRepros=1
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90002ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 20015ms
+  [sympy__sympy-12236] KNIGHT attempt 0: applied, touches=sympy/polys/partfrac.py, regressions=0, kReproPass=0/1, oraclePass=0/1
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.3
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90002ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0.3
+    [llm] qwen/qwen3-coder attempt 1 failed 90001ms AbortError: This operation was aborted
+    [llm] exhausted all model attempts
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90001ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 17442ms
+  [sympy__sympy-12236] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.2
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90001ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 12467ms
+  [sympy__sympy-12236] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [sympy__sympy-12236] no-survivor — 2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 20180ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 9502ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 8485ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90001ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 28983ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.4
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90001ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0.4
+    [llm] qwen/qwen3-coder attempt 1 ok 9992ms
+  [sympy__sympy-12419] KNIGHT: libCalls probed, kRepros=1, gateRepros=1
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90000ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 52403ms
+  [sympy__sympy-12419] KNIGHT attempt 0: applied, touches=sympy/assumptions/handlers/matrices.py, regressions=0, kReproPass=0/1, oraclePass=0/1
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.3
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90000ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0.3
+    [llm] qwen/qwen3-coder attempt 1 ok 28168ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90002ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 5260ms
+    [llm] moonshotai/kimi-k2.7-code attempt 1 temp=0.2
+    [llm] moonshotai/kimi-k2.7-code attempt 1 failed 90002ms AbortError: This operation was aborted
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 5895ms
+  [sympy__sympy-12419] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+
+=== SELECT v2 DONE === 0 patches / 3 (sympy__sympy-11400:no-survivor sympy__sympy-12236:no-survivor sympy__sympy-12419:no-survivor)

@@ -1,0 +1,17 @@
+[
+ {
+  "id": "sympy__sympy-11400",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-12236",
+  "status": "no-survivor",
+  "note": "2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ },
+ {
+  "id": "sympy__sympy-12419",
+  "status": "no-survivor",
+  "note": "0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n"
+ }
+]

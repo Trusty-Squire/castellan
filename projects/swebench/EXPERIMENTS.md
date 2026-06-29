@@ -924,3 +924,49 @@ Artifacts:
 - `results-sympy-12236-production-repair.json`
 - `select-sympy-12236-production-repair.log`
 - `repair-trace-sympy-12236-production-repair.jsonl`
+
+## 2026-06-29 — Sympy Kimi knight probe
+
+Question:
+
+- Does `moonshotai/kimi-k2.7-code` as the repair/knight model convert the now-localized Sympy failures
+  without widening qwen generation?
+
+Configuration:
+
+- Instances: `sympy__sympy-11400`, `sympy__sympy-12236`, `sympy__sympy-12419`
+- Generation: `qwen/qwen3-coder`
+- Repair/knight: `moonshotai/kimi-k2.7-code`
+- Fallback: `qwen/qwen3-coder`
+- Shape: `k=3`, `r=0`, `oracle=1`, `oracle-repair=1`, `knight=2`, `repair-rung=2`,
+  `repair-records=1`, `llm-timeout-ms=90000`
+
+Result:
+
+- Local selected: `0/3`
+- No official score was run because there were no selected predictions.
+
+Observations:
+
+- Kimi knight engaged: each instance reached the knight path and produced one observation-grounded repro.
+- Kimi was operationally unstable through this route: many calls hit the 90s cap, and one returned an
+  upstream `429` rate-limit error.
+- The few applied knight/fallback patches stayed regression-clean but still missed oracle:
+  - `11400`: touched `sympy/printing/ccode.py`, oracle `0/2`
+  - `12236`: touched `sympy/polys/partfrac.py`, oracle `0/1`
+  - `12419`: touched `sympy/assumptions/handlers/matrices.py`, oracle `0/1`
+
+Interpretation:
+
+- "Kimi knight" did not produce a pass lift under the current OpenRouter route and 90s cap.
+- This does not prove Kimi lacks Sympy capability; it proves this operational configuration is too
+  timeout/rate-limit bound to be the next lean default.
+- Next better experiment is either a different strong repair route with reliable latency, or a single
+  longer-timeout Kimi run on one instance only, not a batch.
+
+Artifacts:
+
+- `mixed-24-sympy-kimi-knight-3-instances.json`
+- `results-sympy-kimi-knight-3.json`
+- `select-sympy-kimi-knight-3.log`
+- `repair-trace-kimi-knight-sympy__sympy-*.jsonl`
