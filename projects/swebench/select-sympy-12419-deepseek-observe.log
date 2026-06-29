@@ -1,0 +1,17 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 11061ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 10964ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 5532ms
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 77905ms
+  [sympy__sympy-12419] ORACLE attempt 0: touches=sympy/matrices/expressions/matexpr.py, regressions=0, oraclePass=0/1
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 150873ms
+  [sympy__sympy-12419] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] deepseek/deepseek-v4-pro attempt 1 temp=0.2
+    [llm] deepseek/deepseek-v4-pro attempt 1 ok 44363ms
+  [sympy__sympy-12419] no-survivor — 3 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+
+=== SELECT v2 DONE === 0 patches / 1 (sympy__sympy-12419:no-survivor)

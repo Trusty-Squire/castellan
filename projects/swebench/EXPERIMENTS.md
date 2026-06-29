@@ -1132,3 +1132,45 @@ Artifacts:
 - `results-sympy-12419-oracle-observe.json`
 - `select-sympy-12419-oracle-observe.log`
 - `repair-trace-sympy-12419-oracle-observe.jsonl`
+
+## 2026-06-29 — Sympy 12419 DeepSeek with oracle observation
+
+Question:
+
+- If the repair model is stronger and receives the general oracle assertion observations, does
+  `sympy__sympy-12419` convert?
+
+Configuration:
+
+- Qwen generation, DeepSeek repair (`deepseek/deepseek-v4-pro`), `llm-timeout-ms=240000`
+- Same lean single-instance shape: `k=3`, `r=0`, `oracle=1`, `oracle-repair=1`, `knight=0`,
+  `repair-rung=2`, `repair-records=1`
+- General oracle assertion observation enabled.
+
+Result:
+
+- Local selected: `0/1`
+- No official score was run.
+
+Observations:
+
+- DeepSeek was operationally viable in this single run: calls returned in ~78s, ~151s, and ~44s.
+- All attempts were regression-clean and touched `sympy/matrices/expressions/matexpr.py`.
+- DeepSeek still stayed in the same wrong semantic patch family:
+  - `Piecewise((S.One, Eq(i, j)), (S.Zero, True))`
+  - `KroneckerDelta(i, j)`
+- Oracle remained `0/1`.
+
+Interpretation:
+
+- For this branch, the harness has now ruled out the main scalable signal-loss classes:
+  localization, class context, package-test pollution, production-file constraints, basic oracle contract,
+  runtime observation, and provider instability for the strong repair model.
+- Do not add a more test-specific patch. This is a clean semantic miss unless a new general Sympy reasoning
+  mechanism is proposed.
+
+Artifacts:
+
+- `results-sympy-12419-deepseek-observe.json`
+- `select-sympy-12419-deepseek-observe.log`
+- `repair-trace-sympy-12419-deepseek-observe.jsonl`
