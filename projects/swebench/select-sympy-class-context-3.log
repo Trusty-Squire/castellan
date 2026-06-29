@@ -1,0 +1,45 @@
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 6049ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 7210ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 5602ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 6083ms
+  [sympy__sympy-11400] ORACLE attempt 0: touches=sympy/printing/ccode.py, regressions=0, oraclePass=0/2
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8562ms
+  [sympy__sympy-11400] REPAIR attempt 0: regressions=0, oraclePass=0/2, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 7097ms
+  [sympy__sympy-11400] no-survivor — 2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4623ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 4545ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 6658ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4378ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4033ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 10346ms
+  [sympy__sympy-12171] no-survivor — 0 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 8333ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 41532ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0.7
+    [llm] qwen/qwen3-coder attempt 1 ok 6300ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 6190ms
+    [llm] qwen/qwen3-coder attempt 1 temp=0
+    [llm] qwen/qwen3-coder attempt 1 ok 4093ms
+  [sympy__sympy-12419] REPAIR attempt 0: regressions=0, oraclePass=0/1, lints=0
+    [llm] qwen/qwen3-coder attempt 1 temp=0.2
+    [llm] qwen/qwen3-coder attempt 1 ok 6415ms
+  [sympy__sympy-12419] REPAIR attempt 1: regressions=0, oraclePass=0/1, lints=0
+  [sympy__sympy-12419] no-survivor — 2 clean of 3, 0 repros, 0 repair-cand, oracle miss, knight n
+
+=== SELECT v2 DONE === 0 patches / 3 (sympy__sympy-11400:no-survivor sympy__sympy-12171:no-survivor sympy__sympy-12419:no-survivor)

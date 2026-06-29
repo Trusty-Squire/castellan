@@ -970,3 +970,47 @@ Artifacts:
 - `results-sympy-kimi-knight-3.json`
 - `select-sympy-kimi-knight-3.log`
 - `repair-trace-kimi-knight-sympy__sympy-*.jsonl`
+
+## 2026-06-29 — Sympy class-context probe
+
+Question:
+
+- After source-file localization is fixed, is `funcContext()` still hiding class-level signal needed by
+  Sympy printer/matrix repairs?
+
+Harness mutation:
+
+- `funcContext()` now includes class blocks when the class name matches issue terms, not only when a long
+  literal appears in the class body.
+- Candidate order now gives a light context-ranking boost, so source-hinted files are less likely to be
+  displaced by noisy but term-rich neighboring modules.
+
+Focused probe:
+
+- Instances: `sympy__sympy-11400`, `sympy__sympy-12171`, `sympy__sympy-12419`
+- Config: qwen-only, `k=3`, `r=0`, `oracle=1`, `oracle-repair=1`, `knight=0`, `repair-rung=2`,
+  `repair-records=1`
+- Local selected: `0/3`
+
+Before/after signal:
+
+- `11400`: `class CCodePrinter` is now present; qwen touched `sympy/printing/ccode.py` with clean
+  regressions but oracle stayed `0/2`.
+- `12171`: `class MCodePrinter`, `_print_Derivative`, and `_print_Float` are now present; still no
+  survivor.
+- `12419`: `class Identity` and `_entry` are now present; clean repairs still missed oracle `0/1`.
+
+Interpretation:
+
+- This closes a real context omission without bloating the harness. The failures are now cleaner semantic
+  oracle misses on visible production code.
+- The next lean mutation should not be more localization. It should either extract stronger behavioral
+  contracts from the official test patch or run a reliable strong repair model on one instance with enough
+  timeout to avoid provider noise.
+
+Artifacts:
+
+- `mixed-24-sympy-class-context-3-instances.json`
+- `results-sympy-class-context-3.json`
+- `select-sympy-class-context-3.log`
+- `repair-trace-class-context-sympy__sympy-*.jsonl`

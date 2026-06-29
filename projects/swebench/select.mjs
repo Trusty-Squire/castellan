@@ -466,9 +466,11 @@ function funcContext(wd, cands, problem, budget = 13000) {
     const src = readFileSync(join(wd, c), "utf8");
     const ci = src.indexOf("\nclass ");
     const header = src.slice(0, ci > 0 ? Math.min(ci, 1200) : 1200);
+    const fileBoost = Math.max(0, cands.length - cands.indexOf(c));
     for (const b of defBlocks(src)) {
-      if (b.kind === "class" && !literals.some(lit => b.text.includes(lit))) continue; // rank methods/functions, plus literal-bearing classes
-      blocks.push({ c, header, name: b.name, text: b.text, score: 0, term: 0 });
+      const nameHit = terms.some(t => b.name.toLowerCase().includes(t));
+      if (b.kind === "class" && !nameHit && !literals.some(lit => b.text.includes(lit))) continue; // rank methods/functions, plus issue-named/literal-bearing classes
+      blocks.push({ c, header, name: b.name, text: b.text, score: fileBoost * 0.25, term: 0 });
     }
   }
   const docs = blocks.map(b => {
@@ -490,8 +492,8 @@ function funcContext(wd, cands, problem, budget = 13000) {
       const idf = Math.log(1 + (N - df[t] + 0.5) / (df[t] + 0.5));
       score += idf * (f * (k1 + 1)) / (f + k1 * (1 - b + b * d.len / avgdl));
     }
-    d.block.score = score;
-    d.block.term = score;
+    d.block.score += score;
+    d.block.term = d.block.score;
   }
   blocks.sort((a, b) => b.score - a.score);
   // 1) SEED: greedily pack the highest term-scoring functions into the budget.

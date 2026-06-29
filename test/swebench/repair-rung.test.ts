@@ -48,6 +48,30 @@ describe("SWE-bench repair rung utilities", () => {
     ]);
   });
 
+  it("keeps issue-named classes in function context", async () => {
+    const { funcContext } = await loadMjs<{
+      funcContext: (wd: string, cands: string[], problem: string, budget?: number) => string;
+    }>("projects/swebench/select.mjs");
+    const wd = tempRepo();
+    mkdirSync(join(wd, "pkg"), { recursive: true });
+    writeFileSync(
+      join(wd, "pkg", "matexpr.py"),
+      [
+        "class Identity(MatrixExpr):",
+        "    def _entry(self, i, j):",
+        "        return KroneckerDelta(i, j)",
+        "",
+        "class Other:",
+        "    def helper(self):",
+        "        return None",
+      ].join("\n"),
+    );
+
+    const ctx = funcContext(wd, ["pkg/matexpr.py"], "Sum of the elements of an Identity matrix is zero", 4000);
+    expect(ctx).toContain("class Identity");
+    expect(ctx).toContain("def _entry");
+  });
+
   it("extracts explicit contracts for the pytest MRO and exception-chain cases", async () => {
     const { oracleContractHints, oracleInfo } = await loadMjs<{
       oracleContractHints: (patch: string) => string;
