@@ -313,6 +313,32 @@ function listField(v) {
   if (typeof v === "string") { try { const j = JSON.parse(v); return Array.isArray(j) ? j : []; } catch { return []; } }
   return [];
 }
+function sourceHintsFromTestPatch(wd, cfg, patch, limit = 5) {
+  if (!patch) return [];
+  const paths = new Set();
+  for (const m of patch.matchAll(/^diff --git a\/(\S+\.py) b\/\S+\.py$/gm)) paths.add(m[1]);
+  for (const m of patch.matchAll(/^[+-]{3} [ab]\/(\S+\.py)$/gm)) paths.add(m[1]);
+  const hints = [];
+  const add = (rel) => {
+    if (!rel || hints.includes(rel)) return;
+    if (!cfg.src.some(s => rel === s || rel.startsWith(`${s}/`))) return;
+    if (existsSync(join(wd, rel))) hints.push(rel);
+  };
+  for (const rel of paths) {
+    if (!/(^|\/)tests?\//.test(rel) && !/(^|\/)test_[^/]+\.py$/.test(rel)) continue;
+    const parts = rel.split("/");
+    const base = parts.pop();
+    if (!base?.startsWith("test_")) continue;
+    const sourceBase = base.replace(/^test_/, "");
+    const testDir = parts[parts.length - 1];
+    if (testDir === "tests" || testDir === "test") {
+      add([...parts.slice(0, -1), sourceBase].join("/"));
+      add([...parts.slice(0, -1), sourceBase.replace(/\.py$/, ""), "__init__.py"].join("/"));
+    }
+    add([...parts, sourceBase].join("/"));
+  }
+  return hints.slice(0, limit);
+}
 function applyTestPatch(wd, patch) {
   if (!patch || !patch.trim()) return false;
   writeFileSync(join(wd, ".oracle-tests.diff"), patch);
@@ -554,7 +580,8 @@ async function runInstance(inst) {
     if (!existsSync(wd)) return { id, status: "no-checkout" };
     const reset = () => execSync(`cd ${wd} && git reset --hard ${inst.base_commit} -q && (find . -type d -name __pycache__ -prune -exec sudo -n rm -rf {} + 2>/dev/null || true) && git clean -fdxq -e venv 2>/dev/null`, { stdio: "ignore" });
     reset();
-    const cands = retrieve(inst.problem_statement, wd, cfg.src, 5);
+    const hintCands = sourceHintsFromTestPatch(wd, cfg, inst.test_patch, 5);
+    const cands = [...new Set([...hintCands, ...retrieve(inst.problem_statement, wd, cfg.src, 5)])].slice(0, 5);
     if (!cands.length) return { id, status: "no-localize" };
     const ctx = funcContext(wd, cands, inst.problem_statement) + contractContext(wd, inst.problem_statement); // function-level + contract-required context
     // regression set = EVERY offline-passing test node across the suite. Pass the repo's test ROOTS
@@ -795,7 +822,7 @@ async function runInstance(inst) {
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }
 }
-export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, defBlocks, localizedReproHints, repoCfg };
+export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, defBlocks, localizedReproHints, repoCfg, sourceHintsFromTestPatch };
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {

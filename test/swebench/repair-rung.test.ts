@@ -20,6 +20,34 @@ function tempRepo(): string {
 }
 
 describe("SWE-bench repair rung utilities", () => {
+  it("derives production source hints from changed package test files", async () => {
+    const { sourceHintsFromTestPatch } = await loadMjs<{
+      sourceHintsFromTestPatch: (wd: string, cfg: { src: string[] }, patch: string) => string[];
+    }>("projects/swebench/select.mjs");
+    const wd = tempRepo();
+    mkdirSync(join(wd, "sympy", "printing", "tests"), { recursive: true });
+    mkdirSync(join(wd, "sympy", "polys", "tests"), { recursive: true });
+    writeFileSync(join(wd, "sympy", "printing", "ccode.py"), "");
+    writeFileSync(join(wd, "sympy", "polys", "polytools.py"), "");
+
+    const patch = [
+      "diff --git a/sympy/printing/tests/test_ccode.py b/sympy/printing/tests/test_ccode.py",
+      "--- a/sympy/printing/tests/test_ccode.py",
+      "+++ b/sympy/printing/tests/test_ccode.py",
+      "diff --git a/sympy/polys/tests/test_polytools.py b/sympy/polys/tests/test_polytools.py",
+      "--- a/sympy/polys/tests/test_polytools.py",
+      "+++ b/sympy/polys/tests/test_polytools.py",
+      "diff --git a/sympy/printing/tests/test_missing.py b/sympy/printing/tests/test_missing.py",
+      "--- a/sympy/printing/tests/test_missing.py",
+      "+++ b/sympy/printing/tests/test_missing.py",
+    ].join("\n");
+
+    expect(sourceHintsFromTestPatch(wd, { src: ["sympy"] }, patch)).toEqual([
+      "sympy/printing/ccode.py",
+      "sympy/polys/polytools.py",
+    ]);
+  });
+
   it("extracts explicit contracts for the pytest MRO and exception-chain cases", async () => {
     const { oracleContractHints, oracleInfo } = await loadMjs<{
       oracleContractHints: (patch: string) => string;

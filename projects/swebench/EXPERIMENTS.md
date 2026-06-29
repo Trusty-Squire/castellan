@@ -849,3 +849,44 @@ Next steps:
 2. Add a general candidate filter or prompt rule against test-file-only fixes for benchmark repair tasks.
 3. Re-score any new selected patches officially immediately, then assemble a complete mixed-24 table with
    `official pass`, `official fail`, `interrupted/provider`, or `honest no-survivor`.
+
+## 2026-06-29 — Sympy source-hint localization rerun
+
+Question:
+
+- Were the six Sympy misses caused by bad localization, or by qwen failing to write the right patch once
+  the right code is visible?
+
+Harness mutation:
+
+- Added `sourceHintsFromTestPatch()`: changed official test files imply existing sibling production files
+  by dropping `/tests/` and the `test_` prefix, then those files are prepended before BM25 candidates.
+- Examples now surfaced at candidate #1:
+  - `sympy/printing/tests/test_ccode.py` -> `sympy/printing/ccode.py`
+  - `sympy/printing/tests/test_mathematica.py` -> `sympy/printing/mathematica.py`
+  - `sympy/polys/tests/test_polytools.py` -> `sympy/polys/polytools.py`
+  - `sympy/matrices/expressions/tests/test_matexpr.py` -> `sympy/matrices/expressions/matexpr.py`
+
+Rerun result:
+
+- Command shape: same lean config as mixed-24 (`k=3`, `r=0`, `oracle=1`, `oracle-repair=1`,
+  `repair-rung=2`, `repair-records=1`, `llm-timeout-ms=90000`).
+- Local selected: `0/6`.
+- No official score was run because there were no selected predictions.
+
+Interpretation:
+
+- Localization did improve materially. The rerun touched plausible production files:
+  `ccode.py`, `trigonometric.py`, `latex.py`, `mathematica.py`, `partfrac.py`, and `matexpr.py`.
+- The remaining Sympy failure is mostly patch semantics plus repair-output discipline. Repairs still often
+  missed oracle with clean regressions, and some repair attempts emitted unusable/test-derived SEARCH
+  blocks.
+- This falsifies "just add the right file" as enough for Sympy. The next lean mutation should target
+  repair prompt shape or a production-file-only patch filter, not wider localization or more samples.
+
+Artifacts:
+
+- `mixed-24-sympy-6-instances.json`
+- `results-mixed24-sympy-source-hints.json`
+- `select-mixed24-sympy-source-hints.log`
+- `repair-trace-source-hints-sympy__sympy-*.jsonl`
