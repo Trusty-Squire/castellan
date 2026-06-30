@@ -282,66 +282,80 @@ export async function runRepairRung(opts) {
         const inferred = files.length === 1 ? files[0] : inferFileForPatch(wd, files, text);
         if (inferred) text = `### ${inferred}\n${text}`;
       }
-      reset();
-      const applied = applyEdits(wd, text);
-      if (!applied) {
-        appendTrace(tracePath, { ...baseInput, attempt, result: "apply_failed", rawOutput: text.slice(0, 12000) });
-        continue;
+      let best = null;
+      for (const onTop of [false, true]) {
+        reset();
+        if (onTop) {
+          if (!failedPatch.trim() || !applyEdits(wd, failedPatch)) continue;
+        }
+        const applied = applyEdits(wd, text);
+        if (!applied) {
+          appendTrace(tracePath, { ...baseInput, attempt, onTop, result: "apply_failed", rawOutput: text.slice(0, 12000) });
+          continue;
+        }
+        const diff = diffCmd();
+        if (!diff.trim()) {
+          appendTrace(tracePath, { ...baseInput, attempt, onTop, result: "empty_diff" });
+          continue;
+        }
+        const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
+        addCompileFailure(failed, runner, touchedPyFiles(diff));
+        const lintFindings = patchLint(inst.problem_statement, diff);
+        for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
+        const reproPass = scoreRepro();
+        const oracleResult = scoreOracleResult ? scoreOracleResult() : {
+          pass: scoreOracle(),
+          failed: oracle.nodes?.length ? oracle.nodes : [],
+        };
+        const oraclePass = oracleResult.pass;
+        const trace = {
+          ...baseInput,
+          attempt,
+          onTop,
+          outputPatch: diff,
+          result: {
+            applied,
+            lint: lintFindings.length ? "fail" : "pass",
+            lintFindings,
+            regressions: [...failed],
+            oracle: `${oraclePass}/${oracle.nodes?.length || 0}`,
+            oracleFailed: oracleResult.failed || [],
+            reproPass,
+          },
+        };
+        appendTrace(tracePath, trace);
+        log(`  [${id.replace("psf__requests-", "#")}] REPAIR attempt ${attempt}${onTop ? " on-top" : ""}: regressions=${failed.size}, oraclePass=${oraclePass}/${oracle.nodes?.length || 0}, lints=${lintFindings.length}`);
+        if (failed.size === 0 && solvesTarget({ reproPass, oraclePass }, oracle)) {
+          survivors.push({
+            diff,
+            sr: text.match(/###[\s\S]*?>>>>>>> REPLACE/g)?.join("\n\n") || "",
+            reproPass,
+            oraclePass,
+            broke: [],
+            norm: diff.replace(/\s+/g, " ").trim(),
+            size: diff.split("\n").length,
+            repairedByRung: true,
+          });
+          return survivors;
+        }
+        const candidate = { diff, lintFindings, failed: [...failed], oracleFailed: oracleResult.failed || [], oraclePass, reproPass };
+        if (!best ||
+          (oraclePass - candidate.failed.length) > ((best.oraclePass || 0) - (best.failed?.length || 0)) ||
+          (oraclePass === best.oraclePass && candidate.failed.length < (best.failed?.length || 0))) {
+          best = candidate;
+        }
       }
-      const diff = diffCmd();
-      if (!diff.trim()) {
-        appendTrace(tracePath, { ...baseInput, attempt, result: "empty_diff" });
-        continue;
-      }
-      const failed = basePass.length ? runner.nodes(basePass).failed : new Set();
-      addCompileFailure(failed, runner, touchedPyFiles(diff));
-      const lintFindings = patchLint(inst.problem_statement, diff);
-      for (const lint of lintFindings) failed.add(`SER_PATCH_LINT::${lint}`);
-      const reproPass = scoreRepro();
-      const oracleResult = scoreOracleResult ? scoreOracleResult() : {
-        pass: scoreOracle(),
-        failed: oracle.nodes?.length ? oracle.nodes : [],
-      };
-      const oraclePass = oracleResult.pass;
-      const trace = {
-        ...baseInput,
-        attempt,
-        outputPatch: diff,
-        result: {
-          applied,
-          lint: lintFindings.length ? "fail" : "pass",
-          lintFindings,
-          regressions: [...failed],
-          oracle: `${oraclePass}/${oracle.nodes?.length || 0}`,
-          oracleFailed: oracleResult.failed || [],
-          reproPass,
-        },
-      };
-      appendTrace(tracePath, trace);
-      log(`  [${id.replace("psf__requests-", "#")}] REPAIR attempt ${attempt}: regressions=${failed.size}, oraclePass=${oraclePass}/${oracle.nodes?.length || 0}, lints=${lintFindings.length}`);
-      if (failed.size === 0 && solvesTarget({ reproPass, oraclePass }, oracle)) {
-        survivors.push({
-          diff,
-          sr: text.match(/###[\s\S]*?>>>>>>> REPLACE/g)?.join("\n\n") || "",
-          reproPass,
-          oraclePass,
-          broke: [],
-          norm: diff.replace(/\s+/g, " ").trim(),
-          size: diff.split("\n").length,
-          repairedByRung: true,
-        });
-        return survivors;
-      }
+      if (!best) continue;
       current = {
         ...current,
-        diff,
+        diff: best.diff,
         rawOutput: text,
-        classification: lintFindings.length ? "lint_failed" : failed.size ? "regression" : "oracle_miss",
-        lintFindings,
-        broke: [...failed],
-        oracleFailed: oracle.nodes?.length && oraclePass < oracle.nodes.length ? oracleResult.failed || oracle.nodes : [],
-        oraclePass,
-        reproPass,
+        classification: best.lintFindings.length ? "lint_failed" : best.failed.length ? "regression" : "oracle_miss",
+        lintFindings: best.lintFindings,
+        broke: best.failed,
+        oracleFailed: oracle.nodes?.length && best.oraclePass < oracle.nodes.length ? best.oracleFailed || oracle.nodes : [],
+        oraclePass: best.oraclePass,
+        reproPass: best.reproPass,
       };
     }
   }

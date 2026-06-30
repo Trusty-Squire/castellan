@@ -495,7 +495,7 @@ describe("SWE-bench repair rung utilities", () => {
       scoreOracle: () => 1,
       scoreOracleResult: () => {
         oracleCalls++;
-        return oracleCalls === 1
+        return oracleCalls <= 2
           ? { pass: 1, passed: ["test_demo.py::test_a"], failed: ["test_demo.py::test_b"] }
           : { pass: 2, passed: ["test_demo.py::test_a", "test_demo.py::test_b"], failed: [] };
       },

@@ -1980,3 +1980,45 @@ Artifacts:
 - `results-pylint-7080-literal-hints.json`
 - `select-pylint-7080-literal-hints.log`
 - `repair-trace-pylint-7080-literal-hints.jsonl`
+
+## 2026-06-30 — Repair rung on-top landing check
+
+Question:
+
+- Was the repair rung losing target-passing changes because it applied repair output only from the base
+  tree, instead of also trying it on top of the failed candidate patch?
+
+Harness mutation:
+
+- `runRepairRung` now evaluates repair output both from base and on top of the failed candidate when a
+  failed candidate patch exists.
+- Trace records include `onTop` and the selector keeps the better verifier result if neither lands.
+
+Focused slice:
+
+- `pylint-7080`
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `repair-records=2`, `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Selector submitted `0/1`; best-known mixed-24 score remains `13/24`.
+- Base repair result: `regressions=0`, `oraclePass=0/1`.
+- On-top repair result: `regressions=4`, `oraclePass=0/1`.
+
+Failure classification:
+
+- General patch-landing behavior is now more honest, but this focused case did not lift.
+- `pylint-7080` remains a semantic repair-composition miss after target/regression evidence is available.
+
+Verification:
+
+- `pnpm vitest run test/swebench/repair-rung.test.ts` -> `14` tests passed.
+
+Artifacts:
+
+- `results-pylint-7080-on-top-repair.json`
+- `select-pylint-7080-on-top-repair.log`
+- `repair-trace-pylint-7080-on-top-repair.jsonl`
