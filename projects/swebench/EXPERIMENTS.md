@@ -1817,3 +1817,48 @@ Artifacts:
 - `results-remaining5-k6-deepseek-stable.json`
 - `select-remaining5-k6-deepseek-stable.log`
 - `remaining5-k6-repair-trace-*.jsonl`
+
+## 2026-06-30 — Candidate-state oracle trace feedback
+
+Question:
+
+- Were clean oracle-miss repairs losing signal because the repair prompt could include failed-oracle
+  traceback detail from the wrong tree state?
+
+Harness mutation:
+
+- `repair.mjs` now captures failed-oracle traceback summaries explicitly on both the base tree and the
+  failed-candidate tree, labeled as `base tree before candidate` and `after failed candidate patch`.
+- Oracle test source remains static, but runtime failure detail is now stateful and cannot accidentally
+  describe a stale checkout.
+
+Focused slice:
+
+- `pylint-7228`
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Focused selector submitted `0/1`.
+- `pylint-7228` remained `no-survivor`; best-known mixed-24 score remains `13/24`.
+- One DeepSeek call timed out and fell back to qwen, but completed repairs still failed oracle `0/2`.
+
+Failure classification:
+
+- General harness signal mutation validated by unit test, but focused benchmark result is no-lift.
+- `pylint-7228` remains a clean oracle miss under this feedback.
+- This reduces confidence that the next missing signal is simply oracle traceback state; it does not prove
+  a model ceiling by itself.
+
+Verification:
+
+- `pnpm vitest run test/swebench/repair-rung.test.ts` -> `13` tests passed.
+
+Artifacts:
+
+- `results-pylint-7228-candidate-oracle-trace.json`
+- `select-pylint-7228-candidate-oracle-trace.log`
+- `repair-trace-pylint-7228-candidate-oracle-trace.jsonl`

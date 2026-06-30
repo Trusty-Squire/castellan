@@ -451,7 +451,9 @@ describe("SWE-bench repair rung utilities", () => {
       repairModel: "test-model",
       runner: {
         nodes: () => ({ failed: new Set() }),
-        tb: () => "",
+        tb: () => readFileSync(join(wd, "pkg/demo.py"), "utf8").includes("value = 2")
+          ? "FAILED test_demo.py::test_b\nE   AssertionError: candidate still misses value three"
+          : "FAILED test_demo.py::test_b\nE   AssertionError: base value is one",
         py: () => `value: ${readFileSync(join(wd, "pkg/demo.py"), "utf8").trim()}`,
       },
       basePass: [],
@@ -477,6 +479,10 @@ describe("SWE-bench repair rung utilities", () => {
     expect(prompts[0]).not.toContain("- pkg/tests/test_demo.py");
     expect(prompts[0]).toContain("base tree before candidate");
     expect(prompts[0]).toContain("after failed candidate patch");
+    expect(prompts[0]).toContain("Traceback summary for failed oracle nodes (base tree before candidate)");
+    expect(prompts[0]).toContain("base value is one");
+    expect(prompts[0]).toContain("Traceback summary for failed oracle nodes (after failed candidate patch)");
+    expect(prompts[0]).toContain("candidate still misses value three");
     expect(prompts[0]).toContain("passed no oracle nodes");
     expect(prompts[1]).toContain("- test_demo.py::test_b");
     expect(prompts[1]).toContain("FAILED ORACLE DETAIL");
