@@ -82,24 +82,46 @@ pnpm build        # compiles src → dist (needed for the `ser` binary)
 pnpm test         # 74 tests, hermetic, no network
 ```
 
-## The two commands that matter
+## The commands that matter
 
-### `ser run` — execute one mission
+Castellan's public CLI is intentionally small:
 
 ```bash
-node dist/cli.js run examples/demo.yaml --mock
+ser start "Build a secure API key vault with Slack support"
+ser status
+ser continue
+ser review "Build a secure API key vault with Slack support"
+ser ship "Build a secure API key vault with Slack support"
+ser stop
 ```
 
-Runs a mission end-to-end. `--mock` uses the scripted `MockEngine` (no LLM, real
-git ops in a temp sandbox) — this is the 3-node demo that exercises
-pack → run → reconcile → gate → checkpoint for real. Drop `--mock` for a real run
-(needs `OPENROUTER_API_KEY`); add `--chain <name>` to override the mission's chain.
-If the workdir isn't a git repo it's copied into a throwaway temp repo, so your
-source tree is never mutated. `ser trace <file>` pretty-prints any trace.
+`ser start` begins a verified delegation session. With no argument it opens the
+interactive TUI; with a goal or `--spec <file>` it runs the product funnel
+non-interactively. `ser continue` resumes the last interactive session.
+`ser review` runs through build audit and stops before shipping. `ser ship`
+verifies the gates are green and hands over the finished build. `ser status`
+summarizes the latest run at the product level.
 
-### `ser validate` — pre-flight mission validation
+Common options:
 
-`ser validate <mission.yaml>` checks a mission file for errors without spending any tokens or touching external services. It validates the mission schema, verifies referenced chains exist, warns when context_globs match no files, and flags empty blast_radius as an error. This command exits with code 0 when the mission is valid, making it suitable for CI pipelines or pre-run checks. Using ser validate helps catch configuration issues early in the development process before attempting a full mission run.
+```bash
+ser start "..." --yes --workdir ./app --chain cheap
+ser start --spec spec.yaml --to build
+ser ship "..." --mock
+```
+
+The older low-level verbs still exist for internal harness work and CI, but they
+are advanced commands now:
+
+```bash
+ser dev run examples/demo.yaml --mock
+ser dev validate examples/demo.yaml
+ser dev trace .squire/trace-example.jsonl
+ser dev experiment --dry-run
+```
+
+Legacy aliases such as `ser run`, `ser derive`, `ser validate`, and `ser trace`
+remain available during the transition.
 
 ### `pnpm experiment` — the benchmark (the whole point)
 
@@ -125,7 +147,7 @@ cost / completed       $___            $___           $___
 ```
 (placeholder — fill from your live run; the harness lift is `cheap` minus `cheap-raw`.)
 
-`ser run examples/demo.yaml --harness off` runs the same ablation on one
+`ser dev run examples/demo.yaml --harness off` runs the same ablation on one
 mission. `ser derive "<goal>"` is a convenience planner; the benchmark uses
 hand-written missions. `pnpm calibrate --tasks 11..20 --chain cheap` (live,
 human-run) reports per-task node completion and flags any task ≥90% complete as

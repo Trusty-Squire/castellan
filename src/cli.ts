@@ -25,6 +25,18 @@ async function main(argv: string[]): Promise<number> {
   loadDotEnv(process.cwd()); // .env.local/.env, nearest wins; real env always wins
   const [command, ...rest] = argv;
   switch (command) {
+    case "start":
+      return cmdStart(rest);
+    case "continue":
+      return cmdContinue(rest);
+    case "stop":
+      return cmdStop(rest);
+    case "review":
+      return cmdReview(rest);
+    case "ship":
+      return cmdShip(rest);
+    case "dev":
+      return cmdDev(rest);
     case "run":
       return cmdRun(rest);
     case "trace":
@@ -72,26 +84,26 @@ async function main(argv: string[]): Promise<number> {
 function printUsage(): void {
   process.stdout.write(
     [
-      "ser — Castellan: verified coding agent. An idea compiles to a gated build.",
+      "ser — Castellan: verified delegation. An outcome becomes a gated build.",
       "",
-      "  ser                               start fresh — the interactive TUI: shape an idea, then build it",
-      "  ser --continue   (-c)             resume your last session where you left off",
-      '  ser "<what you want to build>"     non-interactive: spec → build → audit → ship',
+      "Essential commands:",
+      "  ser start [goal-or-spec]           start a verified build session",
+      "  ser status                         show product-level progress for the latest run",
+      "  ser continue                       resume the last interactive session",
+      "  ser review [goal-or-spec]          run through audit/review, then stop before ship",
+      "  ser ship <goal-or-spec>            verify and hand over the finished build",
+      "  ser stop                           end the current foreground session cleanly",
       "",
-      "Stop at any layer with --to (no separate commands to learn):",
-      "  --to spec     your idea → a buildable, gated spec (idea, review, and the",
-      "                derive compile-check, in one phase; asks only the genuine forks)",
-      "  --to build    spec → working code that passes every gate",
-      "  --to audit    + an independent reviewer's polish notes (no build memory)",
-      "  --to ship     (default) verify the gates are green and hand it over",
-      "  --yes         accept ser's recommended fork answers, no prompts",
-      "  --spec <f>    resume from an existing spec   --workdir <dir>  build here",
-      "  --chain <n>   model chain (default: cheap)   --outer-loops <n>  bounded post-MVP raise passes",
-      "  --mock           dry engine",
+      "Common options:",
+      "  --yes                             accept ser's recommended fork answers",
+      "  --spec <f>                         resume from an existing spec",
+      "  --workdir <dir>                    build here",
+      "  --chain <n>                        model chain (default: cheap)",
+      "  --mock                             dry engine",
       "",
-      "Utilities:",
-      "  ser login · ser do \"<goal>\" · ser fix \"<bug>\"",
-      "  ser status · ser findings · ser run/derive/validate/trace/experiment (advanced; stages of the above)",
+      "Advanced/internal:",
+      "  ser dev run|derive|validate|trace|experiment|findings|dom-gate ...",
+      "  legacy aliases still work: ser run, ser derive, ser validate, ser trace, ser experiment",
       "",
     ].join("\n"),
   );
@@ -121,6 +133,93 @@ function parseFlags(args: string[], valued: string[]): Flags {
     }
   }
   return { positional, bool, value };
+}
+
+function hasOption(args: string[], name: string): boolean {
+  return args.includes(`--${name}`);
+}
+
+function withDefaultOption(args: string[], name: string, value: string): string[] {
+  return hasOption(args, name) ? args : [...args, `--${name}`, value];
+}
+
+function normalizeGoalOrSpecArgs(args: string[]): string[] {
+  if (hasOption(args, "spec")) return args;
+  const flags = parseFlags(args, ["chain", "chains", "to", "spec", "out", "workdir", "budget", "harness", "max-rebuilds", "outer-loops"]);
+  const first = flags.positional[0];
+  if (!first || !/\.ya?ml$/i.test(first) || !existsSync(resolve(first))) return args;
+  const body = readFileSync(resolve(first), "utf8");
+  if (!/^\s*thesis\s*:/m.test(body) || !/^\s*requirements\s*:/m.test(body)) return args;
+  const idx = args.indexOf(first);
+  return [...args.slice(0, idx), ...args.slice(idx + 1), "--spec", first];
+}
+
+async function cmdStart(args: string[]): Promise<number> {
+  if (args.length === 0) {
+    const { runTui } = await import("./tui/app.js");
+    return runTui(false);
+  }
+  return cmdPipeline(normalizeGoalOrSpecArgs(args));
+}
+
+async function cmdContinue(args: string[]): Promise<number> {
+  if (args.length === 0) {
+    const { runTui } = await import("./tui/app.js");
+    return runTui(true);
+  }
+  return cmdPipeline(normalizeGoalOrSpecArgs(args));
+}
+
+async function cmdStop(_args: string[]): Promise<number> {
+  process.stdout.write("ser has no background worker to stop. Press Ctrl-C to stop a foreground run; saved interactive sessions can be resumed with `ser continue`.\n");
+  return 0;
+}
+
+async function cmdReview(args: string[]): Promise<number> {
+  const flags = parseFlags(args, ["workdir"]);
+  if (flags.positional.length === 0 && !hasOption(args, "spec")) {
+    await cmdStatus(args);
+    return cmdFindings(args);
+  }
+  return cmdPipeline(withDefaultOption(normalizeGoalOrSpecArgs(args), "to", "audit"));
+}
+
+async function cmdShip(args: string[]): Promise<number> {
+  if (args.length === 0) throw new SquireError("USAGE", "ser ship <goal-or-spec> [--yes] [--workdir <dir>]");
+  return cmdPipeline(withDefaultOption(normalizeGoalOrSpecArgs(args), "to", "ship"));
+}
+
+async function cmdDev(args: string[]): Promise<number> {
+  const [subcommand, ...rest] = args;
+  switch (subcommand) {
+    case "run":
+      return cmdRun(rest);
+    case "trace":
+      return cmdTrace(rest);
+    case "status":
+      return cmdStatus(rest);
+    case "findings":
+      return cmdFindings(rest);
+    case "derive":
+      return cmdDerive(rest);
+    case "experiment":
+      return cmdExperiment(rest);
+    case "validate":
+      return cmdValidate(rest);
+    case "do":
+      return cmdDo(rest);
+    case "fix":
+      return cmdFix(rest);
+    case "dom-gate":
+      return cmdDomGate(rest);
+    case undefined:
+    case "-h":
+    case "--help":
+      process.stdout.write("ser dev run|derive|validate|trace|experiment|findings|do|fix|dom-gate ...\n");
+      return 0;
+    default:
+      throw new SquireError("USAGE", `unknown dev command: ${subcommand}`);
+  }
 }
 
 function loadChains(missionDir: string, explicit?: string): { chains: ChainsFile; path: string } {
@@ -969,7 +1068,7 @@ async function cmdStatus(args: string[]): Promise<number> {
       [
         "runs: 0",
         `workdir: ${resolve(flags.value.get("workdir") ?? process.cwd())}`,
-        "help[1]: Run `ser run <mission.yaml>` to create a trace",
+        "help[1]: Run `ser start <goal-or-spec>` to begin a verified build",
         "",
       ].join("\n"),
     );
@@ -1004,7 +1103,7 @@ async function cmdFindings(args: string[]): Promise<number> {
       [
         "findings: 0 open, 0 total",
         `workdir: ${workdir}`,
-        "help[1]: Run `ser run <mission.yaml>` to create a trace",
+        "help[1]: Run `ser start <goal-or-spec>` to begin a verified build",
         "",
       ].join("\n"),
     );
