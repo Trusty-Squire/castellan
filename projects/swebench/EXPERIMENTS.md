@@ -2022,3 +2022,36 @@ Artifacts:
 - `results-pylint-7080-on-top-repair.json`
 - `select-pylint-7080-on-top-repair.log`
 - `repair-trace-pylint-7080-on-top-repair.jsonl`
+
+## 2026-06-30 — Pylint-6506 current harness no-lift
+
+Question:
+
+- Does the current CLI-literal/context plus on-top repair harness recover the remaining Pylint unknown-option
+  case, `pylint-6506`?
+
+Config:
+
+- Slice: `pylint-6506`
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `repair-records=2`, `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Selector submitted `0/1`; best-known mixed-24 score remains `13/24`.
+- Multiple repair attempts were regression-clean but stayed `oraclePass=0/2`.
+- Later base and on-top attempts both regressed `6` tests and stayed `oraclePass=0/2`.
+
+Failure classification:
+
+- No target/oracle progress under the current harness.
+- This case remains a clean semantic/model-capability miss unless a new general CLI-error behavior signal is
+  added.
+
+Artifacts:
+
+- `results-pylint-6506-current-harness.json`
+- `select-pylint-6506-current-harness.log`
+- `repair-trace-pylint-6506-current-harness.jsonl`
