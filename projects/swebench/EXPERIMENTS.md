@@ -1913,3 +1913,36 @@ Artifacts:
 - `results-pylint-7228-literal-hints-structured-apply.json`
 - `select-pylint-7228-literal-hints-structured-apply.log`
 - `repair-trace-pylint-7228-literal-hints-structured-apply.jsonl`
+
+## 2026-06-30 — Pylint-7228 deeper focused repair
+
+Question:
+
+- After oracle-literal source hints moved `pylint-7228` from `0/2` to a partial `1/2` oracle repair,
+  does a slightly deeper repair search close the remaining oracle node?
+
+Config:
+
+- Slice: `pylint-7228`.
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=4`,
+  `repair-records=3`, `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Selector submitted `0/1`; best-known mixed-24 score remains `13/24`.
+- The run reproduced one regression-clean `1/2` oracle repair.
+- Two DeepSeek calls timed out and fell back to qwen, so the result is provider-tainted.
+
+Failure classification:
+
+- Not a localization/context omission anymore: the relevant option/argument config files are present.
+- Not a regression-gate issue: the partial repairs were regression-clean.
+- Current class is semantic repair miss with provider instability; do not widen this exact config.
+
+Artifacts:
+
+- `results-pylint-7228-deeper-repair.json`
+- `select-pylint-7228-deeper-repair.log`
+- `repair-trace-pylint-7228-deeper-repair.jsonl`
