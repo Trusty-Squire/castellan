@@ -1946,3 +1946,37 @@ Artifacts:
 - `results-pylint-7228-deeper-repair.json`
 - `select-pylint-7228-deeper-repair.log`
 - `repair-trace-pylint-7228-deeper-repair.jsonl`
+
+## 2026-06-30 — Pylint-7080 oracle-literal source hints
+
+Question:
+
+- Does the oracle-literal/CLI option localization mutation improve another Pylint option case,
+  `pylint-7080`?
+
+Config:
+
+- Slice: `pylint-7080`.
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `repair-records=2`, `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Selector submitted `0/1`; best-known mixed-24 score remains `13/24`.
+- Oracle repair produced a target-passing patch: `oraclePass=1/1`, `regressions=1`.
+- Repair then cleared regressions but lost the oracle: `oraclePass=0/1`, `regressions=0`.
+
+Failure classification:
+
+- Signal improved versus the earlier remaining-five run, where `7080` repairs had very large regression
+  counts and still missed oracle.
+- Current class is a verifier-feedback/repair-composition gap: the harness has evidence for both target
+  behavior and preserved regression behavior, but the repair loop did not combine them.
+
+Artifacts:
+
+- `results-pylint-7080-literal-hints.json`
+- `select-pylint-7080-literal-hints.log`
+- `repair-trace-pylint-7080-literal-hints.jsonl`
