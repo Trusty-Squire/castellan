@@ -1862,3 +1862,54 @@ Artifacts:
 - `results-pylint-7228-candidate-oracle-trace.json`
 - `select-pylint-7228-candidate-oracle-trace.log`
 - `repair-trace-pylint-7228-candidate-oracle-trace.jsonl`
+
+## 2026-06-30 — Oracle-literal source hints and structured patch application
+
+Question:
+
+- Was `pylint-7228` failing because the harness localized the parser wrapper but omitted production files
+  named by oracle-test literals, and because the repair model emitted a structured patch format the harness
+  could not apply?
+
+Harness mutations:
+
+- Added `literalSourceHintsFromTestPatch`: mines added oracle-test literals and CLI option names, normalizes
+  `rgx`/`regex`/`regexp` spelling, and boosts production files in argument/option/config paths for CLI
+  option tests.
+- Added `SearchReplaceBlock(path=..., search=..., replace=...)` support to `applyEdits`.
+
+Focused slice:
+
+- `pylint-7228`
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Focused selector submitted `0/1`; best-known mixed-24 score remains `13/24`.
+- Localization changed materially: candidate files now include `pylint/config/argument.py`,
+  `pylint/config/option.py`, and `pylint/config/arguments_manager.py`.
+- One focused run with the literal hint reached a regression-clean `1/2` oracle repair; the follow-up run
+  with structured patch application remained `0/2`.
+
+Failure classification:
+
+- The previous failure included a localization/context omission; that class changed.
+- No survivor yet, so remaining `pylint-7228` failure is now a cleaner semantic repair miss with some
+  sample variance.
+- Structured patch parsing is a general patch-application improvement, but did not lift this focused run.
+
+Verification:
+
+- `pnpm vitest run test/swebench/repair-rung.test.ts` -> `14` tests passed.
+
+Artifacts:
+
+- `results-pylint-7228-literal-source-hints.json`
+- `select-pylint-7228-literal-source-hints.log`
+- `repair-trace-pylint-7228-literal-source-hints.jsonl`
+- `results-pylint-7228-literal-hints-structured-apply.json`
+- `select-pylint-7228-literal-hints-structured-apply.log`
+- `repair-trace-pylint-7228-literal-hints-structured-apply.jsonl`

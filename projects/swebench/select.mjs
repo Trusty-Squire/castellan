@@ -6,7 +6,7 @@
 import { spawnSync, execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, appendFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { retrieve } from "./retrieve.mjs";
+import { listPyFiles, retrieve } from "./retrieve.mjs";
 import { runRepairRung } from "./repair.mjs";
 import { patchLint as patchLintModule } from "./patch-lints.mjs";
 import { issuePitfalls as issuePitfallsModule, oracleInfo as oracleInfoModule } from "./contracts.mjs";
@@ -233,6 +233,35 @@ function wholeFunctionReplace(wd, rel, search, replace) {
   writeFileSync(fp, lines.join("\n"));
   return true;
 }
+function decodeModelString(raw) {
+  const quote = raw[0];
+  return raw
+    .slice(1, -1)
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\r/g, "\r")
+    .replace(quote === "'" ? /\\'/g : /\\"/g, quote)
+    .replace(/\\\\/g, "\\");
+}
+function applySearchReplace(wd, rel, search, replace) {
+  const fp = join(wd, rel);
+  if (!existsSync(fp) || search.trim() === "") return 0;
+  const body = readFileSync(fp, "utf8");
+  const idx = body.indexOf(search);
+  if (idx !== -1) {
+    writeFileSync(fp, body.slice(0, idx) + replace + body.slice(idx + search.length));
+    return 1;
+  }
+  const fl = body.split("\n"), sl = search.split("\n").map(s => s.trim());
+  for (let i = 0; i + sl.length <= fl.length; i++) {
+    let ok = true; for (let j = 0; j < sl.length; j++) if (fl[i + j].trim() !== sl[j]) { ok = false; break; }
+    if (!ok) continue;
+    fl.splice(i, sl.length, ...replace.split("\n"));
+    writeFileSync(fp, fl.join("\n"));
+    return 1;
+  }
+  return wholeFunctionReplace(wd, rel, search, replace) ? 1 : 0;
+}
 function applyEdits(wd, text) {
   // Robust to real model output: ### path markers (ignoring ```fences), and MULTIPLE SEARCH/REPLACE
   // blocks under one header — each block inherits the nearest preceding ### path. (GLM emits exactly
@@ -249,20 +278,7 @@ function applyEdits(wd, text) {
   while ((m = srRe.exec(text))) {
     const rel = pathBefore(m.index); // nearest ### path, or a bare path line before this block
     if (!rel) continue;
-    const fp = join(wd, rel);
-    if (!existsSync(fp) || m[1].trim() === "") continue;
-    const search = m[1], replace = m[2], body = readFileSync(fp, "utf8");
-    const idx = body.indexOf(search);
-    if (idx !== -1) { writeFileSync(fp, body.slice(0, idx) + replace + body.slice(idx + search.length)); applied++; continue; }
-    // FUZZY fallback: match a contiguous run of file lines whose TRIMMED form equals the trimmed SEARCH.
-    const fl = body.split("\n"), sl = search.split("\n").map(s => s.trim());
-    let changed = false;
-    for (let i = 0; i + sl.length <= fl.length; i++) {
-      let ok = true; for (let j = 0; j < sl.length; j++) if (fl[i + j].trim() !== sl[j]) { ok = false; break; }
-      if (!ok) continue;
-      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; changed = true; break;
-    }
-    if (!changed && wholeFunctionReplace(wd, rel, search, replace)) applied++;
+    applied += applySearchReplace(wd, rel, m[1], m[2]);
   }
   const looseRe = /SEARCH(?:\s+([^\n`]+\.py))?\n```(?:python)?\s*([\s\S]*?)```\s*REPLACE\n```(?:python)?\s*([\s\S]*?)```/g;
   while ((m = looseRe.exec(text))) {
@@ -271,46 +287,23 @@ function applyEdits(wd, text) {
     let rel = (m[1] || header || "").trim();
     rel = rel.replace(/^.*?(src\/|testing\/|tests\/|requests\/|pylint\/|sympy\/)/, "$1");
     if (!rel) continue;
-    const fp = join(wd, rel);
-    if (!existsSync(fp)) continue;
-    const search = m[2].trimEnd(), replace = m[3].trimEnd(), body = readFileSync(fp, "utf8");
-    const idx = body.indexOf(search);
-    if (idx !== -1) {
-      writeFileSync(fp, body.slice(0, idx) + replace + body.slice(idx + search.length));
-      applied++;
-      continue;
-    }
-    const fl = body.split("\n"), sl = search.split("\n").map(s => s.trim());
-    let changed = false;
-    for (let i = 0; i + sl.length <= fl.length; i++) {
-      let ok = true; for (let j = 0; j < sl.length; j++) if (fl[i + j].trim() !== sl[j]) { ok = false; break; }
-      if (!ok) continue;
-      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; changed = true; break;
-    }
-    if (!changed && wholeFunctionReplace(wd, rel, search, replace)) applied++;
+    applied += applySearchReplace(wd, rel, m[2].trimEnd(), m[3].trimEnd());
   }
   const fencedLooseRe = /```(?:python)?\s*SEARCH\n([\s\S]*?)\nREPLACE\n([\s\S]*?)```/g;
   while ((m = fencedLooseRe.exec(text))) {
     const before = text.slice(0, m.index);
     const header = [...before.matchAll(/###\s*([^\s`]+\.py)/g)].pop()?.[1];
     if (!header) continue;
-    const fp = join(wd, header);
-    if (!existsSync(fp)) continue;
-    const search = m[1].trimEnd(), replace = m[2].trimEnd(), body = readFileSync(fp, "utf8");
-    const idx = body.indexOf(search);
-    if (idx !== -1) {
-      writeFileSync(fp, body.slice(0, idx) + replace + body.slice(idx + search.length));
-      applied++;
-      continue;
-    }
-    const fl = body.split("\n"), sl = search.split("\n").map(s => s.trim());
-    let changed = false;
-    for (let i = 0; i + sl.length <= fl.length; i++) {
-      let ok = true; for (let j = 0; j < sl.length; j++) if (fl[i + j].trim() !== sl[j]) { ok = false; break; }
-      if (!ok) continue;
-      fl.splice(i, sl.length, ...replace.split("\n")); writeFileSync(fp, fl.join("\n")); applied++; changed = true; break;
-    }
-    if (!changed && wholeFunctionReplace(wd, header, search, replace)) applied++;
+    applied += applySearchReplace(wd, header, m[1].trimEnd(), m[2].trimEnd());
+  }
+  const structuredRe = /SearchReplaceBlock\(\s*path=(["'])([\s\S]*?)\1,\s*search=(["'])([\s\S]*?)\3,\s*replace=(["'])([\s\S]*?)\5\s*\)/g;
+  while ((m = structuredRe.exec(text))) {
+    let rel = decodeModelString(`${m[1]}${m[2]}${m[1]}`);
+    rel = rel.replace(/^.*?(src\/|testing\/|tests\/|requests\/|pylint\/|sympy\/)/, "$1");
+    if (!rel) continue;
+    const search = decodeModelString(`${m[3]}${m[4]}${m[3]}`);
+    const replace = decodeModelString(`${m[5]}${m[6]}${m[5]}`);
+    applied += applySearchReplace(wd, rel, search, replace);
   }
   if (applied === 0 && (/diff --git a\//.test(text) || /^--- a\//m.test(text))) {
     const start = /diff --git a\//.test(text) ? text.indexOf("diff --git a/") : text.search(/^--- a\//m);
@@ -354,6 +347,48 @@ function sourceHintsFromTestPatch(wd, cfg, patch, limit = 5) {
     add([...parts, sourceBase].join("/"));
   }
   return hints.slice(0, limit);
+}
+function literalSourceHintsFromTestPatch(wd, cfg, patch, limit = 3) {
+  if (!patch) return [];
+  const added = patch
+    .split("\n")
+    .filter(l => l.startsWith("+") && !l.startsWith("+++"))
+    .map(l => l.slice(1))
+    .join("\n");
+  const hasCliOption = /--[A-Za-z][A-Za-z0-9_-]{3,}/.test(added);
+  const needles = new Set();
+  const addNeedle = (value) => {
+    const v = String(value || "").trim().replace(/^--/, "");
+    if (v.length < 4 || v.length > 80) return;
+    const lower = v.toLowerCase();
+    needles.add(lower);
+    needles.add(lower.replace(/-/g, "_"));
+    needles.add(lower.replace(/[-_]/g, ""));
+    if (/(^|[-_])rgx($|[-_])|regex|regexp/.test(lower)) {
+      needles.add("regex");
+      needles.add("regexp");
+      needles.add(lower.replace(/rgx/g, "regex"));
+      needles.add(lower.replace(/rgx/g, "regexp"));
+    }
+  };
+  for (const m of added.matchAll(/--([A-Za-z][A-Za-z0-9_-]{3,})/g)) addNeedle(m[1]);
+  for (const m of added.matchAll(/\b([A-Za-z][A-Za-z0-9_-]*(?:rgx|regex|regexp|paths?|names?)[A-Za-z0-9_-]*)\b/gi)) addNeedle(m[1]);
+  if (!needles.size) return [];
+  const files = listPyFiles(wd, cfg.src);
+  const scored = files.map(f => {
+    const rel = f.slice(wd.length + 1);
+    let body = "";
+    try { body = readFileSync(f, "utf8").toLowerCase(); } catch {}
+    const compact = body.replace(/[-_]/g, "");
+    let score = 0;
+    for (const n of needles) {
+      if (body.includes(n)) score += n.includes("-") || n.includes("_") ? 8 : 3;
+      if (compact.includes(n.replace(/[-_]/g, ""))) score += 2;
+    }
+    if (hasCliOption && /(^|\/)(?:.*config.*|.*arg(?:ument)?s?.*|.*options?.*)\.py$/.test(rel)) score += 12;
+    return { rel, score };
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score || a.rel.length - b.rel.length);
+  return scored.slice(0, limit).map(x => x.rel);
 }
 function testNodeKey(node) {
   const parts = String(node || "").split("::");
@@ -674,7 +709,8 @@ async function runInstance(inst) {
     const reset = () => execSync(`cd ${wd} && git reset --hard ${inst.base_commit} -q && (find . -type d -name __pycache__ -prune -exec sudo -n rm -rf {} + 2>/dev/null || true) && git clean -fdxq -e venv 2>/dev/null`, { stdio: "ignore" });
     reset();
     const hintCands = sourceHintsFromTestPatch(wd, cfg, inst.test_patch, 5);
-    const cands = [...new Set([...hintCands, ...retrieve(inst.problem_statement, wd, cfg.src, 5)])].slice(0, 5);
+    const literalCands = literalSourceHintsFromTestPatch(wd, cfg, inst.test_patch, 3);
+    const cands = [...new Set([...hintCands, ...literalCands, ...retrieve(inst.problem_statement, wd, cfg.src, 5)])].slice(0, 5);
     if (!cands.length) return { id, status: "no-localize" };
     const ctx = funcContext(wd, cands, inst.problem_statement) + contractContext(wd, inst.problem_statement); // function-level + contract-required context
     // regression set = EVERY offline-passing test node across the suite. Pass the repo's test ROOTS
@@ -939,7 +975,7 @@ async function runInstance(inst) {
     return { id, status: "selected", survivors: survivors.length, repros: repros.length, reproPass: w.reproPass, oraclePass: w.oraclePass || 0, votes: counts[w.norm], repaired, knighted, oracleRepaired, cands };
   } catch (e) { return { id, status: "error", note: String(e).slice(0, 160) }; }
 }
-export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, runNodesBatched, defBlocks, localizedReproHints, repoCfg, sourceHintsFromTestPatch };
+export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcContext, issueTerms, issuePitfalls, oracleContractHints, patchLint, targetPass, answerPass, classifyOracleResult, isSlowOrInfraNode, runNodesBatched, defBlocks, localizedReproHints, repoCfg, sourceHintsFromTestPatch, literalSourceHintsFromTestPatch };
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {

@@ -48,6 +48,36 @@ describe("SWE-bench repair rung utilities", () => {
     ]);
   });
 
+  it("derives production source hints from oracle literals and option names", async () => {
+    const { literalSourceHintsFromTestPatch } = await loadMjs<{
+      literalSourceHintsFromTestPatch: (wd: string, cfg: { src: string[] }, patch: string) => string[];
+    }>("projects/swebench/select.mjs");
+    const wd = tempRepo();
+    mkdirSync(join(wd, "pylint", "config"), { recursive: true });
+    mkdirSync(join(wd, "pylint", "checkers"), { recursive: true });
+    writeFileSync(
+      join(wd, "pylint", "config", "argument.py"),
+      [
+        "def _regexp_csv_transformer(value):",
+        "    return value",
+        "TYPE_TRANSFORMERS = {'regexp': object(), 'regexp_csv': _regexp_csv_transformer}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(wd, "pylint", "checkers", "names.py"), "OPTIONS = ['bad-names-rgxs']\n");
+    writeFileSync(join(wd, "pylint", "config", "arguments_manager.py"), "def parse():\n    pass\n");
+
+    const patch = [
+      "diff --git a/tests/config/test_config.py b/tests/config/test_config.py",
+      "+def test_regex_error():",
+      "+    Run([str(EMPTY_MODULE), r\"--function-rgx=[\\p{Han}a-z_]\"])",
+      "+def test_csv_regex_error():",
+      "+    Run([str(EMPTY_MODULE), r\"--bad-names-rgx=(foo{1,3})\"])",
+    ].join("\n");
+
+    expect(literalSourceHintsFromTestPatch(wd, { src: ["pylint"] }, patch)).toContain("pylint/config/argument.py");
+  });
+
   it("excludes package tests from production retrieval", async () => {
     const { retrieve } = await loadMjs<{
       retrieve: (problem: string, root: string, srcDirs: string[], topN?: number) => string[];
@@ -274,6 +304,10 @@ describe("SWE-bench repair rung utilities", () => {
     execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
     expect(applyEdits(wd, "### src/demo.py\n```python\nSEARCH\nvalue = 1\nREPLACE\nvalue = 6\n```")).toBe(1);
     expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 6\n");
+
+    execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
+    expect(applyEdits(wd, "SearchReplaceBlock(path=\"src/demo.py\", search='value = 1\\n', replace='value = 8\\n')")).toBe(1);
+    expect(readFileSync(join(wd, "src/demo.py"), "utf8")).toBe("value = 8\n");
 
     execFileSync("git", ["checkout", "-q", "--", "src/demo.py"], { cwd: wd });
     writeFileSync(join(wd, "src/demo.py"), "def keep():\n    return 0\n\n\ndef target():\n    value = 1\n    return value\n");
