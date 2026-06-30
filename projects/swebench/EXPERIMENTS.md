@@ -1680,3 +1680,50 @@ Artifacts:
 - `ser-select-v2.unresolved16-deepseek-repair.json`
 - `predictions-mixed24-best11-deepseek-repair.jsonl`
 - `ser-select-v2.mixed24-best11-deepseek-repair.json`
+
+## 2026-06-29 — Remaining-7 stable DeepSeek repair and best-13 rollup
+
+Question:
+
+- Were the remaining non-Sympy misses from the unresolved-16 run provider-tainted, and can lower
+  concurrency plus a longer timeout recover more?
+
+Config:
+
+- Slice: `django-11422`, `django-11564`, `pytest-11148`, `pytest-5103`, `pylint-6506`,
+  `pylint-7080`, `pylint-7228`.
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Selector submitted `2/7`: `django-11564`, `pytest-5103`.
+- Official eval for those 2: `2/2` resolved.
+- Combined best-known prediction file now scores `13/13` submitted resolved, honest full-slice score
+  `13/24`.
+
+Failure classification:
+
+- Stable DeepSeek repaired two previously provider-tainted/semantic misses.
+- Stable no-survivors remained for `django-11422`, `pytest-11148`, `pylint-6506`, `pylint-7080`,
+  `pylint-7228`.
+- Sympy remains unscored by this stable run; previous DeepSeek Sympy attempt was timeout-tainted and
+  produced no selections.
+
+Interpretation:
+
+- Current verified score is `13/24`.
+- Remaining path to `20/24` must come from the 11 unsolved cases: 5 non-Sympy stable misses plus 6 Sympy.
+- Next serious slice should focus on Sympy with a provider/config that can complete reliably, or add a
+  general symbolic-observation harness mutation if inspection shows missing signal.
+
+Artifacts:
+
+- `predictions-remaining7-deepseek-stable.jsonl`
+- `results-remaining7-deepseek-stable.json`
+- `select-remaining7-deepseek-stable.log`
+- `ser-select-v2.remaining7-deepseek-stable.json`
+- `predictions-mixed24-best13-deepseek-stable.jsonl`
+- `ser-select-v2.mixed24-best13-deepseek-stable.json`
