@@ -1635,3 +1635,48 @@ Artifacts:
 - `results-pytest-5221-deepseek-repair.json`
 - `select-pytest-5221-deepseek-repair.log`
 - `ser-select-v2.pytest-5221-deepseek-repair.json`
+
+## 2026-06-29 — Unresolved-16 DeepSeek repair and best-11 rollup
+
+Question:
+
+- Does qwen generation plus DeepSeek repair materially widen the mixed-24 score beyond the qwen-only
+  strict verifier baseline?
+
+Config:
+
+- Slice: the 16 instances not already in the strict-qwen resolved set or the focused `5221` recovery.
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=2`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `knight=0`, `llm-timeout-ms=180000`.
+
+Result:
+
+- Selector submitted `3/16`: `django-11133`, `pytest-11143`, `pylint-7114`.
+- Official eval for those 3: `3/3` resolved.
+- Combined best-known prediction file across prior strict-qwen wins, focused `5221`, and these 3 new
+  DeepSeek repairs: `11/11` submitted resolved, honest full-slice score `11/24`.
+
+Failure classification:
+
+- DeepSeek repair clearly improves the score on Django/Pytest/Pylint semantic misses.
+- Sympy remained `0/6` selected. Several DeepSeek calls timed out in Sympy, so this run is not a clean
+  provider-independent ceiling proof for Sympy.
+- Remaining non-Sympy misses after this run: `django-11422`, `django-11564`, `pytest-11148`,
+  `pytest-5103`, `pylint-6506`, `pylint-7080`, `pylint-7228`.
+
+Interpretation:
+
+- The harness is now honest enough that official rollups match submitted expectations (`11/11`).
+- The next iteration should focus on the remaining 13 with reduced provider concurrency or a different
+  repair provider/config, because the wider DeepSeek run was slow and timeout-tainted.
+
+Artifacts:
+
+- `predictions-unresolved16-deepseek-repair.jsonl`
+- `results-unresolved16-deepseek-repair.json`
+- `select-unresolved16-deepseek-repair.log`
+- `ser-select-v2.unresolved16-deepseek-repair.json`
+- `predictions-mixed24-best11-deepseek-repair.jsonl`
+- `ser-select-v2.mixed24-best11-deepseek-repair.json`
