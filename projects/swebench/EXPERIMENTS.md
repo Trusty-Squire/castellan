@@ -1727,3 +1727,48 @@ Artifacts:
 - `ser-select-v2.remaining7-deepseek-stable.json`
 - `predictions-mixed24-best13-deepseek-stable.jsonl`
 - `ser-select-v2.mixed24-best13-deepseek-stable.json`
+
+## 2026-06-29 — Sympy-6 stable DeepSeek no-lift
+
+Question:
+
+- Were the Sympy misses in the unresolved-16 run mostly provider/concurrency-tainted, or do they remain
+  clean oracle misses under a stable lower-concurrency DeepSeek repair configuration?
+
+Config:
+
+- Slice: `sympy-11400`, `sympy-11870`, `sympy-11897`, `sympy-12171`, `sympy-12236`,
+  `sympy-12419`.
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=3`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Selector submitted `0/6`.
+- All six ended `no-survivor`.
+- No official evaluation was run because there were no selected predictions.
+- Best-known mixed-24 score remains `13/24`.
+
+Failure classification:
+
+- Primary class: clean semantic/model-capability miss after localization, regression checks, production-file
+  constraints, oracle observations, and stronger repair were already in place.
+- Secondary class: provider/timeout instability remains visible on some DeepSeek calls, but completed fallback
+  repairs still produced clean oracle misses rather than survivors.
+- This is not evidence for a runner/environment mismatch, patch-application failure, regression-gate gap, or
+  local false positive.
+
+Interpretation:
+
+- The current lean harness has likely exhausted the obvious scalable Sympy signal fixes for this slice.
+- Pushing toward `20/24` now needs either a new general symbolic probe/contract mechanism, a materially
+  different strong model, or a wider official score to establish whether the remaining non-Sympy stable
+  misses are a better target than Sympy.
+
+Artifacts:
+
+- `results-sympy6-deepseek-stable.json`
+- `select-sympy6-deepseek-stable.log`
+- `sympy6-stable-repair-trace-sympy__sympy-*.jsonl`
