@@ -19,8 +19,9 @@ import { sanitizeInput } from "./term.js";
 import { visualAuditSummary } from "./funnel.js";
 import type { Spec } from "./contract/spec.js";
 import type { Mission } from "./contract/schema.js";
+import { formatSessionStatus, readSession, writeSession } from "./session.js";
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const { loadDotEnv } = await import("./env.js");
   loadDotEnv(process.cwd()); // .env.local/.env, nearest wins; real env always wins
   const [command, ...rest] = argv;
@@ -564,6 +565,16 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const { stringify } = await import("yaml");
   const { makeLlmClient } = await import("./backend.js");
   const llm = await makeLlmClient();
+  const sessionGoal = prompt ?? (fromSpec ? `Build from ${basename(fromSpec)}` : "Verified build");
+  writeSession({
+    goal: sessionGoal,
+    phase: "spec",
+    state: "working",
+    summary: fromSpec ? "Resuming from an existing spec." : "Turning the goal into a buildable plan.",
+    next: "Compile the plan, then build the verified slices.",
+    specPath: fromSpec ? resolve(fromSpec) : undefined,
+    workdir: flags.value.get("workdir") ? resolve(flags.value.get("workdir")!) : undefined,
+  });
 
   // ---- LAYER 1 idea + LAYER 2 spec ----
   let specPath: string;
@@ -614,6 +625,15 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   // (option 1) so the user only ever sees a spec that already compiled — never
   // approve-then-fail at build. mission.yaml is internal (derived, regenerated).
   const buildDir = resolve(flags.value.get("workdir") ?? `./${basename(specPath).replace(/\.spec\.yaml$/, "") || "build"}`);
+  writeSession({
+    goal: sessionGoal,
+    phase: "spec",
+    state: "working",
+    summary: "Compiling the verified plan.",
+    next: stopAfterStage("spec") ? "Review the spec or continue to build." : "Build the planned slices.",
+    specPath,
+    workdir: buildDir,
+  });
   const { mkdirSync } = await import("node:fs");
   mkdirSync(buildDir, { recursive: true });
   const missionPath = join(buildDir, "mission.yaml");
@@ -631,13 +651,33 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   process.stdout.write(st.gray("\ncompiling the spec to a buildable plan…") + "\n");
   const compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
   if (compileRc !== 0) {
+    writeSession({
+      goal: sessionGoal,
+      phase: "spec",
+      state: "blocked",
+      summary: "The plan compiler refused the spec.",
+      next: "Revise the spec, then run `ser continue` or `ser start --spec <file>`.",
+      specPath,
+      workdir: buildDir,
+    });
     process.stdout.write(st.yellow("\nthis spec can't be built as written (the plan compiler refused above) — revise the spec and re-run. ser won't proceed on an unverified plan.") + "\n");
     return compileRc;
   }
   process.stdout.write(st.green("  spec is buildable — plan compiled.") + "\n");
   let missionReady = true; // the build loop's first attempt reuses this compiled mission
 
-  if (stopAfterStage("spec")) return 0;
+  if (stopAfterStage("spec")) {
+    writeSession({
+      goal: sessionGoal,
+      phase: "spec",
+      state: "complete",
+      summary: "The spec is buildable.",
+      next: `Run \`ser start --spec ${specPath} --to build\` when ready to build.`,
+      specPath,
+      workdir: buildDir,
+    });
+    return 0;
+  }
 
   // ---- LAYER 2 build + LAYER 3 audit, as a BOUNDED REBUILD LOOP ----
   // A visual block folds its fixes back into the spec and rebuilds; we halt
@@ -934,6 +974,16 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   // ---- LAYER 5 ship ----
   layer(4, "ship");
   const highs = recs.filter((r) => r.severity === "high").length;
+  writeSession({
+    goal: sessionGoal,
+    phase: "ship",
+    state: "complete",
+    summary: "The build passed its gates and review.",
+    next: highs ? "Review the remaining audit notes." : "Use the delivered build.",
+    specPath,
+    workdir: buildDir,
+    latestTrace: latestTracePath(buildDir),
+  });
   process.stdout.write(st.green(`\n✓ shipped → ${buildDir}`) + "\n");
   process.stdout.write(st.gray(`  every gate green · ${recs.length} audit note(s)${highs ? `, ${highs} high-severity worth a look` : ""}\n`));
   return 0;
@@ -1061,13 +1111,21 @@ async function cmdTrace(args: string[]): Promise<number> {
 
 async function cmdStatus(args: string[]): Promise<number> {
   const flags = parseFlags(args, ["workdir"]);
+  const workdir = resolve(flags.value.get("workdir") ?? process.cwd());
+  if (!flags.bool.has("verbose")) {
+    const session = readSession(workdir) ?? readSession(process.cwd());
+    if (session) {
+      process.stdout.write(formatSessionStatus(session, workdir) + "\n");
+      return 0;
+    }
+  }
   const explicit = flags.positional[0];
-  const path = explicit ? resolve(explicit) : latestTracePath(resolve(flags.value.get("workdir") ?? process.cwd()));
+  const path = explicit ? resolve(explicit) : latestTracePath(workdir);
   if (!path) {
     process.stdout.write(
       [
         "runs: 0",
-        `workdir: ${resolve(flags.value.get("workdir") ?? process.cwd())}`,
+        `workdir: ${workdir}`,
         "help[1]: Run `ser start <goal-or-spec>` to begin a verified build",
         "",
       ].join("\n"),
@@ -1204,14 +1262,16 @@ async function ask(prompt: string): Promise<string> {
   }
 }
 
-main(process.argv.slice(2))
-  .then((code) => process.exit(code))
-  .catch((err: unknown) => {
-    if (err instanceof SquireError) {
-      process.stderr.write(`error [${err.code}]: ${err.message}\n`);
-      if (err.tracePath) process.stderr.write(`trace: ${err.tracePath}\n`);
-    } else {
-      process.stderr.write(`error: ${(err as Error).message}\n`);
-    }
-    process.exit(1);
-  });
+if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file://").href) {
+  main(process.argv.slice(2))
+    .then((code) => process.exit(code))
+    .catch((err: unknown) => {
+      if (err instanceof SquireError) {
+        process.stderr.write(`error [${err.code}]: ${err.message}\n`);
+        if (err.tracePath) process.stderr.write(`trace: ${err.tracePath}\n`);
+      } else {
+        process.stderr.write(`error: ${(err as Error).message}\n`);
+      }
+      process.exit(1);
+    });
+}
