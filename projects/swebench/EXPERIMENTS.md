@@ -1772,3 +1772,48 @@ Artifacts:
 - `results-sympy6-deepseek-stable.json`
 - `select-sympy6-deepseek-stable.log`
 - `sympy6-stable-repair-trace-sympy__sympy-*.jsonl`
+
+## 2026-06-29 — Remaining-5 k6 DeepSeek no-lift
+
+Question:
+
+- Were the five remaining non-Sympy misses recoverable by simple candidate diversity under the already-strict
+  verifier, without adding new harness logic?
+
+Config:
+
+- Slice: `django-11422`, `pytest-11148`, `pylint-6506`, `pylint-7080`, `pylint-7228`.
+- Candidate model: `qwen/qwen3-coder`
+- Repair/oracle-repair model: `deepseek/deepseek-v4-pro`
+- `k=6`, `r=0`, `pool=1`, `oracle=1`, `oracle-repair=1`, `repair=1`, `repair-rung=2`,
+  `knight=0`, `llm-timeout-ms=240000`.
+
+Result:
+
+- Selector submitted `0/5`.
+- All five ended `no-survivor`.
+- No official evaluation was run because there were no selected predictions.
+- Best-known mixed-24 score remains `13/24`.
+
+Failure classification:
+
+- `django-11422`: no clean candidates, oracle miss.
+- `pytest-11148`: no clean candidates, oracle miss.
+- `pylint-6506`: one clean candidate, oracle `0/2`.
+- `pylint-7080`: repair attempts introduced large regression counts (`20` to `90`) and still missed
+  oracle `0/1`.
+- `pylint-7228`: five clean candidates, repaired regressions cleared, oracle stayed `0/2`.
+
+Interpretation:
+
+- Candidate-count alone is not the next effective lever for the remaining non-Sympy slice.
+- `pylint-7228` is the best diagnostic target for a new general harness signal because many candidates are
+  regression-clean but semantically wrong.
+- `pylint-7080` may need stronger regression-specific repair feedback, but that should be designed as a
+  general repair-feedback mutation, not a focused patch.
+
+Artifacts:
+
+- `results-remaining5-k6-deepseek-stable.json`
+- `select-remaining5-k6-deepseek-stable.log`
+- `remaining5-k6-repair-trace-*.jsonl`
