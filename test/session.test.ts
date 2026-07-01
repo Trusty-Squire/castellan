@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { formatSessionStatus, readSession, writeSession } from "../src/session.js";
+import { formatSessionStatus, readNearestSession, readSession, writeSession } from "../src/session.js";
 
 describe("SER session status", () => {
   it("writes and reads the product-level session envelope", () => {
@@ -62,5 +62,23 @@ describe("SER session status", () => {
     }));
 
     expect(readSession(root)).toBeNull();
+  });
+
+  it("finds the nearest product session from nested workdirs", () => {
+    const root = mkdtempSync(join(tmpdir(), "ser-session-nearest-"));
+    const nested = join(root, "app", "src");
+    mkdirSync(nested, { recursive: true });
+    writeSession({
+      goal: "Build a nested app",
+      phase: "build",
+      state: "working",
+      summary: "Building from the locked spec.",
+      workdir: join(root, "app"),
+      specPath: join(root, ".ser", "spec.yaml"),
+    }, root);
+
+    const located = readNearestSession(nested);
+    expect(located?.root).toBe(root);
+    expect(located?.session.goal).toBe("Build a nested app");
   });
 });

@@ -83,6 +83,39 @@ describe("compressed CLI surface", () => {
     expect(output).not.toContain(".squire");
   });
 
+  it("ser continue finds the product session from inside the workdir", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ser-cli-nested-continue-"));
+    const workdir = join(root, "app");
+    mkdirSync(join(workdir, "src"), { recursive: true });
+    process.chdir(join(workdir, "src"));
+    writeSession({
+      goal: "Build a nested todo app",
+      phase: "build",
+      state: "working",
+      summary: "Running the locked spec through objective gates.",
+      next: "Keep building until gates pass or a blocker is proven.",
+      specStatus: "locked",
+      currentLoop: "build",
+      lastVerifier: "node gates",
+      lastResult: "running",
+      humanNeeded: false,
+      workdir,
+      specPath: join(root, ".ser", "spec.yaml"),
+    }, root);
+
+    let output = "";
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      output += String(chunk);
+      return true;
+    });
+
+    await expect(main(["continue", "--plan"])).resolves.toBe(0);
+    expect(output).toContain("Goal: Build a nested todo app");
+    expect(output).toContain("Continuing the verified build loop.");
+    expect(output).toContain("Plan: resume from the locked spec");
+    expect(output).not.toContain("--workdir");
+  });
+
   it("ser --continue uses the same product-session controller", async () => {
     const root = mkdtempSync(join(tmpdir(), "ser-cli-dash-continue-"));
     const workdir = join(root, "app");

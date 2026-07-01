@@ -19,7 +19,7 @@ import { sanitizeInput } from "./term.js";
 import { visualAuditSummary } from "./funnel.js";
 import type { Spec } from "./contract/spec.js";
 import type { Mission } from "./contract/schema.js";
-import { formatSessionStatus, readSession, writeSession, type SerSession } from "./session.js";
+import { formatSessionStatus, readNearestSession, readSession, writeSession, type SerSession } from "./session.js";
 
 export async function main(argv: string[]): Promise<number> {
   const { loadDotEnv } = await import("./env.js");
@@ -167,8 +167,8 @@ async function cmdContinue(args: string[]): Promise<number> {
   const hasPipelineInput = flags.positional.length > 0 || hasOption(args, "spec");
   if (!hasPipelineInput) {
     const root = resolve(flags.value.get("workdir") ?? process.cwd());
-    const session = readSession(root) ?? readSession(process.cwd());
-    if (session) return continueProductSession(session, root, flags.bool.has("plan"));
+    const located = readNearestSession(root) ?? readNearestSession(process.cwd());
+    if (located) return continueProductSession(located.session, located.root, flags.bool.has("plan"));
   }
   if (args.length === 0) {
     const { runTui } = await import("./tui/app.js");
@@ -1349,9 +1349,9 @@ async function cmdStatus(args: string[]): Promise<number> {
   const flags = parseFlags(args, ["workdir"]);
   const workdir = resolve(flags.value.get("workdir") ?? process.cwd());
   if (!flags.bool.has("verbose")) {
-    const session = readSession(workdir) ?? readSession(process.cwd());
-    if (session) {
-      process.stdout.write(formatSessionStatus(session, workdir) + "\n");
+    const located = readNearestSession(workdir) ?? readNearestSession(process.cwd());
+    if (located) {
+      process.stdout.write(formatSessionStatus(located.session, located.root) + "\n");
       return 0;
     }
   }

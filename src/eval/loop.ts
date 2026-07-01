@@ -17,6 +17,7 @@ export const LoopEvalCaseSchema = z.object({
   id: z.string(),
   description: z.string().optional(),
   goal: z.string(),
+  runFrom: z.string().optional(),
   interruption: z.enum([
     "after_spec",
     "during_build",
@@ -157,8 +158,10 @@ export function seedLoopEvalCase(root: string, testCase: LoopEvalCase): void {
 
 export async function evaluateLoopCase(testCase: LoopEvalCase, root: string, driver: LoopEvalDriver): Promise<LoopCaseResult> {
   seedLoopEvalCase(root, testCase);
-  const status = await driver.status(root);
-  const continued = await driver.continue(root);
+  const commandRoot = testCase.runFrom ? resolve(root, testCase.runFrom) : root;
+  mkdirSync(commandRoot, { recursive: true });
+  const status = await driver.status(commandRoot);
+  const continued = await driver.continue(commandRoot);
   const assertions: LoopAssertionResult[] = [];
   const expect = testCase.expect;
 

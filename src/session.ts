@@ -50,6 +50,24 @@ export function readSession(root = process.cwd()): SerSession | null {
   }
 }
 
+export interface LocatedSession {
+  root: string;
+  path: string;
+  session: SerSession;
+}
+
+export function readNearestSession(start = process.cwd()): LocatedSession | null {
+  let root = resolve(start);
+  while (true) {
+    const path = sessionPath(root);
+    const session = readSession(root);
+    if (session) return { root, path, session };
+    const parent = dirname(root);
+    if (parent === root) return null;
+    root = parent;
+  }
+}
+
 export function writeSession(session: Omit<SerSession, "updatedAt"> & { updatedAt?: string }, root = process.cwd()): string {
   const path = sessionPath(root);
   mkdirSync(dirname(path), { recursive: true });

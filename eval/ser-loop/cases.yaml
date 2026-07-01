@@ -41,6 +41,7 @@ cases:
   - id: continue-during-build
     description: A working build session should continue from persisted state, not ask for generated paths.
     goal: Build a secure API key vault
+    runFrom: vault
     interruption: during_build
     seedSession:
       phase: build
