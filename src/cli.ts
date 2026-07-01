@@ -7,7 +7,7 @@ import { resolveChains } from "./contract/derive.js";
 import { runMission, type DisputeReviewer, type RetrospectReviewer, type RetrospectVerdict } from "./harness/runner.js";
 import { appendTraceEvent, formatTraceStatus, latestTracePath, readTrace, summarizeTrace } from "./harness/trace.js";
 import { MockEngine, fileScriptResolver } from "./engine/mock.js";
-import { commitAll, initRepo, isClean, trackedByParentRepo } from "./harness/checkpoint.js";
+import { commitAll, head, initRepo, isClean, resetTo, trackedByParentRepo } from "./harness/checkpoint.js";
 import { SquireError } from "./errors.js";
 import type { Engine } from "./engine/types.js";
 import type { LlmClient } from "./llm/types.js";
@@ -268,6 +268,18 @@ async function continueProductSession(session: SerSession, root: string, planOnl
     return 0;
   }
   return cmdPipeline(resume.args, { sessionGoal: resume.sessionGoal });
+}
+
+async function recoverInterruptedPipelineWorkdir(buildDir: string): Promise<void> {
+  if (!existsSync(join(buildDir, ".git"))) return;
+  if (await isClean(buildDir)) return;
+  await resetTo(buildDir, await head(buildDir));
+}
+
+async function checkpointPipelineBuildPlan(buildDir: string): Promise<void> {
+  if (!existsSync(join(buildDir, ".git"))) return;
+  if (await isClean(buildDir)) return;
+  await commitAll(buildDir, "pipeline: checkpoint build plan");
 }
 
 export function buildResumePipeline(session: SerSession): { args: string[]; sessionGoal: string } | null {
@@ -831,6 +843,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   process.stdout.write(st.gray("\ncompiling the spec to a buildable plan…") + "\n");
   let compileRc: number;
   try {
+    await recoverInterruptedPipelineWorkdir(buildDir);
     compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -998,6 +1011,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
         process.stdout.write(st.gray("running the plan compiled during the spec phase…\n"));
       } else {
         process.stdout.write(st.gray("re-deriving the gated build plan…\n"));
+        await recoverInterruptedPipelineWorkdir(buildDir);
         const drc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
         if (drc !== 0) return drc;
       }
@@ -1009,6 +1023,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       wfg(gitignorePath, ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "node_modules/", ".venv/", "venv/", "*.egg-info/", ".DS_Store", "dist/", "build/", "coverage/", ".vite/", ".turbo/", "*.tsbuildinfo", ".cache/"].join("\n") + "\n");
     }
       if (!existsSync(join(buildDir, ".git"))) await initRepo(buildDir);
+      else await checkpointPipelineBuildPlan(buildDir);
       const mission = parseMission(readFileSync(missionPath, "utf8"), missionPath);
       const buildRc = await executeMissionObject(mission, buildDir, flags, slug);
       const buildTracePath = latestTracePath(buildDir);

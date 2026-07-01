@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { classifyArchetype, parseArchetype, WEB_APP_STACK_RULE } from "../../src/contract/archetype.js";
 import { MockLlm } from "../../src/llm/mock.js";
+import type { LlmClient } from "../../src/llm/types.js";
 
 describe("parseArchetype — tolerant of casing/punctuation/extra words", () => {
   it("recognizes each archetype", () => {
@@ -30,6 +31,22 @@ describe("classifyArchetype", () => {
   it("defaults to other when the model errors (no steering, safe fallback)", async () => {
     const llm = new MockLlm([() => { throw new Error("boom"); }]);
     expect(await classifyArchetype(llm, "qwen/qwen3-coder", "x")).toBe("other");
+  });
+  it("bounds a hung classifier call with the planner timeout", async () => {
+    const prev = process.env.SER_PLANNER_TIMEOUT_MS;
+    process.env.SER_PLANNER_TIMEOUT_MS = "5";
+    const llm: LlmClient = {
+      complete: (req) =>
+        new Promise((_, reject) => {
+          req.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    };
+    try {
+      expect(await classifyArchetype(llm, "qwen/qwen3-coder", "x")).toBe("other");
+    } finally {
+      if (prev === undefined) delete process.env.SER_PLANNER_TIMEOUT_MS;
+      else process.env.SER_PLANNER_TIMEOUT_MS = prev;
+    }
   });
 });
 

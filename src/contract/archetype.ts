@@ -30,7 +30,14 @@ const CLASSIFY_SYSTEM =
 /** Classify the product idea. Cheap model; defaults to "other" (no steering) on an unknown reply. */
 export async function classifyArchetype(llm: LlmClient, model: string, idea: string): Promise<Archetype> {
   try {
-    const r = await llm.complete({ model, system: CLASSIFY_SYSTEM, user: `IDEA:\n${idea}`, maxTokens: 12 });
+    const timeoutMs = Number(process.env.SER_PLANNER_TIMEOUT_MS ?? 90000);
+    const r = await llm.complete({
+      model,
+      system: CLASSIFY_SYSTEM,
+      user: `IDEA:\n${idea}`,
+      maxTokens: 12,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     return parseArchetype(r.text);
   } catch {
     return "other";

@@ -596,6 +596,12 @@ requirements:
     const buildOut = bootstrapGreenfieldNodeGate("npm run build --if-present");
     expect(buildOut).toMatch(/if \[ ! -f index\.html \]/);
     expect(buildOut).toContain("<!doctype html>");
+    // browser-driver gates get verifier deps even when the gate itself is not an npm script
+    const playwrightOut = bootstrapGreenfieldNodeGate("npx playwright test tests/ui.spec.ts");
+    expect(playwrightOut).toContain("npm install --no-fund --no-audit -D @playwright/test");
+    expect(playwrightOut).toContain("npx playwright install chromium");
+    const puppeteerOut = bootstrapGreenfieldNodeGate("node -e \"require('puppeteer')\"");
+    expect(puppeteerOut).toContain("npm install --no-fund --no-audit -D puppeteer");
     // non-npm gates are left completely alone (no scaffold noise)
     expect(bootstrapGreenfieldNodeGate("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
     expect(bootstrapGreenfieldNodeGate("python3 -m pytest tests/x.py")).toBe("python3 -m pytest tests/x.py");

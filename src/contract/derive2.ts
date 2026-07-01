@@ -1451,7 +1451,10 @@ function compileFallbackMission(input: DeriveV2Input, usage: PlannerUsage, cause
  * The JSON/HTML are single-quote-free so they survive the sh -c re-quoting cleanly.
  */
 export function bootstrapGreenfieldNodeGate(run: string): string {
-  if (!/\bnpm (test|run)\b/.test(run)) return run;
+  const needsNpmScaffold = /\bnpm (test|run)\b/.test(run);
+  const needsPlaywright = /\bplaywright\b|\btest:e2e\b/i.test(run);
+  const needsPuppeteer = /\bpuppeteer\b/i.test(run);
+  if (!needsNpmScaffold && !needsPlaywright && !needsPuppeteer) return run;
   const skeleton = '{"name":"app","private":true,"type":"module","scripts":{"test":"vitest run","build":"vite build"}}';
   // A vitest config that runs the whole UNIT suite but excludes e2e/playwright specs
   // (.spec.* + anything under e2e/) — without it, `npm test` collects the model's
@@ -1468,7 +1471,10 @@ export function bootstrapGreenfieldNodeGate(run: string): string {
     ...(isBuildGate ? [`if [ ! -f index.html ]; then printf '%s' '${indexHtml}' > index.html; fi`] : []),
     "if [ ! -x node_modules/.bin/vitest ] && grep -q vitest package.json; then npm install --no-fund --no-audit -D vitest vite >/dev/null 2>&1; fi",
     "if [ ! -d node_modules ]; then npm install --no-fund --no-audit; fi",
-    `if printf '%s' ${shellQuoteForCommand(run)} | grep -Eq 'playwright|test:e2e'; then npm install --no-fund --no-audit -D @playwright/test >/dev/null 2>&1; npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1; fi`,
+    ...(needsPlaywright
+      ? ["npm install --no-fund --no-audit -D @playwright/test >/dev/null 2>&1; npx playwright install chromium >/dev/null 2>&1 || npx playwright install >/dev/null 2>&1"]
+      : []),
+    ...(needsPuppeteer ? ["npm install --no-fund --no-audit -D puppeteer >/dev/null 2>&1"] : []),
     run,
   ].join(" && ");
   return `sh -c ${shellQuoteForCommand(bootstrap)}`;
