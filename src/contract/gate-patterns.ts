@@ -274,8 +274,11 @@ export function renderGateForBuilder(run: string): string {
 export function gateBehaviorCount(run: string): number {
   const curls = (run.match(/\bcurl\b/gi) ?? []).length;
   const domAsserts = (run.match(/"assert"/g) ?? []).length;
-  const segments = run.split("&&").filter((s) => s.trim().length > 0).length;
-  return Math.max(curls, domAsserts, curls + domAsserts > 0 ? 0 : segments);
+  const segments = run.split("&&").map((s) => s.trim()).filter((s) => s.length > 0);
+  const verifierSegments = segments.filter((s) =>
+    /\b(grep|diff|vitest|jest|pytest|go test|cargo test|npm test|pnpm test|yarn test)\b|(^|[;|(]\s*)test\s|\[\[|(^|\s)\[($|\s)/i.test(s),
+  ).length;
+  return Math.max(curls, domAsserts, verifierSegments, curls + domAsserts + verifierSegments > 0 ? 0 : segments.length);
 }
 
 /**

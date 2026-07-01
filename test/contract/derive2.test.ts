@@ -13,6 +13,7 @@ import {
   canonicalizeTestGate,
   bootstrapGreenfieldNodeGate,
   trimSurveyForDecompose,
+  gateClusterHints,
   buildDirectMission,
   nodeRequirementIds,
   allocateNodeBudgets,
@@ -26,6 +27,7 @@ import {
 import { parseSpec } from "../../src/contract/spec.js";
 import { MockLlm } from "../../src/llm/mock.js";
 import { SquireError } from "../../src/errors.js";
+import { gateBehaviorCount } from "../../src/contract/gate-patterns.js";
 
 let workdir: string;
 beforeEach(() => {
@@ -628,6 +630,29 @@ requirements:
     ).toEqual([]);
   });
 
+  it("gateClusterHints groups oversized gates into useful repair seams", () => {
+    const hints = gateClusterHints(
+      [
+        "python3 csv.py rows.csv | grep -q '3 rows'",
+        "python3 csv.py cols.csv | grep -q 'name'",
+        "python3 csv.py nums.csv | grep -q 'min'",
+        "python3 csv.py nums.csv | grep -q 'max'",
+        "python3 csv.py nums.csv | grep -q 'avg'",
+        "python3 csv.py missing.csv 2>&1 | grep -qi 'not found'",
+        "python3 csv.py empty.csv 2>&1 | grep -qi 'empty'",
+        "python3 csv.py quoted.csv | grep -q 'Smith, John'",
+        "cat data.csv | python3 csv.py --stdin | grep -q rows",
+        "python3 csv.py types.csv | grep -q numeric",
+        "python3 csv.py bad.csv 2>&1 | grep -qi invalid",
+      ].join(" && "),
+      4,
+    );
+    expect(hints.some((h) => h.startsWith("shape-summary"))).toBe(true);
+    expect(hints.some((h) => h.startsWith("numeric-stats"))).toBe(true);
+    expect(hints.some((h) => h.startsWith("errors"))).toBe(true);
+    expect(hints.every((h) => !/^case\d+/.test(h))).toBe(true);
+  });
+
   it("repairs oversized decomposition once before emitting a mission", async () => {
     const spec = parseSpec(`
 thesis: build a tiny reporting CLI
@@ -676,6 +701,63 @@ open_questions: []
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.mission.nodes.map((n) => n.id)).toEqual(["facts", "numeric"]);
+    expect(result.readback).not.toContain("over-sized node");
+  });
+
+  it("falls back to requirement-band repair when model shape repair stays oversized", async () => {
+    const spec = parseSpec(`
+thesis: build a command-line reporting tool
+scope_fence: []
+requirements:
+  - id: R1
+    statement: "Report file metadata and headers"
+    acceptance:
+      tier: 1
+      gate: node cli.js a | grep -q a && node cli.js b | grep -q b && node cli.js c | grep -q c && node cli.js d | grep -q d
+  - id: R2
+    statement: "Report row and column summaries"
+    acceptance:
+      tier: 1
+      gate: node cli.js e | grep -q e && node cli.js f | grep -q f && node cli.js g | grep -q g && node cli.js h | grep -q h
+  - id: R3
+    statement: "Report numeric statistics"
+    acceptance:
+      tier: 1
+      gate: node cli.js i | grep -q i && node cli.js j | grep -q j && node cli.js k | grep -q k && node cli.js l | grep -q l
+  - id: R4
+    statement: "Report input errors"
+    acceptance:
+      tier: 1
+      gate: node cli.js m 2>&1 | grep -q m && node cli.js n 2>&1 | grep -q n && node cli.js o 2>&1 | grep -q o
+decisions: []
+claims: []
+open_questions: []
+`);
+    const workdir2 = mkdtempSync(join(tmpdir(), "ser-derive-band-repair-"));
+    writeFileSync(join(workdir2, "package.json"), JSON.stringify({ scripts: { test: "vitest run" } }));
+    const monolith = {
+      contract: "CLI contract",
+      nodes: [{ id: "cli", brief: "build every report behavior", deps: [], context_globs: [], blast_radius: ["cli.js", "cli.test.js"], budget_usd: 1, requirement: "R1, R2, R3, R4" }],
+    };
+    const llm = new MockLlm([
+      { text: JSON.stringify(monolith) },
+      { text: JSON.stringify(monolith) },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+    const result = await deriveV2({
+      spec,
+      workdir: workdir2,
+      llm,
+      model: "mock",
+      chainName: "cheap",
+      budgetUsd: 2,
+      executorModel: "qwen/qwen3-coder",
+      nodeContextBudget: 24000,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mission.nodes.length).toBe(2);
+    expect(result.mission.nodes.every((n) => n.gate?.type === "command" && typeof n.gate.run === "string" && gateBehaviorCount(n.gate.run) <= 10)).toBe(true);
     expect(result.readback).not.toContain("over-sized node");
   });
 

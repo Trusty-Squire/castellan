@@ -146,6 +146,12 @@ describe("gateBehaviorCount — a deterministic over-size proxy", () => {
     expect(gateBehaviorCount('[{"assert":"x"},{"assert":"y"}]')).toBe(2);
     expect(gateBehaviorCount("test1 && test2")).toBe(2);
   });
+  it("does not count shell fixture setup as independent behaviors", () => {
+    const run =
+      "cd /tmp && printf 'x,y\\n1,10\\n2,20\\n' > test.csv && output=$(./csv-summarizer test.csv 2>&1) && " +
+      "echo \"$output\" | grep -q 'min.*1\\|max.*2' && echo \"$output\" | grep -q 'avg.*15' && echo pass || echo fail";
+    expect(gateBehaviorCount(run)).toBe(2);
+  });
   it("flags a 13-check monolith server gate as over-sized (>10)", () => {
     const checks = Array.from({ length: 13 }, (_, i) => `curl -fsS http://localhost:3000/api/${i} | grep -q ok`).join(" && ");
     expect(gateBehaviorCount(checks)).toBeGreaterThan(10);

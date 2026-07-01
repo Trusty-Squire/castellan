@@ -184,4 +184,8 @@ describe("shellSyntaxError — catch a gate that doesn't even parse", () => {
     expect(await shellSyntaxError("curl -fsS http://x/y -d '{\"a\":1}') && echo ok")).toMatch(/unexpected|syntax/i);
     expect(await shellSyntaxError("curl -fsS http://x/y | grep -q ok && curl -fsS http://x/z | grep -q ok")).toBeNull();
   });
+
+  it("flags bash-only PIPESTATUS because gates run under POSIX sh", async () => {
+    expect(await shellSyntaxError("./cli missing 2>&1 | grep -q error && [ ${PIPESTATUS[0]} -eq 2 ]")).toMatch(/PIPESTATUS/);
+  });
 });

@@ -24,6 +24,9 @@ import { makeMatcher } from "../harness/globs.js";
  * gate shipped with an unmatched paren).
  */
 export async function shellSyntaxError(run: string): Promise<string | null> {
+  if (/\$\{?PIPESTATUS(?:\[[^\]]+\])?\}?/.test(run)) {
+    return "gate uses bash-only PIPESTATUS; rewrite as POSIX sh by capturing the command status before grepping captured output";
+  }
   const r = await execa("sh", ["-n", "-c", run], { reject: false });
   return r.exitCode === 0 ? null : (r.stderr.split("\n").find((l) => l.trim()) ?? "shell syntax error");
 }
@@ -37,8 +40,10 @@ export async function repairMalformedGate(
 ): Promise<string | null> {
   const system =
     "You fix the SHELL SYNTAX of ONE gate command (exit 0 = pass) that does not parse — an unmatched " +
-    "paren/quote, a botched $(...) capture. Keep the SAME checks and assertions it intended; only make " +
-    "it valid POSIX sh. Output ONLY the corrected single shell command, no prose, no code fences.";
+    "paren/quote, a botched $(...) capture, or bash-only constructs like PIPESTATUS. Keep the SAME checks " +
+    "and assertions it intended; only make it valid POSIX sh. For pipeline exit-code checks, capture command " +
+    "output to a temp file and save status=$? BEFORE grepping that file; do not use PIPESTATUS. Output ONLY " +
+    "the corrected single shell command, no prose, no code fences.";
   const user = `NODE BRIEF:\n${args.brief}\n\nGATE WITH A SHELL SYNTAX ERROR (${args.error}):\n${args.gate}`;
   try {
     const res = await llm.complete({ model, system, user, json: false, maxTokens: 1100 });

@@ -336,6 +336,40 @@ function primaryRadiusKey(radius: string[]): string {
   return first.split("/")[0] ?? first;
 }
 
+function splitGateSegments(run: string): string[] {
+  if (/\s-e\s|<</.test(run)) return [run.trim()].filter(Boolean);
+  return run.split("&&").map((s) => s.trim()).filter(Boolean);
+}
+
+export function gateClusterHints(run: string, maxPerCluster = 6): string[] {
+  const segments = splitGateSegments(run);
+  if (segments.length <= maxPerCluster) return [];
+  const clusters = new Map<string, string[]>();
+  const keyFor = (s: string): string => {
+    const l = s.toLowerCase();
+    if (/not found|nonexistent|empty|invalid|error|cannot|unable|unreadable|missing/.test(l)) return "errors";
+    if (/min|max|avg|average|numeric|number|float|integer|stats|statistics/.test(l)) return "numeric-stats";
+    if (/row|count|column|header|field|name/.test(l)) return "shape-summary";
+    if (/stdin|pipe/.test(l)) return "stdin";
+    if (/quote|quoted|escape/.test(l)) return "csv-parsing";
+    return "core";
+  };
+  for (const s of segments) {
+    const key = keyFor(s);
+    const arr = clusters.get(key) ?? [];
+    arr.push(s);
+    clusters.set(key, arr);
+  }
+  const hints: string[] = [];
+  for (const [key, segs] of clusters) {
+    for (let i = 0; i < segs.length; i += maxPerCluster) {
+      const chunk = segs.slice(i, i + maxPerCluster);
+      hints.push(`${key}${segs.length > maxPerCluster ? `-${Math.floor(i / maxPerCluster) + 1}` : ""}: ${chunk.join(" && ").slice(0, 500)}`);
+    }
+  }
+  return hints;
+}
+
 export function decompositionIssues(
   nodes: { id: string; blast_radius: string[]; deps?: string[] }[],
   gatesByNode: Map<string, Gate>,
@@ -387,15 +421,83 @@ async function repairDecompositionShape(
     const run = g?.type === "command" || g?.type === "metric" ? g.run ?? "" : g?.type ?? "(none)";
     return `${n.id}: behaviors~${run ? gateBehaviorCount(run) : 0}; gate=${run.slice(0, 800)}`;
   });
+  const clusterLines = args.nodes.flatMap((n) => {
+    const g = args.gatesByNode.get(n.id);
+    const run = g?.type === "command" || g?.type === "metric" ? g.run ?? "" : "";
+    return gateClusterHints(run).map((hint) => `${n.id}/${hint}`);
+  });
   return jsonStage(
     llm,
     model,
     "decompose:shape-repair",
     `${CASTELLAN_IDENTITY}\n\nRepair a decomposition's NODE BOUNDARIES. Preserve the product, shared contract, dependency order, and requirement coverage. Do NOT write gates. Your target is the FEWEST nodes that are each tractable for the cheap executor: split oversized nodes only along cohesive artifact/capability boundaries; merge micro-nodes that touch the same artifact or merely separate setup/tests from implementation. Never create one node per function, selector, endpoint, or test. Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`,
-    `${args.intent}\n\nCURRENT CONTRACT:\n${args.contract}\n\nCURRENT NODES:\n${JSON.stringify(args.nodes, null, 2)}\n\nCURRENT GATES / BEHAVIOR COUNTS:\n${gateLines.join("\n")}\n\nTRACTABILITY ISSUES:\n${args.issues.map((i) => `- ${i.node ? `${i.node}: ` : ""}${i.kind}: ${i.reason}`).join("\n")}\n\nReturn a repaired decomposition only. Keep nodes right-sized: not monoliths, not micro-splits.`,
+    `${args.intent}\n\nCURRENT CONTRACT:\n${args.contract}\n\nCURRENT NODES:\n${JSON.stringify(args.nodes, null, 2)}\n\nCURRENT GATES / BEHAVIOR COUNTS:\n${gateLines.join("\n")}\n\nSUGGESTED GATE-DERIVED SEAMS (use these as CLUSTERS, not one node per line; combine clusters when still under cap):\n${clusterLines.join("\n") || "(none)"}\n\nTRACTABILITY ISSUES:\n${args.issues.map((i) => `- ${i.node ? `${i.node}: ` : ""}${i.kind}: ${i.reason}`).join("\n")}\n\nReturn a repaired decomposition only. Keep nodes right-sized: not monoliths, not micro-splits.`,
     DecomposeSchema,
     args.usage,
   );
+}
+
+function slugId(text: string): string {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => !/^(the|and|for|with|from|that|this|into|user|users|data|app|cli|tool)$/.test(w))
+    .slice(0, 3);
+  return words.join("-") || "node";
+}
+
+function requirementBehaviorCount(req: Spec["requirements"][number]): number {
+  const gate = acceptanceToGate(req.acceptance);
+  return gate.type === "command" || gate.type === "metric" ? gateBehaviorCount(gate.run ?? "") : 1;
+}
+
+function deterministicRequirementBandRepair(
+  contract: string,
+  previous: z.infer<typeof DecomposeSchema>["nodes"],
+  spec: Spec,
+  missionBudget: number,
+): z.infer<typeof DecomposeSchema> {
+  const sharedRadius = [
+    ...new Set(previous.flatMap((n) => n.blast_radius).filter((g) => typeof g === "string" && g.length > 0)),
+  ];
+  const radius = sharedRadius.length > 0 ? sharedRadius : ["src/**", "package.json"];
+  const bands: { reqs: Spec["requirements"]; behaviors: number }[] = [];
+  let current: Spec["requirements"] = [];
+  let currentBehaviors = 0;
+  for (const req of spec.requirements) {
+    const behaviors = requirementBehaviorCount(req);
+    if (current.length > 0 && currentBehaviors + behaviors > MAX_NODE_BEHAVIORS) {
+      bands.push({ reqs: current, behaviors: currentBehaviors });
+      current = [];
+      currentBehaviors = 0;
+    }
+    current.push(req);
+    currentBehaviors += behaviors;
+  }
+  if (current.length > 0) bands.push({ reqs: current, behaviors: currentBehaviors });
+  const weights = bands.map((b) => Math.max(1, b.behaviors));
+  const budgets = allocateNodeBudgets(weights, missionBudget);
+  const used = new Map<string, number>();
+  return {
+    contract,
+    nodes: bands.map((band, i) => {
+      const base = slugId(band.reqs.map((r) => r.statement).join(" "));
+      const seen = used.get(base) ?? 0;
+      used.set(base, seen + 1);
+      const id = seen === 0 ? base : `${base}-${seen + 1}`;
+      return {
+        id,
+        brief: band.reqs.map((r) => r.statement).join("; "),
+        deps: i === 0 ? [] : [bands[i - 1]!.reqs.map((r) => r.id).join("-").toLowerCase()],
+        context_globs: i === 0 ? [] : radius,
+        blast_radius: radius,
+        budget_usd: budgets[i] ?? 0.05,
+        requirement: band.reqs.map((r) => r.id).join(", "),
+      };
+    }).map((node, i, nodes) => (i === 0 ? node : { ...node, deps: [nodes[i - 1]!.id] })),
+  };
 }
 
 /** Trim the repository survey before it goes into the decompose prompt — keeps the
@@ -1252,6 +1354,14 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
         issues: decompositionShapeIssues,
         usage,
       });
+      return deriveV2({
+        ...input,
+        initialDecompose: repaired,
+        shapeRepairDepth: (input.shapeRepairDepth ?? 0) + 1,
+      });
+    }
+    if (input.spec && (input.shapeRepairDepth ?? 0) < 2) {
+      const repaired = deterministicRequirementBandRepair(decomposed.contract, decomposed.nodes, input.spec, input.budgetUsd);
       return deriveV2({
         ...input,
         initialDecompose: repaired,

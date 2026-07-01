@@ -23,6 +23,22 @@ describe("frontend floor heuristics", () => {
     })).toBe(false);
   });
 
+  it("lets an explicit command-line thesis override visual-looking story language", () => {
+    const spec = {
+      thesis: "build a small command-line CSV summarizer",
+      stories: [
+        "a user sees row counts and column names in terminal output",
+        "a user on a phone-sized viewport can still read the generated report",
+      ],
+      requirements: [
+        { id: "R1", statement: "the command-line tool prints CSV summaries to stdout", acceptance: { tier: 1 as const, gate: "node cli.js sample.csv" } },
+      ],
+    };
+    expect(isVisualAppSpec(spec)).toBe(false);
+    expect(withFrontendFloorStories(spec).stories).toEqual(spec.stories);
+    expect(withUiRequirement(spec).requirements).toHaveLength(1);
+  });
+
   it("appends the frontend floor stories once", () => {
     const spec = withFrontendFloorStories({
       thesis: "a web app",

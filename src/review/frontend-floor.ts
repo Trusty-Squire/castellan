@@ -7,7 +7,7 @@
 const VISUAL_APP_POSITIVE =
   /\b(web|website|site|page|dashboard|portal|admin|panel|app|ui|interface|table|list|feed|browser|viewport|visible)\b/i;
 const VISUAL_APP_NEGATIVE =
-  /\b(api|sdk|cli|library|package|framework|daemon|worker|service|mcp|connector)\b/i;
+  /\b(api|sdk|cli|command[- ]?line|terminal|stdout|library|package|framework|daemon|worker|service|mcp|connector)\b/i;
 
 export const FRONTEND_FLOOR_STORIES = [
   "A user sees the product's headline value in the first viewport rather than a generic shell.",
@@ -35,6 +35,7 @@ export function isExplicitlyNonVisual(thesis: string): boolean {
 }
 
 export function isVisualAppSpec(spec: StorySpecLike): boolean {
+  if (isExplicitlyNonVisual(spec.thesis)) return false;
   const hay = [spec.thesis, ...spec.stories].join("\n");
   if (VISUAL_APP_POSITIVE.test(hay)) return true;
   return /\b(show|display|render|see|screen|viewport|layout|mobile)\b/i.test(hay) && !VISUAL_APP_NEGATIVE.test(hay);

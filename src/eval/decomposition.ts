@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decompositionIssues, deriveV2 } from "../contract/derive2.js";
+import { decompositionIssues, deriveV2, gateClusterHints } from "../contract/derive2.js";
 import { parseSpec } from "../contract/spec.js";
 import { MockLlm } from "../llm/mock.js";
 import type { Gate } from "../contract/schema.js";
@@ -28,6 +28,7 @@ export async function evaluateDecompositionReliability(): Promise<DecompositionE
     oversizedRejectedCase(),
     microSplitRejectedCase(),
     cohesivePlanAcceptedCase(),
+    gateClusterHintsCase(),
     await oversizedRepairCase(),
   ];
   const passed = cases.filter((c) => c.passed).length;
@@ -43,6 +44,29 @@ export async function evaluateDecompositionReliability(): Promise<DecompositionE
     cases,
     score,
     targetPassed: passed === cases.length && score.rightSizeRate === 1 && score.repairRate === 1,
+  };
+}
+
+function gateClusterHintsCase(): DecompositionEvalCaseResult {
+  const hints = gateClusterHints(
+    [
+      "python3 csv.py rows.csv | grep -q '3 rows'",
+      "python3 csv.py cols.csv | grep -q 'name'",
+      "python3 csv.py nums.csv | grep -q 'min'",
+      "python3 csv.py nums.csv | grep -q 'max'",
+      "python3 csv.py nums.csv | grep -q 'avg'",
+      "python3 csv.py missing.csv 2>&1 | grep -qi 'not found'",
+      "python3 csv.py empty.csv 2>&1 | grep -qi 'empty'",
+      "python3 csv.py quoted.csv | grep -q 'Smith, John'",
+      "cat data.csv | python3 csv.py --stdin | grep -q rows",
+      "python3 csv.py bad.csv 2>&1 | grep -qi invalid",
+    ].join(" && "),
+    4,
+  );
+  return {
+    id: "gate-cluster-hints",
+    passed: hints.some((h) => h.startsWith("shape-summary")) && hints.some((h) => h.startsWith("numeric-stats")) && hints.some((h) => h.startsWith("errors")),
+    detail: JSON.stringify(hints),
   };
 }
 
