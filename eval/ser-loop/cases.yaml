@@ -1,0 +1,108 @@
+version: 1
+targets:
+  falseShipRate: 0
+  resumeSuccessRate: 0.8
+  blockerAccuracy: 0.8
+  manualArgCountAfterStart: 0
+  maxHumanTurnsPerShip: 2
+cases:
+  - id: status-after-spec-ready
+    description: A locked spec should tell the user what SER will do next without exposing harness internals.
+    goal: Build a simple offline todo list app, no accounts
+    interruption: after_spec
+    seedSession:
+      phase: spec
+      state: complete
+      summary: The spec is buildable.
+      next: Continue the verified build loop.
+      specPath: .ser/spec.yaml
+      workdir: app
+    expect:
+      statusContains:
+        - "Goal: Build a simple offline todo list app, no accounts"
+        - "State: complete"
+        - "Next: Continue the verified build loop."
+      statusNotContains:
+        - rung
+        - node_start
+        - trace-
+        - .squire
+      continueRequiresArgs: false
+      continueExitCode: 0
+      maxHumanTurns: 0
+      humanNeeded: false
+
+  - id: continue-during-build
+    description: A working build session should continue from persisted state, not ask for generated paths.
+    goal: Build a secure API key vault
+    interruption: during_build
+    seedSession:
+      phase: build
+      state: working
+      summary: Building against the locked gates.
+      next: Resume the build loop until gates pass or a blocker is proven.
+      specPath: .ser/spec.yaml
+      workdir: vault
+    expect:
+      statusContains:
+        - "Goal: Build a secure API key vault"
+        - "Now: Building against the locked gates."
+      statusNotContains:
+        - rung
+        - node_start
+        - trace-
+        - .squire
+      continueRequiresArgs: false
+      continueExitCode: 0
+      maxHumanTurns: 0
+      humanNeeded: false
+
+  - id: honest-blocker-missing-visual-review
+    description: A missing verifier should stop honestly and tell the user what is blocked.
+    goal: Build a polished kanban board
+    interruption: honest_blocker
+    seedSession:
+      phase: audit
+      state: blocked
+      summary: Visual review is unavailable.
+      next: Configure a visual-review backend, then continue.
+      specPath: .ser/spec.yaml
+      workdir: kanban
+    expect:
+      statusContains:
+        - "State: blocked"
+        - "Now: Visual review is unavailable."
+      statusNotContains:
+        - rung
+        - node_start
+        - trace-
+        - .squire
+      continueRequiresArgs: false
+      continueExitCode: 0
+      maxHumanTurns: 1
+      humanNeeded: true
+
+  - id: after-ship-no-false-work
+    description: A completed session should not restart or ask for internals when continued.
+    goal: Build a duration formatting library
+    interruption: after_ship
+    seedSession:
+      phase: ship
+      state: complete
+      summary: The build passed its gates and review.
+      next: Use the delivered build.
+      specPath: .ser/spec.yaml
+      workdir: duration-lib
+    expect:
+      statusContains:
+        - "State: complete"
+        - "Now: The build passed its gates and review."
+      statusNotContains:
+        - rung
+        - node_start
+        - trace-
+        - .squire
+      continueRequiresArgs: false
+      continueExitCode: 0
+      maxHumanTurns: 0
+      humanNeeded: false
