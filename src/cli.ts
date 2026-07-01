@@ -143,6 +143,18 @@ function withDefaultOption(args: string[], name: string, value: string): string[
   return hasOption(args, name) ? args : [...args, `--${name}`, value];
 }
 
+function runConfigFromFlags(flags: Flags, chainName: string): SerSession["runConfig"] {
+  const runConfig: NonNullable<SerSession["runConfig"]> = { chain: chainName };
+  runConfig.chains = flags.value.get("chains");
+  runConfig.budget = flags.value.get("budget");
+  const harness = flags.value.get("harness");
+  if (harness === "on" || harness === "off") runConfig.harness = harness;
+  runConfig.maxRebuilds = flags.value.get("max-rebuilds");
+  runConfig.outerLoops = flags.value.get("outer-loops");
+  if (flags.bool.has("mock")) runConfig.mock = true;
+  return runConfig;
+}
+
 function normalizeGoalOrSpecArgs(args: string[]): string[] {
   if (hasOption(args, "spec")) return args;
   const flags = parseFlags(args, ["chain", "chains", "to", "spec", "out", "workdir", "budget", "harness", "max-rebuilds", "outer-loops"]);
@@ -204,8 +216,19 @@ async function continueProductSession(session: SerSession, root: string, planOnl
 
 export function buildResumePipeline(session: SerSession): { args: string[]; sessionGoal: string } | null {
   if (!session.specPath || !session.workdir) return null;
+  const args = ["--spec", session.specPath, "--workdir", session.workdir, "--to", "ship", "--yes"];
+  const addValue = (name: string, value: string | undefined): void => {
+    if (value) args.push(`--${name}`, value);
+  };
+  addValue("chain", session.runConfig?.chain);
+  addValue("chains", session.runConfig?.chains);
+  addValue("budget", session.runConfig?.budget);
+  addValue("harness", session.runConfig?.harness);
+  addValue("max-rebuilds", session.runConfig?.maxRebuilds);
+  addValue("outer-loops", session.runConfig?.outerLoops);
+  if (session.runConfig?.mock) args.push("--mock");
   return {
-    args: ["--spec", session.specPath, "--workdir", session.workdir, "--to", "ship", "--yes"],
+    args,
     sessionGoal: session.goal,
   };
 }
@@ -600,6 +623,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   const layer = (n: number, name: string): void => { process.stdout.write("\n" + st.bold(`── LAYER ${n} · ${name} ` + "─".repeat(Math.max(0, 44 - name.length))) + "\n"); };
   const { loadChainsForDerive } = await import("./contract/derive.js");
   const chainName = flags.value.get("chain") ?? "cheap";
+  const runConfig = runConfigFromFlags(flags, chainName);
   const chain = resolveChain(loadChainsForDerive(process.cwd(), flags.value.get("chains")), chainName);
   const { stringify } = await import("yaml");
   const { makeLlmClient } = await import("./backend.js");
@@ -607,6 +631,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   const sessionGoal = options.sessionGoal ?? prompt ?? (fromSpec ? `Build from ${basename(fromSpec)}` : "Verified build");
   writeSession({
     goal: sessionGoal,
+    runConfig,
     phase: "spec",
     state: "working",
     summary: fromSpec ? "Resuming from an existing spec." : "Turning the goal into a buildable plan.",
@@ -672,6 +697,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   const buildDir = resolve(flags.value.get("workdir") ?? `./${basename(specPath).replace(/\.spec\.yaml$/, "") || "build"}`);
   writeSession({
     goal: sessionGoal,
+    runConfig,
     phase: "spec",
     state: "working",
     summary: "Compiling the verified plan.",
@@ -704,6 +730,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   if (compileRc !== 0) {
     writeSession({
       goal: sessionGoal,
+      runConfig,
       phase: "spec",
       state: "blocked",
       summary: "The plan compiler refused the spec.",
@@ -728,6 +755,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   if (stopAfterStage("spec")) {
     writeSession({
       goal: sessionGoal,
+      runConfig,
       phase: "spec",
       state: "complete",
       summary: "The spec is buildable.",
@@ -808,6 +836,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       layer(2, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — run the compiled plan to passing gates");
       writeSession({
         goal: sessionGoal,
+        runConfig,
         phase: "build",
         state: "working",
         summary: attempt > 1 ? `Rebuilding after verifier feedback (${attempt}/${maxRebuilds}).` : "Running the locked spec through objective gates.",
@@ -856,6 +885,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       if (buildRc !== 0) {
         writeSession({
           goal: sessionGoal,
+          runConfig,
           phase: "build",
           state: "blocked",
           summary: "A build gate is still red after the executor's retries.",
@@ -878,6 +908,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       if (stopAfterStage("build")) {
         writeSession({
           goal: sessionGoal,
+          runConfig,
           phase: "build",
           state: "complete",
           summary: "The build gates passed.",
@@ -899,6 +930,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       layer(3, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
       writeSession({
         goal: sessionGoal,
+        runConfig,
         phase: "audit",
         state: "working",
         summary: "Reviewing the verified build against the locked spec.",
@@ -959,6 +991,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
           }
           writeSession({
             goal: sessionGoal,
+            runConfig,
             phase: "audit",
             state: "blocked",
             summary: `Visual review is unavailable${shot.note ? `: ${shot.note}` : "."}`,
@@ -990,6 +1023,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
           }
           writeSession({
             goal: sessionGoal,
+            runConfig,
             phase: "audit",
             state: "blocked",
             summary: "Visual review is unavailable.",
@@ -1020,6 +1054,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
           }
           writeSession({
             goal: sessionGoal,
+            runConfig,
             phase: "audit",
             state: "blocked",
             summary: "Visual review failed to produce a verdict.",
@@ -1083,6 +1118,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
             pendingChange = { stories: polish };
             writeSession({
               goal: sessionGoal,
+              runConfig,
               phase: "audit",
               state: "working",
               summary: "The build passed, and review found quality improvements worth another loop.",
@@ -1125,6 +1161,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
         pendingChange = { stories: fixes.map((f) => f.fix) };
         writeSession({
           goal: sessionGoal,
+          runConfig,
           phase: "audit",
           state: "working",
           summary: "Review found blocking defects; SER is folding them into the next build loop.",
@@ -1144,6 +1181,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       }
       writeSession({
         goal: sessionGoal,
+        runConfig,
         phase: "audit",
         state: "blocked",
         summary: `Visual review still blocks after ${maxRebuilds} rebuilds.`,
@@ -1216,6 +1254,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   const highs = recs.filter((r) => r.severity === "high").length;
   writeSession({
     goal: sessionGoal,
+    runConfig,
     phase: "ship",
     state: "complete",
     summary: "The build passed its gates and review.",

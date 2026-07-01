@@ -22,11 +22,41 @@ describe("compressed CLI surface", () => {
       summary: "Running the locked spec through objective gates.",
       specPath: "/tmp/root/.ser/spec.yaml",
       workdir: "/tmp/root/vault",
+      runConfig: {
+        chain: "kimi",
+        chains: "/tmp/root/chains.yaml",
+        budget: "8",
+        harness: "on",
+        maxRebuilds: "5",
+        outerLoops: "2",
+        mock: true,
+      },
       updatedAt: "2026-06-30T00:00:00.000Z",
     });
 
     expect(resume).toEqual({
-      args: ["--spec", "/tmp/root/.ser/spec.yaml", "--workdir", "/tmp/root/vault", "--to", "ship", "--yes"],
+      args: [
+        "--spec",
+        "/tmp/root/.ser/spec.yaml",
+        "--workdir",
+        "/tmp/root/vault",
+        "--to",
+        "ship",
+        "--yes",
+        "--chain",
+        "kimi",
+        "--chains",
+        "/tmp/root/chains.yaml",
+        "--budget",
+        "8",
+        "--harness",
+        "on",
+        "--max-rebuilds",
+        "5",
+        "--outer-loops",
+        "2",
+        "--mock",
+      ],
       sessionGoal: "Build a secure API key vault",
     });
   });

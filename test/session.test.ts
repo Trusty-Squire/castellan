@@ -19,6 +19,11 @@ describe("SER session status", () => {
       workdir,
       specPath: join(root, "vault.spec.yaml"),
       latestTrace: join(workdir, ".squire", "trace-run.jsonl"),
+      runConfig: {
+        chain: "kimi",
+        budget: "8",
+        mock: true,
+      },
     }, root);
 
     const session = readSession(root);
@@ -27,6 +32,11 @@ describe("SER session status", () => {
       phase: "build",
       state: "working",
       summary: "Building scoped agent access.",
+      runConfig: {
+        chain: "kimi",
+        budget: "8",
+        mock: true,
+      },
     });
     expect(session?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });

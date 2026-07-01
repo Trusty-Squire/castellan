@@ -30,6 +30,15 @@ export const SessionSchema = z.object({
   workdir: z.string().optional(),
   specPath: z.string().optional(),
   latestTrace: z.string().optional(),
+  runConfig: z.object({
+    chain: z.string().optional(),
+    chains: z.string().optional(),
+    budget: z.string().optional(),
+    harness: z.enum(["on", "off"]).optional(),
+    maxRebuilds: z.string().optional(),
+    outerLoops: z.string().optional(),
+    mock: z.boolean().optional(),
+  }).optional(),
   updatedAt: z.string(),
 });
 
