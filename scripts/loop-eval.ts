@@ -30,7 +30,7 @@ class SerBinaryDriver implements LoopEvalDriver {
   }
 
   async continue(cwd: string): Promise<CommandResult> {
-    return this.run(["continue"], cwd);
+    return this.run(["continue", "--plan"], cwd);
   }
 
   private async run(args: string[], cwd: string): Promise<CommandResult> {

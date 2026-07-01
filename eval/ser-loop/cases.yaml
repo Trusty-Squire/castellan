@@ -15,6 +15,12 @@ cases:
       state: complete
       summary: The spec is buildable.
       next: Continue the verified build loop.
+      specStatus: locked
+      currentLoop: ready to build from the locked spec
+      lastVerifier: spec compiler
+      lastResult: passed
+      nextMutation: run the build loop
+      humanNeeded: false
       specPath: .ser/spec.yaml
       workdir: app
     expect:
@@ -41,6 +47,13 @@ cases:
       state: working
       summary: Building against the locked gates.
       next: Resume the build loop until gates pass or a blocker is proven.
+      specStatus: locked
+      currentLoop: build
+      lastAttempt: interrupted during build
+      lastVerifier: node gates
+      lastResult: working
+      nextMutation: resume from the locked spec
+      humanNeeded: false
       specPath: .ser/spec.yaml
       workdir: vault
     expect:
@@ -66,6 +79,14 @@ cases:
       state: blocked
       summary: Visual review is unavailable.
       next: Configure a visual-review backend, then continue.
+      specStatus: locked
+      currentLoop: audit
+      lastVerifier: visual review
+      lastResult: unavailable
+      failureClass: verifier_unavailable
+      nextMutation: configure the verifier
+      humanNeeded: true
+      blocker: Visual review backend is missing.
       specPath: .ser/spec.yaml
       workdir: kanban
     expect:
@@ -91,6 +112,11 @@ cases:
       state: complete
       summary: The build passed its gates and review.
       next: Use the delivered build.
+      specStatus: locked
+      currentLoop: shipped
+      lastVerifier: gates and review
+      lastResult: passed
+      humanNeeded: false
       specPath: .ser/spec.yaml
       workdir: duration-lib
     expect:

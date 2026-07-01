@@ -8,6 +8,25 @@ export const SessionSchema = z.object({
   state: z.enum(["working", "blocked", "complete"]).default("working"),
   summary: z.string(),
   next: z.string().optional(),
+  specStatus: z.enum(["drafting", "locked", "needs_input"]).optional(),
+  currentLoop: z.string().optional(),
+  lastAttempt: z.string().optional(),
+  lastVerifier: z.string().optional(),
+  lastResult: z.string().optional(),
+  failureClass: z.enum([
+    "clarification_needed",
+    "localization_context",
+    "runner_environment",
+    "patch_application",
+    "regression_gate",
+    "oracle_false_positive",
+    "provider_timeout",
+    "verifier_unavailable",
+    "model_capability",
+  ]).optional(),
+  nextMutation: z.string().optional(),
+  humanNeeded: z.boolean().optional(),
+  blocker: z.string().optional(),
   workdir: z.string().optional(),
   specPath: z.string().optional(),
   latestTrace: z.string().optional(),
@@ -55,9 +74,15 @@ export function formatSessionStatus(session: SerSession, root = process.cwd()): 
     `State: ${session.state}`,
     `Now: ${session.summary}`,
   ];
+  if (session.currentLoop) lines.push(`Loop: ${session.currentLoop}`);
+  if (session.lastAttempt) lines.push(`Last attempt: ${session.lastAttempt}`);
+  if (session.lastVerifier) lines.push(`Last verifier: ${session.lastVerifier}`);
+  if (session.lastResult) lines.push(`Last result: ${session.lastResult}`);
+  if (session.nextMutation) lines.push(`Next mutation: ${session.nextMutation}`);
   if (session.next) lines.push(`Next: ${session.next}`);
+  if (session.blocker) lines.push(`Blocker: ${session.blocker}`);
+  if (typeof session.humanNeeded === "boolean") lines.push(`Human needed: ${session.humanNeeded ? "yes" : "no"}`);
   if (session.workdir) lines.push(`Workdir: ${displayPath(session.workdir, root)}`);
   if (session.specPath) lines.push(`Spec: ${displayPath(session.specPath, root)}`);
-  if (session.latestTrace) lines.push(`Trace: ${displayPath(session.latestTrace, root)}`);
   return lines.join("\n");
 }

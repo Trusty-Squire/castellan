@@ -31,6 +31,25 @@ export const LoopEvalCaseSchema = z.object({
     state: z.enum(["working", "blocked", "complete"]).default("working"),
     summary: z.string(),
     next: z.string().optional(),
+    specStatus: z.enum(["drafting", "locked", "needs_input"]).optional(),
+    currentLoop: z.string().optional(),
+    lastAttempt: z.string().optional(),
+    lastVerifier: z.string().optional(),
+    lastResult: z.string().optional(),
+    failureClass: z.enum([
+      "clarification_needed",
+      "localization_context",
+      "runner_environment",
+      "patch_application",
+      "regression_gate",
+      "oracle_false_positive",
+      "provider_timeout",
+      "verifier_unavailable",
+      "model_capability",
+    ]).optional(),
+    nextMutation: z.string().optional(),
+    humanNeeded: z.boolean().optional(),
+    blocker: z.string().optional(),
     specPath: z.string().optional(),
     workdir: z.string().optional(),
     latestTrace: z.string().optional(),
@@ -120,6 +139,15 @@ export function seedLoopEvalCase(root: string, testCase: LoopEvalCase): void {
     state: testCase.seedSession.state,
     summary: testCase.seedSession.summary,
     next: testCase.seedSession.next,
+    specStatus: testCase.seedSession.specStatus,
+    currentLoop: testCase.seedSession.currentLoop,
+    lastAttempt: testCase.seedSession.lastAttempt,
+    lastVerifier: testCase.seedSession.lastVerifier,
+    lastResult: testCase.seedSession.lastResult,
+    failureClass: testCase.seedSession.failureClass,
+    nextMutation: testCase.seedSession.nextMutation,
+    humanNeeded: testCase.seedSession.humanNeeded,
+    blocker: testCase.seedSession.blocker,
     workdir,
     specPath,
     latestTrace: testCase.seedSession.latestTrace ? resolve(root, testCase.seedSession.latestTrace) : undefined,
@@ -166,7 +194,7 @@ export async function evaluateLoopCase(testCase: LoopEvalCase, root: string, dri
     });
   }
 
-  const humanTurns = /needs a call from you|press enter|approve\?|type your own|human gate/i.test(status.stdout + continued.stdout + continued.stderr) ? 1 : 0;
+  const humanTurns = /human needed:\s*yes|needs a call from you|press enter|approve\?|type your own|human gate/i.test(status.stdout + continued.stdout + continued.stderr) ? 1 : 0;
   if (typeof expect.maxHumanTurns === "number") {
     assertions.push({
       name: `human turns <= ${expect.maxHumanTurns}`,

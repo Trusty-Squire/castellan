@@ -19,7 +19,7 @@ import { sanitizeInput } from "./term.js";
 import { visualAuditSummary } from "./funnel.js";
 import type { Spec } from "./contract/spec.js";
 import type { Mission } from "./contract/schema.js";
-import { formatSessionStatus, readSession, writeSession } from "./session.js";
+import { formatSessionStatus, readSession, writeSession, type SerSession } from "./session.js";
 
 export async function main(argv: string[]): Promise<number> {
   const { loadDotEnv } = await import("./env.js");
@@ -164,11 +164,41 @@ async function cmdStart(args: string[]): Promise<number> {
 }
 
 async function cmdContinue(args: string[]): Promise<number> {
+  const flags = parseFlags(args, ["workdir"]);
+  const hasPipelineInput = flags.positional.length > 0 || hasOption(args, "spec");
+  if (!hasPipelineInput) {
+    const root = resolve(flags.value.get("workdir") ?? process.cwd());
+    const session = readSession(root) ?? readSession(process.cwd());
+    if (session) return continueProductSession(session, root, flags.bool.has("plan"));
+  }
   if (args.length === 0) {
     const { runTui } = await import("./tui/app.js");
     return runTui(true);
   }
   return cmdPipeline(normalizeGoalOrSpecArgs(args));
+}
+
+async function continueProductSession(session: SerSession, root: string, planOnly: boolean): Promise<number> {
+  process.stdout.write(formatSessionStatus(session, root) + "\n");
+  if (session.state === "blocked") {
+    process.stdout.write("\nSER is blocked on this loop. ");
+    process.stdout.write(session.humanNeeded === false ? "Fix the blocker, then continue.\n" : "Human input or configuration is needed before retrying.\n");
+    return 0;
+  }
+  if (session.phase === "ship" && session.state === "complete") {
+    process.stdout.write("\nNothing to continue. The verified build is already complete.\n");
+    return 0;
+  }
+  if (!session.specPath || !session.workdir) {
+    process.stdout.write("\nSER cannot resume this loop because the saved session is missing its spec or workdir.\n");
+    return 0;
+  }
+  process.stdout.write("\nContinuing the verified build loop.\n");
+  if (planOnly) {
+    process.stdout.write("Plan: resume from the locked spec and run until ship or an honest blocker.\n");
+    return 0;
+  }
+  return cmdPipeline(["--spec", session.specPath, "--workdir", session.workdir, "--to", "ship", "--yes"]);
 }
 
 async function cmdStop(_args: string[]): Promise<number> {
@@ -571,7 +601,13 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     phase: "spec",
     state: "working",
     summary: fromSpec ? "Resuming from an existing spec." : "Turning the goal into a buildable plan.",
-    next: "Compile the plan, then build the verified slices.",
+    next: "Compile the plan, then run the verified build loop.",
+    specStatus: fromSpec ? "locked" : "drafting",
+    currentLoop: fromSpec ? "resume from locked spec" : "clarify and lock a verifiable spec",
+    lastVerifier: fromSpec ? "saved spec" : undefined,
+    lastResult: fromSpec ? "available" : undefined,
+    nextMutation: "compile objective gates",
+    humanNeeded: false,
     specPath: fromSpec ? resolve(fromSpec) : undefined,
     workdir: flags.value.get("workdir") ? resolve(flags.value.get("workdir")!) : undefined,
   });
@@ -630,7 +666,13 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     phase: "spec",
     state: "working",
     summary: "Compiling the verified plan.",
-    next: stopAfterStage("spec") ? "Review the spec or continue to build." : "Build the planned slices.",
+    next: stopAfterStage("spec") ? "Review the spec or continue to build." : "Run the build loop until gates pass or an honest blocker appears.",
+    specStatus: "drafting",
+    currentLoop: "compile spec to objective gates",
+    lastVerifier: "spec compiler",
+    lastResult: "running",
+    nextMutation: "lock the spec if the plan compiles",
+    humanNeeded: false,
     specPath,
     workdir: buildDir,
   });
@@ -656,7 +698,15 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       phase: "spec",
       state: "blocked",
       summary: "The plan compiler refused the spec.",
-      next: "Revise the spec, then run `ser continue` or `ser start --spec <file>`.",
+      next: "Revise the spec, then continue.",
+      specStatus: "needs_input",
+      currentLoop: "compile spec to objective gates",
+      lastVerifier: "spec compiler",
+      lastResult: "failed",
+      failureClass: "clarification_needed",
+      nextMutation: "revise the spec until every requirement has an objective verifier",
+      humanNeeded: true,
+      blocker: "The current spec cannot compile into a buildable gated loop.",
       specPath,
       workdir: buildDir,
     });
@@ -672,7 +722,13 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       phase: "spec",
       state: "complete",
       summary: "The spec is buildable.",
-      next: `Run \`ser start --spec ${specPath} --to build\` when ready to build.`,
+      next: "Continue when ready to run the verified build loop.",
+      specStatus: "locked",
+      currentLoop: "ready to build from the locked spec",
+      lastVerifier: "spec compiler",
+      lastResult: "passed",
+      nextMutation: "run the build loop",
+      humanNeeded: false,
       specPath,
       workdir: buildDir,
     });
@@ -741,6 +797,22 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       }
 
       layer(2, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — run the compiled plan to passing gates");
+      writeSession({
+        goal: sessionGoal,
+        phase: "build",
+        state: "working",
+        summary: attempt > 1 ? `Rebuilding after verifier feedback (${attempt}/${maxRebuilds}).` : "Running the locked spec through objective gates.",
+        next: "Keep building until gates pass or a blocker is proven.",
+        specStatus: "locked",
+        currentLoop: "build",
+        lastVerifier: "node gates",
+        lastResult: "running",
+        nextMutation: pendingChange ? "fold verifier feedback into the spec" : "execute the next gated build attempt",
+        humanNeeded: false,
+        specPath,
+        workdir: buildDir,
+        latestTrace: latestTracePath(buildDir),
+      });
       if (directRebuildMission) {
         const { stringify } = await import("yaml");
         const { writeFileSync: wf } = await import("node:fs");
@@ -772,11 +844,66 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       const buildTracePath = latestTracePath(buildDir);
     // A build halt is already a loop-exhausted state — the executor's own rung
     // ladder retried before giving up — so it's an honest halt, not a first-fail stop.
-      if (buildRc !== 0) { process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red after the executor's retries. ser will not ship unverified work.") + "\n"); return buildRc; }
-      if (stopAfterStage("build")) return 0;
+      if (buildRc !== 0) {
+        writeSession({
+          goal: sessionGoal,
+          phase: "build",
+          state: "blocked",
+          summary: "A build gate is still red after the executor's retries.",
+          next: "Inspect the blocker or revise the spec before continuing.",
+          specStatus: "locked",
+          currentLoop: "build",
+          lastVerifier: "node gates",
+          lastResult: "failed",
+          failureClass: "model_capability",
+          nextMutation: "classify the failed gate and decide whether the spec, context, or implementation needs mutation",
+          humanNeeded: true,
+          blocker: "SER exhausted the build loop without a verified pass.",
+          specPath,
+          workdir: buildDir,
+          latestTrace: buildTracePath,
+        });
+        process.stdout.write(st.yellow("\nbuild halted honestly — a gate is still red after the executor's retries. ser will not ship unverified work.") + "\n");
+        return buildRc;
+      }
+      if (stopAfterStage("build")) {
+        writeSession({
+          goal: sessionGoal,
+          phase: "build",
+          state: "complete",
+          summary: "The build gates passed.",
+          next: "Continue to independent review.",
+          specStatus: "locked",
+          currentLoop: "build",
+          lastVerifier: "node gates",
+          lastResult: "passed",
+          nextMutation: "run audit and visual review",
+          humanNeeded: false,
+          specPath,
+          workdir: buildDir,
+          latestTrace: buildTracePath,
+        });
+        return 0;
+      }
 
     // ---- LAYER 4 audit (independent reviewer, no build memory) ----
       layer(3, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
+      writeSession({
+        goal: sessionGoal,
+        phase: "audit",
+        state: "working",
+        summary: "Reviewing the verified build against the locked spec.",
+        next: "Fold blocking review findings back into the loop, or ship if review passes.",
+        specStatus: "locked",
+        currentLoop: "audit",
+        lastVerifier: "node gates",
+        lastResult: "passed",
+        nextMutation: "run independent audit and visual review",
+        humanNeeded: false,
+        specPath,
+        workdir: buildDir,
+        latestTrace: buildTracePath,
+      });
       const { withFrontendFloorStories } = await import("./review/frontend-floor.js");
       const builtSpec = withFrontendFloorStories(parseSpec(readFileSync(specPath, "utf8"), specPath));
       const files = collectSourceFiles(buildDir);
@@ -821,6 +948,24 @@ async function cmdPipeline(argv: string[]): Promise<number> {
               fix: "make the UI renderable so ser can inspect it",
             });
           }
+          writeSession({
+            goal: sessionGoal,
+            phase: "audit",
+            state: "blocked",
+            summary: `Visual review is unavailable${shot.note ? `: ${shot.note}` : "."}`,
+            next: "Make the UI renderable or configure the verifier, then continue.",
+            specStatus: "locked",
+            currentLoop: "audit",
+            lastVerifier: "visual review",
+            lastResult: "unavailable",
+            failureClass: "verifier_unavailable",
+            nextMutation: "restore the visual verifier",
+            humanNeeded: true,
+            blocker: "SER will not ship a visual product it cannot render and inspect.",
+            specPath,
+            workdir: buildDir,
+            latestTrace: buildTracePath,
+          });
           process.stdout.write(st.yellow(`\nvisual review unavailable — ${shot.note}. ser will not ship a UI it could not render and inspect.`) + "\n");
           return 1;
         }
@@ -834,6 +979,24 @@ async function cmdPipeline(argv: string[]): Promise<number> {
               fix: "configure a visual-review backend or run a non-visual target",
             });
           }
+          writeSession({
+            goal: sessionGoal,
+            phase: "audit",
+            state: "blocked",
+            summary: "Visual review is unavailable.",
+            next: "Configure a visual-review backend, then continue.",
+            specStatus: "locked",
+            currentLoop: "audit",
+            lastVerifier: "visual review",
+            lastResult: "unavailable",
+            failureClass: "verifier_unavailable",
+            nextMutation: "configure the verifier",
+            humanNeeded: true,
+            blocker: "No multimodal reviewer is configured.",
+            specPath,
+            workdir: buildDir,
+            latestTrace: buildTracePath,
+          });
           process.stdout.write(st.yellow("\nvisual review unavailable — no multimodal reviewer is configured. ser will not ship a rendered UI without that check.") + "\n");
           return 1;
         }
@@ -846,6 +1009,24 @@ async function cmdPipeline(argv: string[]): Promise<number> {
               fix: "retry the visual review or inspect the rendered UI manually",
             });
           }
+          writeSession({
+            goal: sessionGoal,
+            phase: "audit",
+            state: "blocked",
+            summary: "Visual review failed to produce a verdict.",
+            next: "Retry the verifier or inspect the rendered UI manually.",
+            specStatus: "locked",
+            currentLoop: "audit",
+            lastVerifier: "visual review",
+            lastResult: "unavailable",
+            failureClass: "verifier_unavailable",
+            nextMutation: "rerun or restore the visual verifier",
+            humanNeeded: true,
+            blocker: "SER could not obtain a trustworthy visual verdict.",
+            specPath,
+            workdir: buildDir,
+            latestTrace: buildTracePath,
+          });
           process.stdout.write(st.yellow("\nvisual review failed to produce a verdict. ser will not ship a rendered UI without that check.") + "\n");
           return 1;
         }
@@ -891,6 +1072,22 @@ async function cmdPipeline(argv: string[]): Promise<number> {
           const polish = polishFixes(verdict);
           if (polish.length > 0 && attempt < maxRebuilds) {
             pendingChange = { stories: polish };
+            writeSession({
+              goal: sessionGoal,
+              phase: "audit",
+              state: "working",
+              summary: "The build passed, and review found quality improvements worth another loop.",
+              next: "Fold the review feedback into the spec and rebuild.",
+              specStatus: "locked",
+              currentLoop: "audit",
+              lastVerifier: "visual review",
+              lastResult: "passed with polish",
+              nextMutation: "fold review feedback into the spec",
+              humanNeeded: false,
+              specPath,
+              workdir: buildDir,
+              latestTrace: buildTracePath,
+            });
             process.stdout.write(st.gray(`  continuing search with ${polish.length} quality-targeted fix(es)…`) + "\n");
             continue;
           }
@@ -917,9 +1114,43 @@ async function cmdPipeline(argv: string[]): Promise<number> {
       }
       if (attempt < maxRebuilds) {
         pendingChange = { stories: fixes.map((f) => f.fix) };
+        writeSession({
+          goal: sessionGoal,
+          phase: "audit",
+          state: "working",
+          summary: "Review found blocking defects; SER is folding them into the next build loop.",
+          next: "Rebuild and verify closure of the blocking defects.",
+          specStatus: "locked",
+          currentLoop: "audit",
+          lastVerifier: "visual review",
+          lastResult: "blocking defects open",
+          nextMutation: "fold blocking review fixes into the spec",
+          humanNeeded: false,
+          specPath,
+          workdir: buildDir,
+          latestTrace: buildTracePath,
+        });
         process.stdout.write(st.gray(`\nfolding these into the spec and rebuilding (attempt ${attempt + 1}/${maxRebuilds})…`) + "\n");
         continue;
       }
+      writeSession({
+        goal: sessionGoal,
+        phase: "audit",
+        state: "blocked",
+        summary: `Visual review still blocks after ${maxRebuilds} rebuilds.`,
+        next: "Inspect the open review defects or revise the spec before continuing.",
+        specStatus: "locked",
+        currentLoop: "audit",
+        lastVerifier: "visual review",
+        lastResult: "blocking defects open",
+        failureClass: "model_capability",
+        nextMutation: "classify whether the remaining defects require spec, harness, or implementation changes",
+        humanNeeded: true,
+        blocker: "SER exhausted the bounded visual-review loop without closing the defects.",
+        specPath,
+        workdir: buildDir,
+        latestTrace: buildTracePath,
+      });
       process.stdout.write(st.yellow(`\nvisual review still blocks after ${maxRebuilds} rebuilds — halting honestly with the issues above. ser will not ship a UI that fails its own design review.`) + "\n");
       return 1;
     }
@@ -980,6 +1211,12 @@ async function cmdPipeline(argv: string[]): Promise<number> {
     state: "complete",
     summary: "The build passed its gates and review.",
     next: highs ? "Review the remaining audit notes." : "Use the delivered build.",
+    specStatus: "locked",
+    currentLoop: "shipped",
+    lastVerifier: "gates and review",
+    lastResult: "passed",
+    nextMutation: highs ? "review remaining non-blocking audit notes" : undefined,
+    humanNeeded: false,
     specPath,
     workdir: buildDir,
     latestTrace: latestTracePath(buildDir),
