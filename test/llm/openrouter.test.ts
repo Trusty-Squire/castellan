@@ -106,4 +106,30 @@ describe("OpenRouterClient", () => {
       /HTTP 400/,
     );
   });
+
+  it("retries OpenRouter provider-route 400s then succeeds", async () => {
+    let calls = 0;
+    const client = new OpenRouterClient({
+      apiKey: "k",
+      sleep: async () => {},
+      fetchImpl: (async () => {
+        calls += 1;
+        return calls < 2
+          ? jsonResponse({
+              error: {
+                message: "Provider returned error",
+                metadata: {
+                  raw: "{\"message\":\"thinking mode  is not supported\"}",
+                  previous_errors: [{ code: 429, raw: "temporarily rate-limited upstream" }],
+                },
+              },
+            }, 400)
+          : jsonResponse(okBody);
+      }) as unknown as typeof fetch,
+    });
+
+    const r = await client.complete({ model: "m", system: "s", user: "u", maxTokens: 100 });
+    expect(calls).toBe(2);
+    expect(r.text).toBe('{"nodes":[]}');
+  });
 });

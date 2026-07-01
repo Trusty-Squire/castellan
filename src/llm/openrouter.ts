@@ -3,6 +3,12 @@ import type { LlmClient } from "./types.js";
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
+function retryableProviderRouteError(status: number, body: string): boolean {
+  if (status === 429 || status >= 500) return true;
+  if (status !== 400) return false;
+  return /Provider returned error|temporarily rate-limited|rate[- ]limited upstream|thinking mode\s+is not supported/i.test(body);
+}
+
 /**
  * OpenRouter LlmClient: POST /chat/completions with OPENROUTER_API_KEY.
  * 2 retries with backoff on 429/5xx. Used only by the planner (derive);
@@ -83,6 +89,10 @@ export class OpenRouterClient implements LlmClient {
       }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
+        if (retryableProviderRouteError(res.status, text)) {
+          lastErr = `OpenRouter HTTP ${res.status}: ${text.slice(0, 500)}`;
+          continue;
+        }
         throw new SquireError("LLM_HTTP", `OpenRouter HTTP ${res.status}: ${text.slice(0, 500)}`);
       }
       const json = (await res.json()) as {

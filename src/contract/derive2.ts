@@ -21,6 +21,17 @@ import { packContext } from "../harness/context.js";
 
 // --- stage output schemas ---
 
+function stringListSchema(min = 0) {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return value;
+      const parts = value.includes(",") ? value.split(",") : value.split(/\s+/);
+      return parts.map((s) => s.trim()).filter(Boolean);
+    },
+    z.array(z.string().min(1)).min(min),
+  );
+}
+
 const DecomposeSchema = z.object({
   /**
    * The shared CONTRACT for the whole build: the canonical data shapes (named types
@@ -36,9 +47,9 @@ const DecomposeSchema = z.object({
       z.object({
         id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
         brief: z.string().min(1),
-        deps: z.array(z.string()).default([]),
-        context_globs: z.array(z.string()).default([]),
-        blast_radius: z.array(z.string().min(1)).min(1),
+        deps: stringListSchema().default([]),
+        context_globs: stringListSchema().default([]),
+        blast_radius: stringListSchema(1),
         budget_usd: z.number().positive(),
         /** Spec requirement this node satisfies (spec-mode). */
         requirement: z.string().optional(),

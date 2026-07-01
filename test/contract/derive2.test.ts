@@ -149,6 +149,49 @@ open_questions: []
     }
   });
 
+  it("accepts decompose list fields emitted as comma-separated strings", async () => {
+    const spec = parseSpec(`
+thesis: Local notes
+scope_fence: []
+requirements:
+  - id: R1
+    statement: Notes can be created and searched locally
+    acceptance:
+      tier: 1
+      gate: npm test
+decisions: []
+claims: []
+open_questions: []
+`);
+    const decompose = JSON.stringify({
+      contract: "type Note = { id: string, title: string }",
+      nodes: [
+        {
+          id: "server",
+          brief: "build the notes server",
+          deps: "",
+          context_globs: "",
+          blast_radius: "server.js, package.json, data/notes.json",
+          budget_usd: 0.8,
+          requirement: "R1",
+        },
+      ],
+    });
+    const llm = new MockLlm([
+      { text: decompose },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+
+    const r = await deriveV2({ ...base(llm), goal: undefined, spec });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.readback).not.toContain("fallback planner");
+    expect(r.mission.nodes[0]!.id).toBe("server");
+    expect(r.mission.nodes[0]!.blast_radius).toEqual(["server.js", "package.json", "data/notes.json"]);
+    expect(r.mission.nodes[0]!.context_globs).toEqual([]);
+    expect(r.mission.nodes[0]!.deps).toEqual([]);
+  });
+
   it("seeds server plumbing for a greenfield serve-gate node (scaffoldServers) and wires the node", async () => {
     const decompose = JSON.stringify({
       contract: "GET/POST /api/items over an HTTP server on :8090",
