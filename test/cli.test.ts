@@ -82,4 +82,35 @@ describe("compressed CLI surface", () => {
     expect(output).not.toContain("--spec");
     expect(output).not.toContain(".squire");
   });
+
+  it("ser --continue uses the same product-session controller", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ser-cli-dash-continue-"));
+    const workdir = join(root, "app");
+    mkdirSync(workdir);
+    process.chdir(root);
+    writeSession({
+      goal: "Build a local notes app",
+      phase: "ship",
+      state: "complete",
+      summary: "The build passed its gates and review.",
+      next: "Use the delivered build.",
+      specStatus: "locked",
+      currentLoop: "shipped",
+      lastVerifier: "gates and review",
+      lastResult: "passed",
+      humanNeeded: false,
+      workdir,
+      specPath: join(root, ".ser", "spec.yaml"),
+    }, root);
+
+    let output = "";
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      output += String(chunk);
+      return true;
+    });
+
+    await expect(main(["--continue"])).resolves.toBe(0);
+    expect(output).toContain("Goal: Build a local notes app");
+    expect(output).toContain("Nothing to continue");
+  });
 });

@@ -68,8 +68,7 @@ export async function main(argv: string[]): Promise<number> {
     case "-c":
     case "--continue": {
       // `ser --continue` → resume the saved product loop, or the TUI transcript if no product loop exists.
-      const { runTui } = await import("./tui/app.js");
-      return runTui(true);
+      return cmdContinue([]);
     }
     case "-h":
     case "--help":
