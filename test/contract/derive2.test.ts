@@ -192,6 +192,72 @@ open_questions: []
     expect(r.mission.nodes[0]!.deps).toEqual([]);
   });
 
+  it("compiles the captured Kimi notes decomposition instead of falling back", async () => {
+    const spec = parseSpec(`
+thesis: build a small local notes tool with tags, browser persistence, and a visible test result
+scope_fence: []
+requirements:
+  - id: R1
+    statement: "Implement the smallest useful version of: build a small local notes tool with tags, browser persistence, and a visible test result"
+    acceptance:
+      tier: 1
+      gate: npm test -- --runInBand
+  - id: R2
+    statement: "The app renders a usable product UI in index.html, seeded with realistic sample content on first load."
+    acceptance:
+      tier: 1
+      gate: npm run build --if-present
+decisions: []
+claims: []
+open_questions: []
+`);
+    const decompose = JSON.stringify({
+      contract: "type Note = { id: string, title: string }",
+      nodes: [
+        {
+          id: "server",
+          brief: "Create Express server and CRUD API for notes.",
+          deps: [],
+          context_globs: [],
+          blast_radius: "server.js, package.json, data/notes.json",
+          budget_usd: 0.8,
+          requirement: "R1",
+        },
+        {
+          id: "frontend",
+          brief: "Build phone-friendly UI in public/ with tag filtering and search.",
+          deps: ["server"],
+          context_globs: ["server.js"],
+          blast_radius: "public/index.html, public/style.css, public/app.js",
+          budget_usd: 1.2,
+          requirement: "R1, R2",
+        },
+        {
+          id: "tests",
+          brief: "Add API and UI tests for create, delete, filter, and search.",
+          deps: ["server", "frontend"],
+          context_globs: ["server.js", "public/*"],
+          blast_radius: "test/api.test.js, test/ui.spec.ts, package.json",
+          budget_usd: 0.5,
+          requirement: "R1",
+        },
+      ],
+    });
+    const llm = new MockLlm([
+      { text: "web-app" },
+      { text: decompose },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+
+    const r = await deriveV2({ ...base(llm), goal: undefined, spec, scaffoldServers: true });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.readback).not.toContain("fallback planner");
+    expect(r.mission.nodes.map((n) => n.id)).toEqual(["server", "frontend", "tests"]);
+    expect(r.mission.nodes[0]!.blast_radius).toEqual(["server.js", "package.json", "data/notes.json"]);
+    expect(r.mission.nodes[1]!.blast_radius).toEqual(["public/index.html", "public/style.css", "public/app.js"]);
+  });
+
   it("seeds server plumbing for a greenfield serve-gate node (scaffoldServers) and wires the node", async () => {
     const decompose = JSON.stringify({
       contract: "GET/POST /api/items over an HTTP server on :8090",

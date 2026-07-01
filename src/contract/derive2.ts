@@ -11,6 +11,7 @@ import { classifyArchetype, WEB_APP_STACK_RULE, WEB_APP_GATE_RULE, type Archetyp
 import { vendorPalette, paletteNote } from "./palette-scaffold.js";
 import { type Spec, unanchoredRequirements, refutedDecisions, blockingQuestions } from "./spec.js";
 import { packContext } from "../harness/context.js";
+import { formatStageDiagnostic, normalizeStageOutput, type StageDiagnostic } from "./derive-normalize.js";
 
 /**
  * derive-v2 — the herald pipeline (SPEC-v0.2 §6). Planning as a gated loop:
@@ -20,17 +21,6 @@ import { packContext } from "../harness/context.js";
  */
 
 // --- stage output schemas ---
-
-function stringListSchema(min = 0) {
-  return z.preprocess(
-    (value) => {
-      if (typeof value !== "string") return value;
-      const parts = value.includes(",") ? value.split(",") : value.split(/\s+/);
-      return parts.map((s) => s.trim()).filter(Boolean);
-    },
-    z.array(z.string().min(1)).min(min),
-  );
-}
 
 const DecomposeSchema = z.object({
   /**
@@ -47,9 +37,9 @@ const DecomposeSchema = z.object({
       z.object({
         id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
         brief: z.string().min(1),
-        deps: stringListSchema().default([]),
-        context_globs: stringListSchema().default([]),
-        blast_radius: stringListSchema(1),
+        deps: z.array(z.string()).default([]),
+        context_globs: z.array(z.string()).default([]),
+        blast_radius: z.array(z.string().min(1)).min(1),
         budget_usd: z.number().positive(),
         /** Spec requirement this node satisfies (spec-mode). */
         requirement: z.string().optional(),
@@ -351,6 +341,7 @@ async function jsonStage<S extends z.ZodTypeAny>(
 ): Promise<z.output<S>> {
   let note = "";
   let lastText = "";
+  let lastDiagnostic: StageDiagnostic | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     const timeoutMs = Number(process.env.SER_PLANNER_TIMEOUT_MS ?? 90000);
     let res: Awaited<ReturnType<LlmClient["complete"]>>;
@@ -386,22 +377,32 @@ async function jsonStage<S extends z.ZodTypeAny>(
     }
     const parsed = tryParseJson(res.text);
     if (parsed.ok) {
-      const checked = schema.safeParse(parsed.value);
+      const normalized = normalizeStageOutput(stage, parsed.value);
+      const checked = schema.safeParse(normalized);
       if (checked.success) return checked.data;
+      lastDiagnostic = { stage, rawText: res.text, parsed: parsed.value, normalized, validationIssues: checked.error.issues };
       note = `\n\nYour previous output failed validation:\n${formatZodIssues(checked.error.issues)}\nOutput corrected JSON only.`;
     } else {
       const salvaged = tryParseJson(removeControlChars(res.text));
       if (salvaged.ok) {
-        const checked = schema.safeParse(salvaged.value);
+        const normalized = normalizeStageOutput(stage, salvaged.value);
+        const checked = schema.safeParse(normalized);
         if (checked.success) return checked.data;
+        lastDiagnostic = { stage, rawText: res.text, parsed: salvaged.value, normalized, validationIssues: checked.error.issues };
         note = `\n\nYour previous output became valid JSON after removing raw control characters, but failed validation:\n${formatZodIssues(checked.error.issues)}\nOutput corrected JSON only.`;
       } else {
+        lastDiagnostic = { stage, rawText: res.text, parseError: parsed.error };
         note = `\n\nYour previous output was not valid JSON: ${parsed.error}. Output JSON only.`;
       }
     }
   }
   if (process.env.SER_DUMP_STAGE_FAIL) {
-    try { (await import("node:fs")).writeFileSync(process.env.SER_DUMP_STAGE_FAIL, `STAGE ${stage} (len ${lastText.length})\n\n${lastText}`); } catch { /* best effort */ }
+    try {
+      (await import("node:fs")).writeFileSync(
+        process.env.SER_DUMP_STAGE_FAIL,
+        lastDiagnostic ? formatStageDiagnostic(lastDiagnostic) : formatStageDiagnostic({ stage, rawText: lastText }),
+      );
+    } catch { /* best effort */ }
   }
   throw new SquireError("DERIVE_STAGE_INVALID", `stage "${stage}" produced invalid output after one retry`);
 }
