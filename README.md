@@ -97,7 +97,8 @@ ser stop
 
 `ser start` begins a verified delegation session. With no argument it opens the
 interactive TUI; with a goal or `--spec <file>` it runs the product funnel
-non-interactively. `ser continue` resumes the last interactive session.
+non-interactively. `ser continue` resumes the durable product loop when one is
+saved, and otherwise falls back to the interactive TUI session.
 `ser review` runs through build audit and stops before shipping. `ser ship`
 verifies the gates are green and hands over the finished build. `ser status`
 summarizes the latest run at the product level.

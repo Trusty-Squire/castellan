@@ -148,8 +148,8 @@ export async function runTui(resume = false): Promise<number> {
   const { loadChainsForDerive } = await import("../contract/derive.js");
   const { resolveChain } = await import("../contract/schema.js");
   const chain = resolveChain(loadChainsForDerive(process.cwd()), "cheap");
-  const stateDir = join(process.cwd(), ".ser"), statePath = join(stateDir, "session.json");
-  // Bare `ser` always starts fresh; only `ser --continue` resumes the saved session.
+  const stateDir = join(process.cwd(), ".ser"), statePath = join(stateDir, "tui-session.json");
+  // Bare `ser` always starts fresh; only `ser --continue` resumes this TUI transcript.
   const sess: Session = resume && existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { layer: "idea", prompt: "" };
   const save = (): void => { mkdirSync(stateDir, { recursive: true }); writeFileSync(statePath, JSON.stringify(sess)); };
   const c: Ctx = { s, llm, premium: chain.knight, cheap: chain.executor, chainName: "cheap", sess, save, cwd: process.cwd(), cost };
@@ -170,7 +170,7 @@ export async function runTui(resume = false): Promise<number> {
       if (!cont) break;
     }
   } catch (e) { code = 1; out(s.red("\n  error: " + (e instanceof Error ? e.message : String(e)))); }
-  out(s.dim("\n  saved — `ser --continue` to pick up where you left off.\n"));
+  out(s.dim("\n  saved — `ser --continue` to pick up this conversation where you left off.\n"));
   return code;
 }
 
@@ -451,7 +451,7 @@ async function shipLayer(c: Ctx): Promise<boolean> {
   out(s.gray(`  ${spec.requirements.length} checks green · run it:  ls ${c.sess.buildDir}`));
   const msg = await ask(c, "\n  new build? type the idea, or /quit:  ");
   if (msg === "/quit" || msg === "") return false;
-  rmSync(join(c.cwd, ".ser", "session.json"), { force: true });
+  rmSync(join(c.cwd, ".ser", "tui-session.json"), { force: true });
   c.sess.layer = "idea"; c.sess.prompt = msg; delete c.sess.brief; c.sess.history = []; delete c.sess.specPath; delete c.sess.buildDir;
   c.save();
   return true;

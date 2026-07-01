@@ -67,7 +67,7 @@ export async function main(argv: string[]): Promise<number> {
     }
     case "-c":
     case "--continue": {
-      // `ser --continue` → resume the saved session (like `claude --continue`).
+      // `ser --continue` → resume the saved product loop, or the TUI transcript if no product loop exists.
       const { runTui } = await import("./tui/app.js");
       return runTui(true);
     }
@@ -90,7 +90,7 @@ function printUsage(): void {
       "Essential commands:",
       "  ser start [goal-or-spec]           start a verified build session",
       "  ser status                         show product-level progress for the latest run",
-      "  ser continue                       resume the last interactive session",
+      "  ser continue                       resume the durable verified loop",
       "  ser review [goal-or-spec]          run through audit/review, then stop before ship",
       "  ser ship <goal-or-spec>            verify and hand over the finished build",
       "  ser stop                           end the current foreground session cleanly",
@@ -202,7 +202,7 @@ async function continueProductSession(session: SerSession, root: string, planOnl
 }
 
 async function cmdStop(_args: string[]): Promise<number> {
-  process.stdout.write("ser has no background worker to stop. Press Ctrl-C to stop a foreground run; saved interactive sessions can be resumed with `ser continue`.\n");
+  process.stdout.write("ser has no background worker to stop. Press Ctrl-C to stop a foreground run; saved product loops can be resumed with `ser continue`.\n");
   return 0;
 }
 
