@@ -14,6 +14,19 @@ afterEach(() => {
 });
 
 describe("compressed CLI surface", () => {
+  it("bare ser gives a product-loop prompt hint instead of the legacy TUI error in noninteractive shells", async () => {
+    let output = "";
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      output += String(chunk);
+      return true;
+    });
+
+    await expect(main([])).resolves.toBe(1);
+    expect(output).toContain('Usage: ser "build the thing..." --yes');
+    expect(output).toContain("interactive terminal");
+    expect(output).not.toContain("ser needs an interactive terminal");
+  });
+
   it("resume pipeline preserves the original product goal", () => {
     const resume = buildResumePipeline({
       goal: "Build a secure API key vault",

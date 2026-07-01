@@ -61,9 +61,9 @@ export async function main(argv: string[]): Promise<number> {
     case "login":
       return cmdLogin(rest);
     case undefined: {
-      // bare `ser` → the funnel TUI, always a FRESH session (idea→spec→build→audit→ship).
-      const { runTui } = await import("./tui/app.js");
-      return runTui(false);
+      // bare `ser` is the primary product-loop entrypoint: ask for the goal,
+      // then run the same verified pipeline as `ser start "<goal>"`.
+      return cmdInteractiveStart([]);
     }
     case "-c":
     case "--continue": {
@@ -87,7 +87,9 @@ function printUsage(): void {
       "ser — Castellan: verified delegation. An outcome becomes a gated build.",
       "",
       "Essential commands:",
-      "  ser start [goal-or-spec]           start a verified build session",
+      "  ser                               describe a new verified build interactively",
+      "  ser \"goal\"                         start from a one-line goal",
+      "  ser start [goal-or-spec]           explicit start form",
       "  ser status                         show product-level progress for the latest run",
       "  ser continue                       resume the durable verified loop",
       "  ser review [goal-or-spec]          run through audit/review, then stop before ship",
@@ -200,10 +202,30 @@ function classifyBuildFailureFromTrace(tracePath: string | undefined): Pick<SerS
 
 async function cmdStart(args: string[]): Promise<number> {
   if (args.length === 0) {
-    const { runTui } = await import("./tui/app.js");
-    return runTui(false);
+    return cmdInteractiveStart([]);
   }
   return cmdPipeline(normalizeGoalOrSpecArgs(args));
+}
+
+async function cmdInteractiveStart(_args: string[]): Promise<number> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    process.stdout.write('Usage: ser "build the thing..." --yes\nRun plain `ser` in an interactive terminal to describe a new verified build.\n');
+    return 1;
+  }
+  process.stdout.write("SER starts from a concrete outcome and runs the verified loop until ship or an honest blocker.\n\n");
+  const goal = (await ask("What do you want SER to build?\n> ")).trim();
+  if (!goal) {
+    process.stdout.write('No goal entered. Example: ser "build a local notes app with tags" --yes\n');
+    return 1;
+  }
+  const dryRunPath = process.env.SER_INTERACTIVE_DRY_RUN_PATH;
+  const args = [goal];
+  if (dryRunPath) {
+    writeFileSync(dryRunPath, JSON.stringify({ args, sessionGoal: goal }, null, 2) + "\n");
+    process.stdout.write("Dry run: interactive start plan is ready.\n");
+    return 0;
+  }
+  return cmdPipeline(args, { sessionGoal: goal });
 }
 
 async function cmdContinue(args: string[]): Promise<number> {
