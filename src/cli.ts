@@ -166,6 +166,22 @@ function normalizeGoalOrSpecArgs(args: string[]): string[] {
   return [...args.slice(0, idx), ...args.slice(idx + 1), "--spec", first];
 }
 
+function plannerFailureClass(message: string): SerSession["failureClass"] {
+  return /timeout|timed out|aborted/i.test(message) ? "provider_timeout" : "planner_output";
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new SquireError("PROVIDER_TIMEOUT", `${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function cmdStart(args: string[]): Promise<number> {
   if (args.length === 0) {
     const { runTui } = await import("./tui/app.js");
@@ -696,7 +712,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
     if (!existsSync(specPath)) throw new SquireError("SPEC_NOT_FOUND", `spec not found: ${specPath}`);
     process.stdout.write(st.gray(`resuming from ${basename(specPath)}`) + "\n");
   } else {
-    const { extractIdea } = await import("./contract/ingest.js");
+    const { extractIdea, fallbackIdeaFromPrompt } = await import("./contract/ingest.js");
     const { resolveBrief, ideaToSpec } = await import("./contract/brief.js");
     const { withFrontendFloorStories, withUiRequirement } = await import("./review/frontend-floor.js");
 
@@ -712,24 +728,25 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       idea = await extractIdea(prompt!, llm, chain.knight);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      process.stdout.write(st.yellow(`idea parser returned malformed output; continuing with a minimal fallback spec seed (${message}).`) + "\n");
       writeEarlySession({
         goal: sessionGoal,
         runConfig,
         phase: "spec",
-        state: "blocked",
-        summary: "The idea phase failed before producing a buildable spec.",
-        next: "Retry with `ser continue`; if it repeats, simplify the initial goal or change the planning model.",
+        state: "working",
+        summary: "Idea extraction failed; continuing with a minimal fallback spec seed.",
+        next: "Compile the fallback plan, then run the verified build loop.",
         specStatus: "drafting",
         currentLoop: "clarify and lock a verifiable spec",
         lastVerifier: "idea parser",
-        lastResult: "failed",
-        failureClass: "planner_output",
-        nextMutation: "retry idea extraction from the original goal",
+        lastResult: "recovered with fallback",
+        failureClass: plannerFailureClass(message),
+        nextMutation: "compile objective gates from the minimal fallback spec",
         humanNeeded: false,
         blocker: message,
         workdir: requestedWorkdir,
       });
-      throw err;
+      idea = fallbackIdeaFromPrompt(prompt!);
     }
     // PRODUCT INSTINCT (cheap consensus): supply the table-stakes features a non-expert never
     // states (a vault needs copy/reveal/delete; a shortener needs analytics/expiry). Diverse-lens
@@ -798,22 +815,31 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   process.stdout.write(st.gray("\ncompiling the spec to a buildable plan…") + "\n");
   let compileRc: number;
   try {
-    compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
+    compileRc = await withTimeout(
+      runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]),
+      Number(process.env.SER_DERIVE_TIMEOUT_MS ?? 180000),
+      "plan compiler",
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const failureClass = plannerFailureClass(message);
     writePipelineSession({
       goal: sessionGoal,
       runConfig,
       phase: "spec",
       state: "blocked",
-      summary: "The plan compiler failed before producing a buildable plan.",
+      summary: failureClass === "provider_timeout"
+        ? "The plan compiler timed out before producing a buildable plan."
+        : "The plan compiler failed before producing a buildable plan.",
       next: "Retry with `ser continue`; if it repeats, simplify the spec or change the planning model.",
       specStatus: "needs_input",
       currentLoop: "compile spec to objective gates",
       lastVerifier: "spec compiler",
       lastResult: "failed",
-      failureClass: "planner_output",
-      nextMutation: "retry the plan compiler or simplify overloaded requirements",
+      failureClass,
+      nextMutation: failureClass === "provider_timeout"
+        ? "retry the plan compiler or switch planning provider"
+        : "retry the plan compiler or simplify overloaded requirements",
       humanNeeded: false,
       blocker: message,
       specPath,

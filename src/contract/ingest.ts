@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { SquireError } from "../errors.js";
 import type { LlmClient } from "../llm/types.js";
-import { tryParseJson, formatZodIssues } from "./derive.js";
 import { CASTELLAN_IDENTITY, GATE_LADDER_DOC } from "./self-knowledge.js";
+import { completeJsonWithRepair } from "./structured.js";
 
 /**
  * The IDEA phase (pipeline slice 1). A vague product prompt becomes: the key
@@ -59,19 +59,46 @@ export interface IdeaResult {
   decisions: Decision[];
 }
 
+export function fallbackIdeaFromPrompt(prompt: string): IdeaResult {
+  const trimmed = prompt.trim();
+  const statement = trimmed.length > 0 ? trimmed : "the requested product";
+  return {
+    stories: [`I can use ${statement} for its core workflow.`],
+    components: [
+      {
+        statement: `Implement the smallest useful version of: ${statement}`,
+        story: `I can use ${statement} for its core workflow.`,
+        gate: { tier: 1, gate: "npm test -- --runInBand" },
+      },
+    ],
+    decisions: [],
+  };
+}
+
+const GateSchema = z.union([
+  z.object({
+    tier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+    gate: z.string().min(1),
+    artifact: z.string().optional(),
+  }),
+  z.object({
+    tier: z.literal(4),
+    gate: z.string().optional(),
+    artifact: z.string().min(1),
+  }),
+]);
+
 const IdeaSchema = z.object({
-  stories: z.array(z.string()).default([]),
+  stories: z.array(z.string()).min(1),
   components: z
     .array(
       z.object({
         statement: z.string(),
         story: z.string().default(""),
-        gate: z
-          .object({ tier: z.number(), gate: z.string().optional(), artifact: z.string().optional() })
-          .default({ tier: 0 }),
+        gate: GateSchema,
       }),
     )
-    .default([]),
+    .min(1),
   decisions: z
     .array(
       z.object({
@@ -242,15 +269,24 @@ Output ONLY JSON:
 
 /** Run the idea phase on a prompt; buckets are computed in code from the model's 3-test. */
 export async function extractIdea(prompt: string, llm: LlmClient, model: string): Promise<IdeaResult> {
-  const res = await llm.complete({ model, system: IDEA_PROMPT, user: `PRODUCT PROMPT:\n${prompt}`, json: true, maxTokens: 4000 });
-  const parsed = tryParseJson(res.text);
-  if (!parsed.ok) throw new SquireError("IDEA_INVALID", `idea phase produced invalid JSON: ${parsed.error}`);
-  const checked = IdeaSchema.safeParse(parsed.value);
-  if (!checked.success) throw new SquireError("IDEA_INVALID", `idea phase output failed validation:\n${formatZodIssues(checked.error.issues)}`);
+  let checked: z.infer<typeof IdeaSchema>;
+  try {
+    checked = (await completeJsonWithRepair({
+      llm,
+      model,
+      system: IDEA_PROMPT,
+      user: `PRODUCT PROMPT:\n${prompt}`,
+      schema: IdeaSchema,
+      label: "idea phase",
+      maxTokens: 4000,
+    })).value;
+  } catch (err) {
+    throw new SquireError("IDEA_INVALID", `idea phase produced invalid JSON: ${(err as Error).message}`);
+  }
   return {
-    stories: checked.data.stories,
-    components: checked.data.components,
-    decisions: checked.data.decisions.map((d) => ({ ...d, bucket: bucketOf(d) })),
+    stories: checked.stories,
+    components: checked.components,
+    decisions: checked.decisions.map((d) => ({ ...d, bucket: bucketOf(d) })),
   };
 }
 
@@ -282,11 +318,20 @@ export async function converseIdea(
     history.length ? `CONVERSATION SO FAR:\n${history.map((h) => `  user: ${h.user}\n  ser: ${h.ser}`).join("\n")}` : "",
     `THE USER NOW SAYS:\n${message}`,
   ].filter(Boolean).join("\n\n");
-  const res = await llm.complete({ model, system: CONVERSE_SYSTEM, user, json: true, maxTokens: 4000 });
-  const parsed = tryParseJson(res.text);
-  const checked = parsed.ok ? ConverseSchema.safeParse(parsed.value) : null;
-  if (!checked || !checked.success) return { reply: "Hm — let me try that again; say it once more?", idea: current };
-  const d = checked.data;
+  let d: z.infer<typeof ConverseSchema>;
+  try {
+    d = (await completeJsonWithRepair({
+      llm,
+      model,
+      system: CONVERSE_SYSTEM,
+      user,
+      schema: ConverseSchema,
+      label: "idea conversation",
+      maxTokens: 4000,
+    })).value;
+  } catch {
+    return { reply: "Hm — let me try that again; say it once more?", idea: current };
+  }
   return {
     reply: d.reply.trim() || "Updated.",
     idea: { stories: d.stories, components: d.components, decisions: d.decisions.map((x) => ({ ...x, bucket: bucketOf(x) })) },
@@ -351,11 +396,20 @@ export async function discussIdea(
     `YOUR CURRENT BRIEF (refine, don't reset):\n${JSON.stringify(current)}`,
     `THE USER NOW SAYS:\n${message}`,
   ].filter(Boolean).join("\n\n");
-  const res = await llm.complete({ model, system: DISCUSS_SYSTEM, user, json: true, maxTokens: 3000 });
-  const parsed = tryParseJson(res.text);
-  const checked = parsed.ok ? DiscussSchema.safeParse(parsed.value) : null;
-  if (!checked || !checked.success) return { reply: "Say a bit more about what you're picturing — what should be true once this exists?", brief: current, ready: false };
-  return { reply: checked.data.reply.trim() || "Tell me more.", brief: checked.data.brief, ready: checked.data.ready };
+  try {
+    const checked = (await completeJsonWithRepair({
+      llm,
+      model,
+      system: DISCUSS_SYSTEM,
+      user,
+      schema: DiscussSchema,
+      label: "idea discussion",
+      maxTokens: 3000,
+    })).value;
+    return { reply: checked.reply.trim() || "Tell me more.", brief: checked.brief, ready: checked.ready };
+  } catch {
+    return { reply: "Say a bit more about what you're picturing — what should be true once this exists?", brief: current, ready: false };
+  }
 }
 
 /** Flatten the approved brief into the rich prompt the spec phase's breakdown consumes. */

@@ -341,7 +341,23 @@ async function jsonStage<S extends z.ZodTypeAny>(
   let note = "";
   let lastText = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await llm.complete({ model, system, user: user + note, json: true, maxTokens: 4000 });
+    const timeoutMs = Number(process.env.SER_PLANNER_TIMEOUT_MS ?? 90000);
+    let res: Awaited<ReturnType<LlmClient["complete"]>>;
+    try {
+      res = await llm.complete({
+        model,
+        system,
+        user: user + note,
+        json: true,
+        maxTokens: 4000,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      if (isAbortError(err)) {
+        throw new SquireError("PROVIDER_TIMEOUT", `stage "${stage}" timed out after ${timeoutMs}ms`);
+      }
+      throw err;
+    }
     lastText = res.text;
     usage.in += res.inTokens;
     usage.out += res.outTokens;
@@ -355,13 +371,28 @@ async function jsonStage<S extends z.ZodTypeAny>(
       if (checked.success) return checked.data;
       note = `\n\nYour previous output failed validation:\n${formatZodIssues(checked.error.issues)}\nOutput corrected JSON only.`;
     } else {
-      note = `\n\nYour previous output was not valid JSON: ${parsed.error}. Output JSON only.`;
+      const salvaged = tryParseJson(removeControlChars(res.text));
+      if (salvaged.ok) {
+        const checked = schema.safeParse(salvaged.value);
+        if (checked.success) return checked.data;
+        note = `\n\nYour previous output became valid JSON after removing raw control characters, but failed validation:\n${formatZodIssues(checked.error.issues)}\nOutput corrected JSON only.`;
+      } else {
+        note = `\n\nYour previous output was not valid JSON: ${parsed.error}. Output JSON only.`;
+      }
     }
   }
   if (process.env.SER_DUMP_STAGE_FAIL) {
     try { (await import("node:fs")).writeFileSync(process.env.SER_DUMP_STAGE_FAIL, `STAGE ${stage} (len ${lastText.length})\n\n${lastText}`); } catch { /* best effort */ }
   }
   throw new SquireError("DERIVE_STAGE_INVALID", `stage "${stage}" produced invalid output after one retry`);
+}
+
+function removeControlChars(text: string): string {
+  return text.replace(/[\u0000-\u001F]/g, "");
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && (err.name === "AbortError" || /aborted|aborterror|timed out/i.test(err.message));
 }
 
 // The adversary's bar is FEASIBILITY, not perfection. Refute only when the plan genuinely

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bucketOf, extractIdea, renderIdea } from "../../src/contract/ingest.js";
+import { bucketOf, converseIdea, discussIdea, EMPTY_BRIEF, extractIdea, fallbackIdeaFromPrompt, renderIdea } from "../../src/contract/ingest.js";
 import { MockLlm } from "../../src/llm/mock.js";
 
 describe("bucketOf (the 3-test, code-owned)", () => {
@@ -21,6 +21,44 @@ describe("bucketOf (the 3-test, code-owned)", () => {
         for (const costlyToUndo of [true, false])
           if (bucketOf({ forksHard, canGuess, costlyToUndo }) === 1) asks++;
     expect(asks).toBe(1); // exactly one of the 8 combinations asks
+  });
+});
+
+describe("idea conversation JSON repair", () => {
+  it("repairs malformed conversation JSON", async () => {
+    const current = {
+      stories: ["old story"],
+      components: [{ statement: "old component", story: "old story", gate: { tier: 1, gate: "node --test" } }],
+      decisions: [],
+    };
+    const llm = new MockLlm([
+      { text: '{"reply":"ok","stories":["new story"],"components":[],"decisions":[' },
+      {
+        text: JSON.stringify({
+          reply: "fixed",
+          stories: ["new story"],
+          components: [{ statement: "new component", story: "new story", gate: { tier: 1, gate: "node --test" } }],
+          decisions: [],
+        }),
+      },
+    ]);
+
+    const result = await converseIdea("x", current, [], "make it concrete", llm, "m");
+    expect(result.reply).toBe("fixed");
+    expect(result.idea.stories).toEqual(["new story"]);
+    expect(llm.calls).toHaveLength(2);
+  });
+
+  it("repairs malformed discussion JSON", async () => {
+    const llm = new MockLlm([
+      { text: '{"reply":"almost","brief":{"intent":"notes","outcomes":["works"],"forWhom":"","nonGoals":[],"constraints":[]},"ready":' },
+      { text: JSON.stringify({ reply: "ready", brief: { ...EMPTY_BRIEF, intent: "notes", outcomes: ["works"] }, ready: true }) },
+    ]);
+
+    const result = await discussIdea([], "build notes", EMPTY_BRIEF, llm, "m");
+    expect(result.reply).toBe("ready");
+    expect(result.brief.intent).toBe("notes");
+    expect(result.ready).toBe(true);
   });
 });
 
@@ -63,5 +101,71 @@ describe("extractIdea (buckets derived in code from the model's facts)", () => {
   it("throws a clear error on non-JSON model output", async () => {
     const llm = new MockLlm([{ text: "sorry, here is a paragraph instead" }]);
     await expect(extractIdea("x", llm, "m")).rejects.toThrow(/idea phase/);
+  });
+
+  it("repairs malformed idea JSON before failing the planner", async () => {
+    const llm = new MockLlm([
+      { text: '{"stories":["one"],"components":[],"decisions":[{"question":"q?","canGuess":false,"forksHard":true,"costlyToUndo":true,' },
+      { text: JSON.stringify(sample) },
+    ]);
+
+    const r = await extractIdea("x", llm, "m");
+    expect(r.stories).toEqual(sample.stories);
+    expect(llm.calls).toHaveLength(2);
+    expect(llm.calls[1]!.system).toContain("repair malformed JSON");
+  });
+
+  it("repairs schema-invalid idea JSON", async () => {
+    const llm = new MockLlm([
+      { text: JSON.stringify({ stories: ["one"], decisions: [{ question: "q?" }] }) },
+      { text: JSON.stringify(sample) },
+    ]);
+
+    const r = await extractIdea("x", llm, "m");
+    expect(r.components).toHaveLength(2);
+    expect(llm.calls[1]!.user).toContain("failed to parse or validate");
+  });
+
+  it("repairs unanchored component gates before spec generation", async () => {
+    const llm = new MockLlm([
+      {
+        text: JSON.stringify({
+          stories: ["create notes"],
+          components: [{ statement: "note editor", story: "create notes", gate: { tier: 0 } }],
+          decisions: [],
+        }),
+      },
+      { text: JSON.stringify(sample) },
+    ]);
+
+    const r = await extractIdea("x", llm, "m");
+    expect(r.components[0]!.gate.tier).toBe(1);
+    expect(llm.calls).toHaveLength(2);
+  });
+
+  it("repairs story-only idea output before spec generation", async () => {
+    const llm = new MockLlm([
+      { text: JSON.stringify({ stories: ["create notes"], components: [], decisions: [] }) },
+      { text: JSON.stringify(sample) },
+    ]);
+
+    const r = await extractIdea("x", llm, "m");
+    expect(r.components).toHaveLength(2);
+    expect(llm.calls[1]!.system).toContain("repair malformed JSON");
+  });
+});
+
+describe("fallbackIdeaFromPrompt", () => {
+  it("keeps a failed idea phase moving with a minimal scoped seed", () => {
+    const idea = fallbackIdeaFromPrompt("build a small local notes tool");
+    expect(idea.stories).toEqual(["I can use build a small local notes tool for its core workflow."]);
+    expect(idea.components).toEqual([
+      {
+        statement: "Implement the smallest useful version of: build a small local notes tool",
+        story: "I can use build a small local notes tool for its core workflow.",
+        gate: { tier: 1, gate: "npm test -- --runInBand" },
+      },
+    ]);
+    expect(idea.decisions).toEqual([]);
   });
 });
