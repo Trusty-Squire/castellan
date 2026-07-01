@@ -27,7 +27,8 @@
     "visual-eval": "tsx scripts/visual-eval.ts",
     "gate-strength": "tsx scripts/gate-strength.ts",
     "loop-eval": "tsx scripts/loop-eval.ts",
-    "planner-eval": "tsx scripts/planner-eval.ts"
+    "planner-eval": "tsx scripts/planner-eval.ts",
+    "derive-eval": "tsx scripts/derive-eval.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.79.1",

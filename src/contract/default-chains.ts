@@ -1,7 +1,7 @@
 /**
  * Built-in default chains so `ser talk`/`do`/`fix` run in ANY directory with
  * no chains.yaml authored. Same pinned slugs + per-million prices as the
- * repo's chains.yaml (verified live on OpenRouter, 2026-06). A project
+ * repo's chains.yaml (verified live on OpenRouter, 2026-07). A project
  * chains.yaml or ~/.config/castellan/chains.yaml overrides this wholesale.
  * Kept as YAML text so it validates through the one parseChains code path.
  */
@@ -9,11 +9,11 @@ export const DEFAULT_CHAINS_YAML = `chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "moonshotai/kimi-k2-thinking"
+    knight: "moonshotai/kimi-k2.6"
   knight-only:
-    executor: "moonshotai/kimi-k2-thinking"
-    fallback: "moonshotai/kimi-k2-thinking"
-    knight: "moonshotai/kimi-k2-thinking"
+    executor: "moonshotai/kimi-k2.6"
+    fallback: "moonshotai/kimi-k2.6"
+    knight: "moonshotai/kimi-k2.6"
   cheap-raw:
     executor: "qwen/qwen3-coder"
     fallback: "qwen/qwen3-coder"
@@ -22,7 +22,7 @@ export const DEFAULT_CHAINS_YAML = `chains:
 prices:
   "qwen/qwen3-coder": { in: 0.30, out: 1.00 }
   "deepseek/deepseek-chat": { in: 0.20, out: 0.80 }
-  "moonshotai/kimi-k2-thinking": { in: 0.60, out: 2.50 }
+  "moonshotai/kimi-k2.6": { in: 0.55, out: 3.20 }
 `;
 
 /** Marker source label used when no chains file is found and defaults apply. */

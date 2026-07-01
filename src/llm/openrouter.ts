@@ -62,7 +62,10 @@ export class OpenRouterClient implements LlmClient {
       // usage block untouched — so the planner can surface real spend instead of
       // price-table arithmetic. Harmless on providers that ignore it.
       usage: { include: true },
-      ...(req.json ? { response_format: { type: "json_object" } } : {}),
+      ...(req.json ? {
+        response_format: { type: "json_object" },
+        reasoning: { effort: "none", exclude: true },
+      } : {}),
     };
 
     let lastErr = "";
@@ -96,10 +99,14 @@ export class OpenRouterClient implements LlmClient {
         throw new SquireError("LLM_HTTP", `OpenRouter HTTP ${res.status}: ${text.slice(0, 500)}`);
       }
       const json = (await res.json()) as {
-        choices?: { message?: { content?: string } }[];
+        choices?: { finish_reason?: string; native_finish_reason?: string; message?: { content?: string; reasoning?: string } }[];
         usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
       };
       const text = json.choices?.[0]?.message?.content ?? "";
+      if (!text.trim()) {
+        lastErr = `OpenRouter empty content (finish_reason=${json.choices?.[0]?.finish_reason ?? "unknown"})`;
+        continue;
+      }
       const reportedCost = json.usage?.cost;
       return {
         text,

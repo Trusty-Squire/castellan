@@ -30,6 +30,7 @@ describe("OpenRouterClient", () => {
     expect(r.outTokens).toBe(7);
     const body = JSON.parse(String(captured!.body));
     expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.reasoning).toEqual({ effort: "none", exclude: true });
     expect(body.model).toBe("m");
     // opts into provider-reported cost (A36)
     expect(body.usage).toEqual({ include: true });
@@ -124,6 +125,27 @@ describe("OpenRouterClient", () => {
                 },
               },
             }, 400)
+          : jsonResponse(okBody);
+      }) as unknown as typeof fetch,
+    });
+
+    const r = await client.complete({ model: "m", system: "s", user: "u", maxTokens: 100 });
+    expect(calls).toBe(2);
+    expect(r.text).toBe('{"nodes":[]}');
+  });
+
+  it("retries empty content responses then succeeds", async () => {
+    let calls = 0;
+    const client = new OpenRouterClient({
+      apiKey: "k",
+      sleep: async () => {},
+      fetchImpl: (async () => {
+        calls += 1;
+        return calls < 2
+          ? jsonResponse({
+              choices: [{ finish_reason: "length", message: { content: "", reasoning: "thinking without final JSON" } }],
+              usage: { prompt_tokens: 8, completion_tokens: 4000 },
+            })
           : jsonResponse(okBody);
       }) as unknown as typeof fetch,
     });

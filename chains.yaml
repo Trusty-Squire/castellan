@@ -1,21 +1,21 @@
 # Named chains with pinned model slugs and prices.
-# Slugs verified live on OpenRouter (2026-06); prices are per MILLION tokens
+# Slugs verified live on OpenRouter (2026-07); prices are per MILLION tokens
 # (representative endpoint pricing) and drive budget.ts. They remain
 # user-maintained config — adjust to your account's routing/pricing.
 chains:
   cheap:
     executor: "qwen/qwen3-coder" # cheap MoE coder, supports tools
     fallback: "deepseek/deepseek-chat" # DeepSeek V3, second cheap model
-    knight: "moonshotai/kimi-k2-thinking" # escalation + planner: Chinese reasoning model (glm-5.2 was flaky/slow at the structured decompose)
+    knight: "moonshotai/kimi-k2.6" # planner/escalation: Kimi with optional reasoning; structured derive disables reasoning
     # The executor's effective working envelope per node — the planner sizes nodes
     # to THIS instead of the old "1-12" count anchor. PROVISIONAL & conservative
     # until measured: run `pnpm calibrate-envelope --chain cheap` and set it just
     # below the first-try knee it reports.
     node_context_budget: 24000
   knight-only:
-    executor: "moonshotai/kimi-k2-thinking"
-    fallback: "moonshotai/kimi-k2-thinking"
-    knight: "moonshotai/kimi-k2-thinking"
+    executor: "moonshotai/kimi-k2.6"
+    fallback: "moonshotai/kimi-k2.6"
+    knight: "moonshotai/kimi-k2.6"
   cheap-raw: # ablation: cheap executor with the harness OFF (one raw, goal-only attempt)
     executor: "qwen/qwen3-coder"
     fallback: "qwen/qwen3-coder"
@@ -24,4 +24,4 @@ chains:
 prices: # per million tokens (in = prompt, out = completion)
   "qwen/qwen3-coder": { in: 0.30, out: 1.00 }
   "deepseek/deepseek-chat": { in: 0.20, out: 0.80 }
-  "moonshotai/kimi-k2-thinking": { in: 0.60, out: 2.50 }
+  "moonshotai/kimi-k2.6": { in: 0.55, out: 3.20 }
