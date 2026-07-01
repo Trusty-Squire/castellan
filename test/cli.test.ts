@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { main } from "../src/cli.js";
+import { buildResumePipeline, main } from "../src/cli.js";
 import { writeSession } from "../src/session.js";
 import { Trace } from "../src/harness/trace.js";
 
@@ -14,6 +14,23 @@ afterEach(() => {
 });
 
 describe("compressed CLI surface", () => {
+  it("resume pipeline preserves the original product goal", () => {
+    const resume = buildResumePipeline({
+      goal: "Build a secure API key vault",
+      phase: "build",
+      state: "working",
+      summary: "Running the locked spec through objective gates.",
+      specPath: "/tmp/root/.ser/spec.yaml",
+      workdir: "/tmp/root/vault",
+      updatedAt: "2026-06-30T00:00:00.000Z",
+    });
+
+    expect(resume).toEqual({
+      args: ["--spec", "/tmp/root/.ser/spec.yaml", "--workdir", "/tmp/root/vault", "--to", "ship", "--yes"],
+      sessionGoal: "Build a secure API key vault",
+    });
+  });
+
   it("ser status prefers the product session unless --verbose is requested", async () => {
     const root = mkdtempSync(join(tmpdir(), "ser-cli-session-"));
     const workdir = join(root, "app");

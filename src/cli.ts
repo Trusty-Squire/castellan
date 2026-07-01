@@ -197,7 +197,17 @@ async function continueProductSession(session: SerSession, root: string, planOnl
     process.stdout.write("Plan: resume from the locked spec and run until ship or an honest blocker.\n");
     return 0;
   }
-  return cmdPipeline(["--spec", session.specPath, "--workdir", session.workdir, "--to", "ship", "--yes"]);
+  const resume = buildResumePipeline(session);
+  if (!resume) return 0;
+  return cmdPipeline(resume.args, { sessionGoal: resume.sessionGoal });
+}
+
+export function buildResumePipeline(session: SerSession): { args: string[]; sessionGoal: string } | null {
+  if (!session.specPath || !session.workdir) return null;
+  return {
+    args: ["--spec", session.specPath, "--workdir", session.workdir, "--to", "ship", "--yes"],
+    sessionGoal: session.goal,
+  };
 }
 
 async function cmdStop(_args: string[]): Promise<number> {
@@ -568,7 +578,7 @@ async function cmdLogin(args: string[]): Promise<number> {
  * Flags: --yes (accept ser's recommended fork answers) · --spec <file> (resume from a
  *   spec) · --workdir <dir> (build here) · --out <file> (spec path) · --chain · --mock · --outer-loops <n>.
  */
-async function cmdPipeline(argv: string[]): Promise<number> {
+async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {}): Promise<number> {
   const flags = parseFlags(argv, ["chain", "chains", "to", "spec", "out", "workdir", "budget", "harness", "max-rebuilds", "outer-loops"]);
   const prompt = flags.positional[0];
   const fromSpec = flags.value.get("spec");
@@ -594,7 +604,7 @@ async function cmdPipeline(argv: string[]): Promise<number> {
   const { stringify } = await import("yaml");
   const { makeLlmClient } = await import("./backend.js");
   const llm = await makeLlmClient();
-  const sessionGoal = prompt ?? (fromSpec ? `Build from ${basename(fromSpec)}` : "Verified build");
+  const sessionGoal = options.sessionGoal ?? prompt ?? (fromSpec ? `Build from ${basename(fromSpec)}` : "Verified build");
   writeSession({
     goal: sessionGoal,
     phase: "spec",
