@@ -17,6 +17,7 @@ import {
   nodeRequirementIds,
   allocateNodeBudgets,
   overflowingNodes,
+  decompositionIssues,
   deriveUiGate,
   functionalUiGate,
   extractDomHooks,
@@ -579,6 +580,103 @@ requirements:
     // compound gates keep their non-test payload (UI build+grep checks, plain grep)
     expect(canonicalizeTestGate("npm run build --if-present && grep -q data-edge index.html")).toContain("grep -q data-edge");
     expect(canonicalizeTestGate("grep -q data-edge index.html")).toBe("grep -q data-edge index.html");
+  });
+
+  it("decompositionIssues rejects oversized nodes and tiny sibling sprawl while keeping cohesive plans", () => {
+    const oversized = decompositionIssues(
+      [{ id: "cli", blast_radius: ["cli.js"], deps: [] }],
+      new Map([
+        [
+          "cli",
+          {
+            type: "command",
+            soft: false,
+            run: [
+              "node cli.js a",
+              "node cli.js b",
+              "node cli.js c",
+              "node cli.js d",
+              "node cli.js e",
+              "node cli.js f",
+              "node cli.js g",
+              "node cli.js h",
+              "node cli.js i",
+              "node cli.js j",
+              "node cli.js k",
+            ].join(" && "),
+          },
+        ],
+      ]),
+    );
+    expect(oversized.map((i) => i.kind)).toContain("too_large");
+
+    const tinyNodes = Array.from({ length: 5 }, (_, i) => ({ id: `n${i}`, blast_radius: [`src/a${i}.js`], deps: [] }));
+    const tinyGates = new Map(tinyNodes.map((n) => [n.id, { type: "command" as const, soft: false, run: `node ${n.blast_radius[0]}` }]));
+    expect(decompositionIssues(tinyNodes, tinyGates).map((i) => i.kind)).toContain("too_small");
+
+    expect(
+      decompositionIssues(
+        [
+          { id: "core", blast_radius: ["src/core.js", "test/core.test.js"], deps: [] },
+          { id: "cli", blast_radius: ["bin/cli.js", "test/cli.test.js"], deps: ["core"] },
+        ],
+        new Map([
+          ["core", { type: "command", soft: false, run: "npm test && node test/core.test.js && node test/edge.test.js" }],
+          ["cli", { type: "command", soft: false, run: "node bin/cli.js sample.csv && node bin/cli.js --help" }],
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("repairs oversized decomposition once before emitting a mission", async () => {
+    const spec = parseSpec(`
+thesis: build a tiny reporting CLI
+scope_fence: []
+requirements:
+  - id: R1
+    statement: "The CLI reports basic file facts"
+    acceptance:
+      tier: 1
+      gate: node cli.js a && node cli.js b && node cli.js c && node cli.js d && node cli.js e && node cli.js f
+  - id: R2
+    statement: "The CLI reports numeric summaries"
+    acceptance:
+      tier: 1
+      gate: node cli.js g && node cli.js h && node cli.js i && node cli.js j && node cli.js k && node cli.js l
+decisions: []
+claims: []
+open_questions: []
+`);
+    const bundled = {
+      contract: "CLI contract",
+      nodes: [{ id: "cli", brief: "build all CLI facts and numeric summaries", deps: [], context_globs: [], blast_radius: ["cli.js", "cli.test.js"], budget_usd: 1, requirement: "R1, R2" }],
+    };
+    const repaired = {
+      contract: "CLI contract",
+      nodes: [
+        { id: "facts", brief: "build basic file facts", deps: [], context_globs: [], blast_radius: ["cli.js", "facts.test.js"], budget_usd: 0.5, requirement: "R1" },
+        { id: "numeric", brief: "extend CLI with numeric summaries", deps: ["facts"], context_globs: ["cli.js"], blast_radius: ["cli.js", "numeric.test.js"], budget_usd: 0.5, requirement: "R2" },
+      ],
+    };
+    const llm = new MockLlm([
+      { text: JSON.stringify(bundled) },
+      { text: JSON.stringify(repaired) },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+    const result = await deriveV2({
+      spec,
+      workdir,
+      llm,
+      model: "mock",
+      chainName: "cheap",
+      budgetUsd: 2,
+      executorModel: "qwen/qwen3-coder",
+      nodeContextBudget: 24000,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mission.nodes.map((n) => n.id)).toEqual(["facts", "numeric"]);
+    expect(result.readback).not.toContain("over-sized node");
   });
 
   it("bootstrapGreenfieldNodeGate scaffolds a runnable npm skeleton + e2e-excluding vitest config (idempotent)", () => {

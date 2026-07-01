@@ -162,6 +162,10 @@ export interface DeriveV2Input {
    * default so judge/dry-run/test callers don't write source into a workdir they only inspect.
    */
   scaffoldServers?: boolean;
+  /** Internal: one-shot repaired decomposition used by the tractability repair loop. */
+  initialDecompose?: z.infer<typeof DecomposeSchema>;
+  /** Internal: prevents tractability repair recursion from looping. */
+  shapeRepairDepth?: number;
 }
 
 export interface DirectMissionItem {
@@ -310,6 +314,88 @@ export function overflowingNodes(
     if (pack.estTokens > budgetTokens) over.push({ id: n.id, estTokens: pack.estTokens });
   }
   return over;
+}
+
+export interface DecompositionIssue {
+  node?: string;
+  kind: "too_large" | "too_small";
+  reason: string;
+}
+
+const MAX_NODE_BEHAVIORS = 10;
+const MIN_USEFUL_BEHAVIORS = 2;
+const MICRO_SPLIT_NODE_COUNT = 5;
+
+function concreteRadiusCount(radius: string[]): number {
+  return radius.filter((g) => !/[*{}[\]]/.test(g)).length;
+}
+
+function primaryRadiusKey(radius: string[]): string {
+  const concrete = radius.filter((g) => !/[*{}[\]]/.test(g));
+  const first = concrete[0] ?? radius[0] ?? "";
+  return first.split("/")[0] ?? first;
+}
+
+export function decompositionIssues(
+  nodes: { id: string; blast_radius: string[]; deps?: string[] }[],
+  gatesByNode: Map<string, Gate>,
+): DecompositionIssue[] {
+  const issues: DecompositionIssue[] = [];
+  const scored = nodes.map((n) => {
+    const g = gatesByNode.get(n.id);
+    const behaviors = g?.type === "command" || g?.type === "metric" ? gateBehaviorCount(g.run ?? "") : g?.type === "human" ? 1 : 0;
+    return { node: n, behaviors, radiusCount: concreteRadiusCount(n.blast_radius), key: primaryRadiusKey(n.blast_radius) };
+  });
+  for (const s of scored) {
+    if (s.behaviors > MAX_NODE_BEHAVIORS) {
+      issues.push({
+        node: s.node.id,
+        kind: "too_large",
+        reason: `gate asserts ~${s.behaviors} behaviors (cap ${MAX_NODE_BEHAVIORS}); split only along cohesive artifact boundaries and keep child gates focused`,
+      });
+    }
+  }
+  if (nodes.length >= MICRO_SPLIT_NODE_COUNT) {
+    const tiny = scored.filter((s) => s.behaviors > 0 && s.behaviors < MIN_USEFUL_BEHAVIORS && s.radiusCount <= 1);
+    const byKey = new Map<string, number>();
+    for (const s of tiny) byKey.set(s.key, (byKey.get(s.key) ?? 0) + 1);
+    const repeatedTiny = [...byKey.entries()].filter(([, count]) => count >= 2);
+    if (tiny.length >= Math.ceil(nodes.length * 0.6) || repeatedTiny.length > 0) {
+      issues.push({
+        kind: "too_small",
+        reason: `plan has ${tiny.length}/${nodes.length} tiny low-signal nodes; merge setup/test-only/same-artifact siblings into the fewest cohesive tractable nodes`,
+      });
+    }
+  }
+  return issues;
+}
+
+async function repairDecompositionShape(
+  llm: LlmClient,
+  model: string,
+  args: {
+    intent: string;
+    contract: string;
+    nodes: z.infer<typeof DecomposeSchema>["nodes"];
+    gatesByNode: Map<string, Gate>;
+    issues: DecompositionIssue[];
+    usage: PlannerUsage;
+  },
+): Promise<z.infer<typeof DecomposeSchema>> {
+  const gateLines = args.nodes.map((n) => {
+    const g = args.gatesByNode.get(n.id);
+    const run = g?.type === "command" || g?.type === "metric" ? g.run ?? "" : g?.type ?? "(none)";
+    return `${n.id}: behaviors~${run ? gateBehaviorCount(run) : 0}; gate=${run.slice(0, 800)}`;
+  });
+  return jsonStage(
+    llm,
+    model,
+    "decompose:shape-repair",
+    `${CASTELLAN_IDENTITY}\n\nRepair a decomposition's NODE BOUNDARIES. Preserve the product, shared contract, dependency order, and requirement coverage. Do NOT write gates. Your target is the FEWEST nodes that are each tractable for the cheap executor: split oversized nodes only along cohesive artifact/capability boundaries; merge micro-nodes that touch the same artifact or merely separate setup/tests from implementation. Never create one node per function, selector, endpoint, or test. Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`,
+    `${args.intent}\n\nCURRENT CONTRACT:\n${args.contract}\n\nCURRENT NODES:\n${JSON.stringify(args.nodes, null, 2)}\n\nCURRENT GATES / BEHAVIOR COUNTS:\n${gateLines.join("\n")}\n\nTRACTABILITY ISSUES:\n${args.issues.map((i) => `- ${i.node ? `${i.node}: ` : ""}${i.kind}: ${i.reason}`).join("\n")}\n\nReturn a repaired decomposition only. Keep nodes right-sized: not monoliths, not micro-splits.`,
+    DecomposeSchema,
+    args.usage,
+  );
 }
 
 /** Trim the repository survey before it goes into the decompose prompt — keeps the
@@ -773,11 +859,15 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into a DAG of nodes. ${SIZING_RULE} ${envelopeRule(executor, envelopeTokens)} Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule}${stackRule} ${CONTRACT_FIRST} ${COHERENCE_RULE} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
   const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
   let decomposed: z.infer<typeof DecomposeSchema>;
-  try {
-    decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
-  } catch (err) {
-    if (input.spec) return compileFallbackMission(input, usage, err);
-    throw err;
+  if (input.initialDecompose) {
+    decomposed = input.initialDecompose;
+  } else {
+    try {
+      decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
+    } catch (err) {
+      if (input.spec) return compileFallbackMission(input, usage, err);
+      throw err;
+    }
   }
 
   // spec-mode coverage gate: every requirement maps to >=1 node (a node may carry
@@ -1149,6 +1239,30 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
     for (const f of briefFileCoherence(n.brief, n.blast_radius)) {
       if (!n.blast_radius.includes(f)) n.blast_radius.push(f);
     }
+  }
+
+  const decompositionShapeIssues = decompositionIssues(decomposed.nodes, gatesByNode);
+  if (decompositionShapeIssues.length > 0) {
+    if ((input.shapeRepairDepth ?? 0) < 1) {
+      const repaired = await repairDecompositionShape(llm, model, {
+        intent,
+        contract: decomposed.contract,
+        nodes: decomposed.nodes,
+        gatesByNode,
+        issues: decompositionShapeIssues,
+        usage,
+      });
+      return deriveV2({
+        ...input,
+        initialDecompose: repaired,
+        shapeRepairDepth: (input.shapeRepairDepth ?? 0) + 1,
+      });
+    }
+    return {
+      ok: false,
+      reasons: decompositionShapeIssues.map((i) => `${i.node ? `node "${i.node}" ` : ""}decomposition ${i.kind}: ${i.reason}`),
+      remediations: [],
+    };
   }
 
   // 4. extract-claims (incl. implicit assumptions)
