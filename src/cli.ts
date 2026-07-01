@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, existsSync, cpSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { readFileSync, existsSync, cpSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve, join, basename, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { parseMission, resolveChain, type ChainsFile } from "./contract/schema.js";
@@ -193,12 +193,30 @@ async function continueProductSession(session: SerSession, root: string, planOnl
   process.stdout.write(formatSessionStatus(session, root) + "\n");
   if (session.state === "blocked") {
     process.stdout.write("\nSER is blocked on this loop. ");
-    process.stdout.write(session.humanNeeded === false ? "Fix the blocker, then continue.\n" : "Human input or configuration is needed before retrying.\n");
-    return 0;
+    if (session.humanNeeded !== false) {
+      process.stdout.write("Human input or configuration is needed before retrying.\n");
+      return 0;
+    }
+    process.stdout.write("Retrying the saved loop.\n");
   }
   if (session.phase === "ship" && session.state === "complete") {
     process.stdout.write("\nNothing to continue. The verified build is already complete.\n");
     return 0;
+  }
+  const earlyResume = buildGoalPipeline(session);
+  if (!session.specPath && earlyResume) {
+    process.stdout.write("\nContinuing the verified build loop.\n");
+    if (planOnly) {
+      process.stdout.write("Plan: retry from the original goal until the spec locks, ship completes, or an honest blocker appears.\n");
+      return 0;
+    }
+    const dryRunPath = process.env.SER_RESUME_DRY_RUN_PATH;
+    if (dryRunPath) {
+      writeFileSync(dryRunPath, JSON.stringify(earlyResume, null, 2) + "\n");
+      process.stdout.write("Dry run: resume plan is ready.\n");
+      return 0;
+    }
+    return cmdPipeline(earlyResume.args, { sessionGoal: earlyResume.sessionGoal });
   }
   if (!session.specPath || !session.workdir) {
     process.stdout.write("\nSER cannot resume this loop because the saved session is missing its spec or workdir.\n");
@@ -211,26 +229,46 @@ async function continueProductSession(session: SerSession, root: string, planOnl
   }
   const resume = buildResumePipeline(session);
   if (!resume) return 0;
+  const dryRunPath = process.env.SER_RESUME_DRY_RUN_PATH;
+  if (dryRunPath) {
+    writeFileSync(dryRunPath, JSON.stringify(resume, null, 2) + "\n");
+    process.stdout.write("Dry run: resume plan is ready.\n");
+    return 0;
+  }
   return cmdPipeline(resume.args, { sessionGoal: resume.sessionGoal });
 }
 
 export function buildResumePipeline(session: SerSession): { args: string[]; sessionGoal: string } | null {
   if (!session.specPath || !session.workdir) return null;
   const args = ["--spec", session.specPath, "--workdir", session.workdir, "--to", "ship", "--yes"];
-  const addValue = (name: string, value: string | undefined): void => {
-    if (value) args.push(`--${name}`, value);
-  };
-  addValue("chain", session.runConfig?.chain);
-  addValue("chains", session.runConfig?.chains);
-  addValue("budget", session.runConfig?.budget);
-  addValue("harness", session.runConfig?.harness);
-  addValue("max-rebuilds", session.runConfig?.maxRebuilds);
-  addValue("outer-loops", session.runConfig?.outerLoops);
-  if (session.runConfig?.mock) args.push("--mock");
+  appendRunConfigArgs(args, session.runConfig);
   return {
     args,
     sessionGoal: session.goal,
   };
+}
+
+export function buildGoalPipeline(session: SerSession): { args: string[]; sessionGoal: string } | null {
+  if (session.specPath || !session.workdir || session.phase !== "spec") return null;
+  const args = [session.goal, "--workdir", session.workdir, "--to", "ship", "--yes"];
+  appendRunConfigArgs(args, session.runConfig);
+  return {
+    args,
+    sessionGoal: session.goal,
+  };
+}
+
+function appendRunConfigArgs(args: string[], runConfig: SerSession["runConfig"]): void {
+  const addValue = (name: string, value: string | undefined): void => {
+    if (value) args.push(`--${name}`, value);
+  };
+  addValue("chain", runConfig?.chain);
+  addValue("chains", runConfig?.chains);
+  addValue("budget", runConfig?.budget);
+  addValue("harness", runConfig?.harness);
+  addValue("max-rebuilds", runConfig?.maxRebuilds);
+  addValue("outer-loops", runConfig?.outerLoops);
+  if (runConfig?.mock) args.push("--mock");
 }
 
 async function cmdStop(_args: string[]): Promise<number> {
@@ -629,7 +667,12 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   const { makeLlmClient } = await import("./backend.js");
   const llm = await makeLlmClient();
   const sessionGoal = options.sessionGoal ?? prompt ?? (fromSpec ? `Build from ${basename(fromSpec)}` : "Verified build");
-  writeSession({
+  const requestedWorkdir = flags.value.get("workdir") ? resolve(flags.value.get("workdir")!) : undefined;
+  const writeEarlySession = (session: Parameters<typeof writeSession>[0]): void => {
+    writeSession(session);
+    if (requestedWorkdir && requestedWorkdir !== resolve(process.cwd())) writeSession(session, requestedWorkdir);
+  };
+  writeEarlySession({
     goal: sessionGoal,
     runConfig,
     phase: "spec",
@@ -643,7 +686,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
     nextMutation: "compile objective gates",
     humanNeeded: false,
     specPath: fromSpec ? resolve(fromSpec) : undefined,
-    workdir: flags.value.get("workdir") ? resolve(flags.value.get("workdir")!) : undefined,
+    workdir: requestedWorkdir,
   });
 
   // ---- LAYER 1 idea + LAYER 2 spec ----
@@ -664,7 +707,30 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
     // as a user nobody seeds) or tautological (echoes its own server) — the trustysquire
     // auth_module wall. Per the strategy, cheap×reliable is the BUILD loop only; planning/
     // authoring is premium. (decompose/infer-gates already use chain.knight.)
-    const idea = await extractIdea(prompt!, llm, chain.knight);
+    let idea: Awaited<ReturnType<typeof extractIdea>>;
+    try {
+      idea = await extractIdea(prompt!, llm, chain.knight);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeEarlySession({
+        goal: sessionGoal,
+        runConfig,
+        phase: "spec",
+        state: "blocked",
+        summary: "The idea phase failed before producing a buildable spec.",
+        next: "Retry with `ser continue`; if it repeats, simplify the initial goal or change the planning model.",
+        specStatus: "drafting",
+        currentLoop: "clarify and lock a verifiable spec",
+        lastVerifier: "idea parser",
+        lastResult: "failed",
+        failureClass: "planner_output",
+        nextMutation: "retry idea extraction from the original goal",
+        humanNeeded: false,
+        blocker: message,
+        workdir: requestedWorkdir,
+      });
+      throw err;
+    }
     // PRODUCT INSTINCT (cheap consensus): supply the table-stakes features a non-expert never
     // states (a vault needs copy/reveal/delete; a shortener needs analytics/expiry). Diverse-lens
     // recall + merge on the CHEAP model (chain.executor) — authoring no longer needs the premium.
@@ -695,7 +761,11 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   // (option 1) so the user only ever sees a spec that already compiled — never
   // approve-then-fail at build. mission.yaml is internal (derived, regenerated).
   const buildDir = resolve(flags.value.get("workdir") ?? `./${basename(specPath).replace(/\.spec\.yaml$/, "") || "build"}`);
-  writeSession({
+  const writePipelineSession = (session: Parameters<typeof writeSession>[0]): void => {
+    writeSession(session);
+    if (resolve(buildDir) !== resolve(process.cwd())) writeSession(session, buildDir);
+  };
+  writePipelineSession({
     goal: sessionGoal,
     runConfig,
     phase: "spec",
@@ -726,9 +796,33 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   // exhausts the node budget and the ladder breaks before it can escalate.
   const budgetArgs = flags.value.get("budget") ? ["--budget", String(flags.value.get("budget"))] : [];
   process.stdout.write(st.gray("\ncompiling the spec to a buildable plan…") + "\n");
-  const compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
+  let compileRc: number;
+  try {
+    compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    writePipelineSession({
+      goal: sessionGoal,
+      runConfig,
+      phase: "spec",
+      state: "blocked",
+      summary: "The plan compiler failed before producing a buildable plan.",
+      next: "Retry with `ser continue`; if it repeats, simplify the spec or change the planning model.",
+      specStatus: "needs_input",
+      currentLoop: "compile spec to objective gates",
+      lastVerifier: "spec compiler",
+      lastResult: "failed",
+      failureClass: "planner_output",
+      nextMutation: "retry the plan compiler or simplify overloaded requirements",
+      humanNeeded: false,
+      blocker: message,
+      specPath,
+      workdir: buildDir,
+    });
+    throw err;
+  }
   if (compileRc !== 0) {
-    writeSession({
+    writePipelineSession({
       goal: sessionGoal,
       runConfig,
       phase: "spec",
@@ -753,7 +847,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   let missionReady = true; // the build loop's first attempt reuses this compiled mission
 
   if (stopAfterStage("spec")) {
-    writeSession({
+    writePipelineSession({
       goal: sessionGoal,
       runConfig,
       phase: "spec",
@@ -834,7 +928,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       }
 
       layer(2, attempt > 1 ? `build — rebuild ${attempt}/${maxRebuilds}` : "build — run the compiled plan to passing gates");
-      writeSession({
+      writePipelineSession({
         goal: sessionGoal,
         runConfig,
         phase: "build",
@@ -883,7 +977,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
     // A build halt is already a loop-exhausted state — the executor's own rung
     // ladder retried before giving up — so it's an honest halt, not a first-fail stop.
       if (buildRc !== 0) {
-        writeSession({
+        writePipelineSession({
           goal: sessionGoal,
           runConfig,
           phase: "build",
@@ -906,7 +1000,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
         return buildRc;
       }
       if (stopAfterStage("build")) {
-        writeSession({
+        writePipelineSession({
           goal: sessionGoal,
           runConfig,
           phase: "build",
@@ -928,7 +1022,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
 
     // ---- LAYER 4 audit (independent reviewer, no build memory) ----
       layer(3, attempt > 1 ? `audit — re-check ${attempt}/${maxRebuilds}` : "audit — fresh eyes on the finished code");
-      writeSession({
+      writePipelineSession({
         goal: sessionGoal,
         runConfig,
         phase: "audit",
@@ -989,7 +1083,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
               fix: "make the UI renderable so ser can inspect it",
             });
           }
-          writeSession({
+          writePipelineSession({
             goal: sessionGoal,
             runConfig,
             phase: "audit",
@@ -1021,7 +1115,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
               fix: "configure a visual-review backend or run a non-visual target",
             });
           }
-          writeSession({
+          writePipelineSession({
             goal: sessionGoal,
             runConfig,
             phase: "audit",
@@ -1052,7 +1146,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
               fix: "retry the visual review or inspect the rendered UI manually",
             });
           }
-          writeSession({
+          writePipelineSession({
             goal: sessionGoal,
             runConfig,
             phase: "audit",
@@ -1116,7 +1210,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
           const polish = polishFixes(verdict);
           if (polish.length > 0 && attempt < maxRebuilds) {
             pendingChange = { stories: polish };
-            writeSession({
+            writePipelineSession({
               goal: sessionGoal,
               runConfig,
               phase: "audit",
@@ -1159,7 +1253,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
       }
       if (attempt < maxRebuilds) {
         pendingChange = { stories: fixes.map((f) => f.fix) };
-        writeSession({
+        writePipelineSession({
           goal: sessionGoal,
           runConfig,
           phase: "audit",
@@ -1179,7 +1273,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
         process.stdout.write(st.gray(`\nfolding these into the spec and rebuilding (attempt ${attempt + 1}/${maxRebuilds})…`) + "\n");
         continue;
       }
-      writeSession({
+      writePipelineSession({
         goal: sessionGoal,
         runConfig,
         phase: "audit",
@@ -1252,7 +1346,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   // ---- LAYER 5 ship ----
   layer(4, "ship");
   const highs = recs.filter((r) => r.severity === "high").length;
-  writeSession({
+  writePipelineSession({
     goal: sessionGoal,
     runConfig,
     phase: "ship",

@@ -63,6 +63,26 @@ describe("SER session status", () => {
     expect(out).not.toMatch(/\b(trace|node|gate|rung)\b/i);
   });
 
+  it("formats blocked status with failure class and retry guidance", () => {
+    const root = mkdtempSync(join(tmpdir(), "ser-session-blocked-"));
+    const out = formatSessionStatus({
+      goal: "Build a kanban board",
+      phase: "audit",
+      state: "blocked",
+      summary: "Visual review is unavailable.",
+      next: "Configure a visual-review backend, then continue.",
+      failureClass: "verifier_unavailable",
+      blocker: "No multimodal reviewer is configured.",
+      humanNeeded: true,
+      updatedAt: "2026-06-30T00:00:00.000Z",
+    }, root);
+
+    expect(out).toContain("Failure: verifier unavailable");
+    expect(out).toContain("Blocker: No multimodal reviewer is configured.");
+    expect(out).toContain("Retry: human input or configuration is needed before `ser continue` can retry.");
+    expect(out).not.toContain("trace:");
+  });
+
   it("ignores older non-product session files", () => {
     const root = mkdtempSync(join(tmpdir(), "ser-session-legacy-"));
     mkdirSync(join(root, ".ser"));

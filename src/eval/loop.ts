@@ -7,6 +7,8 @@ import { writeSession, type SerSession } from "../session.js";
 const AssertionSchema = z.object({
   statusContains: z.array(z.string()).default([]),
   statusNotContains: z.array(z.string()).default([]),
+  resumeArgsContain: z.array(z.string()).default([]),
+  resumeGoal: z.string().optional(),
   continueRequiresArgs: z.boolean().optional(),
   continueExitCode: z.number().optional(),
   maxHumanTurns: z.number().int().nonnegative().optional(),
@@ -46,6 +48,7 @@ export const LoopEvalCaseSchema = z.object({
       "oracle_false_positive",
       "provider_timeout",
       "verifier_unavailable",
+      "planner_output",
       "model_capability",
     ]).optional(),
     nextMutation: z.string().optional(),
@@ -54,6 +57,15 @@ export const LoopEvalCaseSchema = z.object({
     specPath: z.string().optional(),
     workdir: z.string().optional(),
     latestTrace: z.string().optional(),
+    runConfig: z.object({
+      chain: z.string().optional(),
+      chains: z.string().optional(),
+      budget: z.string().optional(),
+      harness: z.enum(["on", "off"]).optional(),
+      maxRebuilds: z.string().optional(),
+      outerLoops: z.string().optional(),
+      mock: z.boolean().optional(),
+    }).optional(),
   }),
   expect: AssertionSchema.default({}),
 });
@@ -77,6 +89,10 @@ export interface CommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  resumePlan?: {
+    args: string[];
+    sessionGoal: string;
+  };
 }
 
 export interface LoopEvalDriver {
@@ -152,6 +168,7 @@ export function seedLoopEvalCase(root: string, testCase: LoopEvalCase): void {
     workdir,
     specPath,
     latestTrace: testCase.seedSession.latestTrace ? resolve(root, testCase.seedSession.latestTrace) : undefined,
+    runConfig: testCase.seedSession.runConfig,
   };
   writeSession(session, root);
 }
@@ -194,6 +211,20 @@ export async function evaluateLoopCase(testCase: LoopEvalCase, root: string, dri
       name: `continue exits ${expect.continueExitCode}`,
       passed: continued.exitCode === expect.continueExitCode,
       detail: continued.stdout + continued.stderr,
+    });
+  }
+  for (const needle of expect.resumeArgsContain) {
+    assertions.push({
+      name: `resume args contain ${needle}`,
+      passed: Boolean(continued.resumePlan?.args.includes(needle)),
+      detail: JSON.stringify(continued.resumePlan ?? null),
+    });
+  }
+  if (expect.resumeGoal) {
+    assertions.push({
+      name: "resume preserves original goal",
+      passed: continued.resumePlan?.sessionGoal === expect.resumeGoal,
+      detail: JSON.stringify(continued.resumePlan ?? null),
     });
   }
 

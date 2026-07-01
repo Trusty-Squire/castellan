@@ -57,6 +57,13 @@ cases:
       humanNeeded: false
       specPath: .ser/spec.yaml
       workdir: vault
+      runConfig:
+        chain: kimi
+        budget: "8"
+        harness: "on"
+        maxRebuilds: "5"
+        outerLoops: "2"
+        mock: true
     expect:
       statusContains:
         - "Goal: Build a secure API key vault"
@@ -68,6 +75,24 @@ cases:
         - .squire
       continueRequiresArgs: false
       continueExitCode: 0
+      resumeGoal: Build a secure API key vault
+      resumeArgsContain:
+        - "--spec"
+        - "--workdir"
+        - "--to"
+        - "ship"
+        - "--yes"
+        - "--chain"
+        - kimi
+        - "--budget"
+        - "8"
+        - "--harness"
+        - "on"
+        - "--max-rebuilds"
+        - "5"
+        - "--outer-loops"
+        - "2"
+        - "--mock"
       maxHumanTurns: 0
       humanNeeded: false
 
@@ -94,6 +119,8 @@ cases:
       statusContains:
         - "State: blocked"
         - "Now: Visual review is unavailable."
+        - "Failure: verifier unavailable"
+        - "Retry: human input or configuration is needed before `ser continue` can retry."
       statusNotContains:
         - rung
         - node_start

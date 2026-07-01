@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildResumePipeline, main } from "../src/cli.js";
+import { buildGoalPipeline, buildResumePipeline, main } from "../src/cli.js";
 import { writeSession } from "../src/session.js";
 import { Trace } from "../src/harness/trace.js";
 
@@ -58,6 +58,37 @@ describe("compressed CLI surface", () => {
         "--mock",
       ],
       sessionGoal: "Build a secure API key vault",
+    });
+  });
+
+  it("goal pipeline retries early spec failures from the original goal", () => {
+    const resume = buildGoalPipeline({
+      goal: "Build a small local notes tool",
+      phase: "spec",
+      state: "blocked",
+      summary: "The idea phase failed before producing a buildable spec.",
+      workdir: "/tmp/root/app",
+      runConfig: {
+        chain: "cheap",
+        budget: "4",
+      },
+      updatedAt: "2026-06-30T00:00:00.000Z",
+    });
+
+    expect(resume).toEqual({
+      args: [
+        "Build a small local notes tool",
+        "--workdir",
+        "/tmp/root/app",
+        "--to",
+        "ship",
+        "--yes",
+        "--chain",
+        "cheap",
+        "--budget",
+        "4",
+      ],
+      sessionGoal: "Build a small local notes tool",
     });
   });
 

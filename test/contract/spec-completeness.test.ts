@@ -43,4 +43,29 @@ describe("specCompleteness — diverse-lens RECALL then one cheap MERGE", () => 
     const llm = new MockLlm([arr([]), arr([]), arr([]), arr([]), arr([]), arr([])]);
     expect(await specCompleteness(llm, "qwen/qwen3-coder", { idea: "x" })).toEqual([]);
   });
+
+  it("respects explicit local/small scope and caps cheap-added features", async () => {
+    const llm = new MockLlm([
+      arr(["sync notes across devices"]),
+      arr(["backup notes"]),
+      arr(["sort notes by date"]),
+      arr(["import notes from file"]),
+      arr(["search notes by content"]),
+      arr(["undo delete note"]),
+      arr([
+        "sync notes across devices",
+        "backup notes",
+        "sort notes by date",
+        "import notes from file",
+        "search notes by content",
+        "undo delete note",
+      ]),
+    ]);
+
+    await expect(specCompleteness(llm, "qwen/qwen3-coder", {
+      idea: "a small local notes tool with tags and browser persistence",
+      stated: ["create notes", "edit notes"],
+      maxFeatures: 3,
+    })).resolves.toEqual(["sort notes by date", "search notes by content", "undo delete note"]);
+  });
 });

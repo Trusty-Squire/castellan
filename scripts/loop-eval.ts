@@ -6,7 +6,7 @@
  *   pnpm build
  *   pnpm loop-eval [--cases eval/ser-loop/cases.yaml] [--keep]
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,14 +30,19 @@ class SerBinaryDriver implements LoopEvalDriver {
   }
 
   async continue(cwd: string): Promise<CommandResult> {
-    return this.run(["continue", "--plan"], cwd);
+    const dryRunPath = join(mkdtempSync(join(tmpdir(), "ser-loop-resume-")), "resume.json");
+    const result = await this.run(["continue"], cwd, { SER_RESUME_DRY_RUN_PATH: dryRunPath });
+    if (existsSync(dryRunPath)) {
+      result.resumePlan = JSON.parse(readFileSync(dryRunPath, "utf8"));
+    }
+    return result;
   }
 
-  private async run(args: string[], cwd: string): Promise<CommandResult> {
+  private async run(args: string[], cwd: string, extraEnv: Record<string, string> = {}): Promise<CommandResult> {
     const result = await execa(process.execPath, [this.bin, ...args], {
       cwd,
       reject: false,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, ...extraEnv, NO_COLOR: "1" },
     });
     return {
       exitCode: result.exitCode ?? 1,

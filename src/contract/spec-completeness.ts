@@ -40,7 +40,7 @@ const RECALL_SYSTEM =
 export async function specCompleteness(
   llm: LlmClient,
   model: string,
-  args: { idea: string; stated?: string[]; lenses?: string[]; quorum?: number },
+  args: { idea: string; stated?: string[]; lenses?: string[]; quorum?: number; maxFeatures?: number },
 ): Promise<string[]> {
   const lenses = args.lenses ?? COMPLETENESS_LENSES;
   const stated = (args.stated ?? []).join("; ") || "(nothing yet)";
@@ -52,7 +52,7 @@ export async function specCompleteness(
         .complete({
           model,
           system: RECALL_SYSTEM,
-          user: `PRODUCT:\n${args.idea}\n\nALREADY IN THE SPEC (do NOT repeat these):\n${stated}\n\nThinking AS ${lens}, what ESSENTIAL features are missing?`,
+          user: `PRODUCT:\n${args.idea}\n\nALREADY IN THE SPEC (do NOT repeat these):\n${stated}\n\nRespect explicit scope constraints in the product text, especially local/offline/small/no-account/no-cloud constraints. Do not add sync, accounts, collaboration, cloud backup, import/export, or platform features unless they are essential within that stated scope.\n\nThinking AS ${lens}, what ESSENTIAL features are missing?`,
           json: true,
           maxTokens: 400,
         })
@@ -76,7 +76,13 @@ export async function specCompleteness(
     .complete({ model, system: mergeSystem, user: mergeUser, json: true, maxTokens: 500 })
     .then((r) => parseFeatures(r.text))
     .catch(() => []);
-  return merged;
+  return filterByScope(merged, args.idea).slice(0, args.maxFeatures ?? 5);
+}
+
+function filterByScope(features: string[], idea: string): string[] {
+  const scopedLocal = /\b(local|offline|no accounts?|browser persistence|small)\b/i.test(idea);
+  if (!scopedLocal) return features;
+  return features.filter((feature) => !/\b(sync|device|cloud|account|login|collaborat|share|team|backup|import|export|file)\b/i.test(feature));
 }
 
 /** Feature names from a model reply — tolerant of a JSON array of strings OR a JSON object

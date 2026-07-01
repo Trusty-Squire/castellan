@@ -22,6 +22,7 @@ export const SessionSchema = z.object({
     "oracle_false_positive",
     "provider_timeout",
     "verifier_unavailable",
+    "planner_output",
     "model_capability",
   ]).optional(),
   nextMutation: z.string().optional(),
@@ -95,6 +96,11 @@ function displayPath(path: string | undefined, root: string): string | undefined
   return rel && !rel.startsWith("..") ? rel : abs;
 }
 
+function displayFailureClass(failureClass: SerSession["failureClass"]): string | undefined {
+  if (!failureClass) return undefined;
+  return failureClass.replace(/_/g, " ");
+}
+
 export function formatSessionStatus(session: SerSession, root = process.cwd()): string {
   const lines = [
     `Goal: ${session.goal}`,
@@ -105,9 +111,16 @@ export function formatSessionStatus(session: SerSession, root = process.cwd()): 
   if (session.lastAttempt) lines.push(`Last attempt: ${session.lastAttempt}`);
   if (session.lastVerifier) lines.push(`Last verifier: ${session.lastVerifier}`);
   if (session.lastResult) lines.push(`Last result: ${session.lastResult}`);
+  const failure = displayFailureClass(session.failureClass);
+  if (failure) lines.push(`Failure: ${failure}`);
   if (session.nextMutation) lines.push(`Next mutation: ${session.nextMutation}`);
   if (session.next) lines.push(`Next: ${session.next}`);
   if (session.blocker) lines.push(`Blocker: ${session.blocker}`);
+  if (session.state === "blocked") {
+    lines.push(session.humanNeeded === false
+      ? "Retry: run `ser continue` to retry this loop."
+      : "Retry: human input or configuration is needed before `ser continue` can retry.");
+  }
   if (typeof session.humanNeeded === "boolean") lines.push(`Human needed: ${session.humanNeeded ? "yes" : "no"}`);
   if (session.workdir) lines.push(`Workdir: ${displayPath(session.workdir, root)}`);
   if (session.specPath) lines.push(`Spec: ${displayPath(session.specPath, root)}`);
