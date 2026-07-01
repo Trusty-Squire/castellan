@@ -991,7 +991,9 @@ async function consumeAttempt(
   // Per-rung wall-clock cap (SER_RUNG_TIMEOUT_MS, 0 = off): bound how long ONE rung may run so a
   // slow reasoning model or a long iterate loop can't stall the whole build. On expiry the stream
   // ends, the attempt is marked errored, and the ladder escalates — the node budget still bounds total cost.
-  const rungCapMs = Number(process.env.SER_RUNG_TIMEOUT_MS || "0");
+  // Default on: a product loop must be internally bounded even when a provider keeps streaming
+  // low-value rewrites forever. Set SER_RUNG_TIMEOUT_MS=0 only for deliberate long experiments.
+  const rungCapMs = Number(process.env.SER_RUNG_TIMEOUT_MS ?? "240000");
   const cap = { hit: false };
   const events = rungCapMs > 0 ? withRungDeadline(stream, rungCapMs, cap) : stream;
 

@@ -5,7 +5,7 @@
  */
 
 const VISUAL_APP_POSITIVE =
-  /\b(web|website|site|page|dashboard|portal|admin|panel|app|ui|interface|table|list|feed)\b/i;
+  /\b(web|website|site|page|dashboard|portal|admin|panel|app|ui|interface|table|list|feed|browser|viewport|visible)\b/i;
 const VISUAL_APP_NEGATIVE =
   /\b(api|sdk|cli|library|package|framework|daemon|worker|service|mcp|connector)\b/i;
 

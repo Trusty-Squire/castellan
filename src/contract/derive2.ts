@@ -343,20 +343,28 @@ async function jsonStage<S extends z.ZodTypeAny>(
   for (let attempt = 0; attempt < 2; attempt++) {
     const timeoutMs = Number(process.env.SER_PLANNER_TIMEOUT_MS ?? 90000);
     let res: Awaited<ReturnType<LlmClient["complete"]>>;
+    let timer: NodeJS.Timeout | undefined;
     try {
-      res = await llm.complete({
-        model,
-        system,
-        user: user + note,
-        json: true,
-        maxTokens: 4000,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      res = await Promise.race([
+        llm.complete({
+          model,
+          system,
+          user: user + note,
+          json: true,
+          maxTokens: 4000,
+          signal: AbortSignal.timeout(timeoutMs),
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new SquireError("PROVIDER_TIMEOUT", `stage "${stage}" timed out after ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
     } catch (err) {
       if (isAbortError(err)) {
         throw new SquireError("PROVIDER_TIMEOUT", `stage "${stage}" timed out after ${timeoutMs}ms`);
       }
       throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     lastText = res.text;
     usage.in += res.inTokens;
@@ -752,7 +760,13 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   const decomposeSystem =
     `${CASTELLAN_IDENTITY}\n\nYour role, the Herald: decompose work into a DAG of nodes. ${SIZING_RULE} ${envelopeRule(executor, envelopeTokens)} Briefs are self-contained (the executor sees ONLY the brief and its packed files). blast_radius is the narrowest glob set permitting the work. Distribute the budget. Do NOT write gates yet.${coverageRule}${stackRule} ${CONTRACT_FIRST} ${COHERENCE_RULE} Output ONLY JSON: {"contract":"<shared data shapes + module signatures>","nodes":[{id,brief,deps,context_globs,blast_radius,budget_usd,requirement?}]}.`;
   const decomposeUser = `${intent}\n\nREPOSITORY SURVEY:\n${decomposeSurvey}\n\nMISSION BUDGET USD: ${input.budgetUsd}`;
-  let decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
+  let decomposed: z.infer<typeof DecomposeSchema>;
+  try {
+    decomposed = await jsonStage(llm, model, "decompose", decomposeSystem, decomposeUser, DecomposeSchema, usage);
+  } catch (err) {
+    if (input.spec) return compileFallbackMission(input, usage, err);
+    throw err;
+  }
 
   // spec-mode coverage gate: every requirement maps to >=1 node (a node may carry
   // several). The retry repairs coverage by REASSIGNING ids to existing nodes — it
@@ -774,7 +788,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
       missing = input.spec.requirements.filter((r) => !covered.has(r.id)).map((r) => r.id);
     }
     if (missing.length > 0) {
-      return { ok: false, reasons: [`decomposition covers no node for requirement(s): ${missing.join(", ")}`], remediations: [] };
+      return compileFallbackMission(input, usage, new SquireError("DERIVE_COVERAGE", `decomposition covers no node for requirement(s): ${missing.join(", ")}`));
     }
   }
 
@@ -1358,7 +1372,7 @@ function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]
   if (acceptance.tier >= 1 && acceptance.tier <= 2) {
     // greenfield/rebuild path: bootstrap deps for non-e2e gates; e2e downgrades to
     // the (already dep-installing) build floor.
-    const grounded = groundGateRun(acceptance.gate!);
+    const grounded = canonicalizeTestGate(groundGateRun(acceptance.gate!));
     const run = E2E_GATE.test(grounded) ? E2E_BUILD_FLOOR : bootstrapGreenfieldNodeGate(grounded);
     return GateSchema.parse({ type: acceptance.tier === 1 ? "command" : "metric", run, soft: false });
   }
@@ -1371,6 +1385,38 @@ function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]
     });
   }
   throw new SquireError("SPEC_FAST_PATH_INVALID", `cannot fast-path unanchored acceptance tier ${acceptance.tier}`);
+}
+
+function compileFallbackMission(input: DeriveV2Input, usage: PlannerUsage, cause: unknown): DeriveSuccess {
+  if (!input.spec) throw cause instanceof Error ? cause : new Error(String(cause));
+  const mission = buildDirectMission({
+    thesis: input.spec.thesis,
+    items: input.spec.requirements.map((requirement) => ({
+      statement: [
+        "FALLBACK PLAN: implement this READY spec requirement without model decomposition.",
+        `Requirement ${requirement.id}: ${requirement.statement}`,
+        input.spec?.stories.length ? `Stories:\n${input.spec.stories.map((s) => `- ${s}`).join("\n")}` : "",
+        input.spec?.decisions.length ? `Decisions:\n${input.spec.decisions.map((d) => `- ${d.statement}`).join("\n")}` : "",
+      ].filter(Boolean).join("\n\n"),
+      acceptance: requirement.acceptance,
+    })),
+    chainName: input.chainName,
+    budgetUsd: input.budgetUsd,
+    maxHumanChecks: input.maxHumanChecks,
+    idPrefix: "fallback",
+  });
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  const readback = renderReadback(mission, [], [], []) + `\n\nfallback planner: model decomposition failed; compiled direct mission from READY spec requirements.\n  reason: ${reason}`;
+  return {
+    ok: true,
+    mission,
+    claims: [],
+    freeformGates: [],
+    readback,
+    inTokens: usage.in,
+    outTokens: usage.out,
+    ...(usage.reportedCalls > 0 ? { costUsd: usage.costUsd } : {}),
+  };
 }
 
 /**

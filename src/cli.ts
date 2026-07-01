@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { parseMission, resolveChain, type ChainsFile } from "./contract/schema.js";
 import { resolveChains } from "./contract/derive.js";
 import { runMission, type DisputeReviewer, type RetrospectReviewer, type RetrospectVerdict } from "./harness/runner.js";
-import { appendTraceEvent, formatTraceStatus, latestTracePath, summarizeTrace } from "./harness/trace.js";
+import { appendTraceEvent, formatTraceStatus, latestTracePath, readTrace, summarizeTrace } from "./harness/trace.js";
 import { MockEngine, fileScriptResolver } from "./engine/mock.js";
 import { commitAll, initRepo, isClean, trackedByParentRepo } from "./harness/checkpoint.js";
 import { SquireError } from "./errors.js";
@@ -170,16 +170,32 @@ function plannerFailureClass(message: string): SerSession["failureClass"] {
   return /timeout|timed out|aborted/i.test(message) ? "provider_timeout" : "planner_output";
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new SquireError("PROVIDER_TIMEOUT", `${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-  });
+function classifyBuildFailureFromTrace(tracePath: string | undefined): Pick<SerSession, "failureClass" | "nextMutation" | "humanNeeded"> {
+  const fallback = {
+    failureClass: "model_capability" as const,
+    nextMutation: "classify the failed gate and decide whether the spec, context, or implementation needs mutation",
+    humanNeeded: true,
+  };
+  if (!tracePath) return fallback;
   try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
+    const tail = readTrace(tracePath).slice(-50);
+    const text = tail
+      .map((ev) => {
+        const payload = ev.payload as { stderrTail?: string; stdoutTail?: string; message?: string } | null;
+        return [payload?.stderrTail, payload?.stdoutTail, payload?.message].filter(Boolean).join("\n");
+      })
+      .join("\n");
+    if (/CACError:\s*Unknown option|Unknown option [`'"]?--?runInBand/i.test(text)) {
+      return {
+        failureClass: "runner_environment",
+        nextMutation: "normalize the test runner command or generated project harness, then rerun the focused build",
+        humanNeeded: false,
+      };
+    }
+  } catch {
+    return fallback;
   }
+  return fallback;
 }
 
 async function cmdStart(args: string[]): Promise<number> {
@@ -815,11 +831,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
   process.stdout.write(st.gray("\ncompiling the spec to a buildable plan…") + "\n");
   let compileRc: number;
   try {
-    compileRc = await withTimeout(
-      runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]),
-      Number(process.env.SER_DERIVE_TIMEOUT_MS ?? 180000),
-      "plan compiler",
-    );
+    compileRc = await runDeriveV2([specPath, "--workdir", buildDir, "--out", missionPath, "--chain", chainName, ...budgetArgs, ...(yes ? ["--yes"] : [])]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const failureClass = plannerFailureClass(message);
@@ -1003,6 +1015,7 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
     // A build halt is already a loop-exhausted state — the executor's own rung
     // ladder retried before giving up — so it's an honest halt, not a first-fail stop.
       if (buildRc !== 0) {
+        const buildFailure = classifyBuildFailureFromTrace(buildTracePath);
         writePipelineSession({
           goal: sessionGoal,
           runConfig,
@@ -1014,9 +1027,9 @@ async function cmdPipeline(argv: string[], options: { sessionGoal?: string } = {
           currentLoop: "build",
           lastVerifier: "node gates",
           lastResult: "failed",
-          failureClass: "model_capability",
-          nextMutation: "classify the failed gate and decide whether the spec, context, or implementation needs mutation",
-          humanNeeded: true,
+          failureClass: buildFailure.failureClass,
+          nextMutation: buildFailure.nextMutation,
+          humanNeeded: buildFailure.humanNeeded,
           blocker: "SER exhausted the build loop without a verified pass.",
           specPath,
           workdir: buildDir,

@@ -9,6 +9,13 @@ describe("frontend floor heuristics", () => {
     })).toBe(true);
   });
 
+  it("detects browser-persistent tools as visual products", () => {
+    expect(isVisualAppSpec({
+      thesis: "a small local notes tool with tags, browser persistence, and a visible test result",
+      stories: ["create notes", "filter notes by tag"],
+    })).toBe(true);
+  });
+
   it("does not classify a CLI/library spec as a visual app", () => {
     expect(isVisualAppSpec({
       thesis: "a CLI to sync API schemas into a library package",

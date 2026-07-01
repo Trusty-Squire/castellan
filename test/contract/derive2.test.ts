@@ -57,6 +57,16 @@ function base(llm: MockLlm) {
   return { goal: "build a duration parser", workdir, llm, model: "qwen/qwen3-coder", chainName: "cheap", budgetUsd: 1.0 };
 }
 
+class HangingLlm extends MockLlm {
+  constructor() {
+    super([]);
+  }
+
+  override async complete(): Promise<{ text: string; inTokens: number; outTokens: number }> {
+    return new Promise(() => undefined);
+  }
+}
+
 describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
   it("happy path: decompose → pattern gates → claims survive → compiled mission + readback", async () => {
     const llm = new MockLlm([
@@ -78,6 +88,65 @@ describe("deriveV2 — herald pipeline (SPEC-v0.2 §6)", () => {
     expect(llm.calls).toHaveLength(5);
     // no provider-reported cost in this script → estimation territory
     expect(r.costUsd).toBeUndefined();
+  });
+
+  it("spec-mode falls back to a direct mission when model decomposition fails", async () => {
+    const spec = parseSpec(`
+thesis: Build a local notes tool
+stories:
+  - I can create and search notes
+scope_fence: []
+requirements:
+  - id: R1
+    statement: Notes can be created and searched locally
+    acceptance:
+      tier: 1
+      gate: npm test
+decisions: []
+claims: []
+open_questions: []
+`);
+    const llm = new MockLlm([
+      { text: "not json" },
+      { text: "still not json" },
+    ]);
+
+    const r = await deriveV2({ ...base(llm), goal: undefined, spec });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes).toHaveLength(1);
+    expect(r.mission.nodes[0]!.id).toBe("fallback1");
+    expect(r.mission.nodes[0]!.gate!.run).toContain("npm test");
+    expect(r.readback).toContain("fallback planner");
+  });
+
+  it("spec-mode falls back to a direct mission when model decomposition times out", async () => {
+    const spec = parseSpec(`
+thesis: Local notes
+scope_fence: []
+requirements:
+  - id: R1
+    statement: Notes can be created and searched locally
+    acceptance:
+      tier: 1
+      gate: npm test
+decisions: []
+claims: []
+open_questions: []
+`);
+    const prev = process.env.SER_PLANNER_TIMEOUT_MS;
+    process.env.SER_PLANNER_TIMEOUT_MS = "5";
+    try {
+      const llm = new HangingLlm();
+      const r = await deriveV2({ ...base(llm), goal: undefined, spec });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.mission.nodes[0]!.id).toBe("fallback1");
+      expect(r.readback).toContain('stage "decompose" timed out');
+    } finally {
+      if (prev === undefined) delete process.env.SER_PLANNER_TIMEOUT_MS;
+      else process.env.SER_PLANNER_TIMEOUT_MS = prev;
+    }
   });
 
   it("seeds server plumbing for a greenfield serve-gate node (scaffoldServers) and wires the node", async () => {
@@ -223,7 +292,8 @@ requirements:
     // a delta item without an explicit gate falls back to a generic bootstrapped
     // npm test gate — no per-demo grep heuristics
     expect(mission.nodes[0]!.gate!.run).toContain("npm install --no-fund --no-audit");
-    expect(mission.nodes[0]!.gate!.run).toContain("npm test -- --run");
+    expect(mission.nodes[0]!.gate!.run).toMatch(/&& npm test'$/);
+    expect(mission.nodes[0]!.gate!.run).not.toContain("--run");
     expect(mission.nodes[0]!.gate!.run).not.toContain("headline-value");
     expect(mission.nodes[1]!.gate).toMatchObject({ type: "command", run: expect.stringContaining("npm install --no-fund --no-audit") });
   });
@@ -392,6 +462,7 @@ requirements:
   it("canonicalizeTestGate runs the whole vitest suite for pure test gates (robust to jest flags / pinned filenames), keeping compound gates", () => {
     // jest idiom vitest rejects (CACError) + a pinned filename the cheap model renamed
     expect(canonicalizeTestGate("test -f tests/x.test.js && npm test -- --runTestsByPath tests/x.test.js")).toBe("npm test");
+    expect(canonicalizeTestGate("npm test -- --runInBand")).toBe("npm test");
     expect(canonicalizeTestGate("npm test -- --run tests/arbitrage-engine.test.ts")).toBe("npm test");
     expect(canonicalizeTestGate("npx vitest run tests/foo.test.ts")).toBe("npm test");
     // applied end-to-end through tractableGateRun
@@ -494,6 +565,32 @@ requirements:
     expect(r.mission.nodes[1]!.gate).toMatchObject({ type: "human", artifact: "renders/grid.png" });
     // no infer-gates call was needed: decompose + claims only
     expect(llm.calls).toHaveLength(2);
+  });
+
+  it("spec-mode canonicalizes Jest-only pure test flags before bootstrapping Vitest", async () => {
+    const spec = parseSpec(`
+thesis: "build notes"
+requirements:
+  - id: R1
+    statement: "unit tests prove notes work"
+    acceptance: { tier: 1, gate: "npm test -- --runInBand" }
+`);
+    const decompose = JSON.stringify({
+      nodes: [
+        { id: "notes", brief: "build notes", deps: [], context_globs: [], blast_radius: ["src/**"], budget_usd: 0.5, requirement: "R1" },
+      ],
+    });
+    const llm = new MockLlm([
+      { text: decompose },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+    const r = await deriveV2({ ...base(llm), goal: undefined, spec });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const run = String(r.mission.nodes[0]!.gate!.run ?? "");
+    expect(run).toContain('"test":"vitest run"');
+    expect(run).toMatch(/&& npm test'$/);
+    expect(run).not.toContain("runInBand");
   });
 
   it("judge mode pre-gate diagnoses refuted decisions and blocking questions", () => {
