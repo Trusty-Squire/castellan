@@ -18,9 +18,9 @@ describe("briefFileCoherence — a node must be able to write the files its brie
   });
 
   it("adds explicit runtime store files named by the contract or brief", () => {
-    const brief = "Storage file: 'notes.json' in CWD. Persist entries to data/events.jsonl.";
-    expect(briefRuntimeFiles(brief)).toEqual(["notes.json", "data/events.jsonl"]);
-    expect(briefFileCoherence(brief, ["notes.js"])).toEqual(["notes.json", "data/events.jsonl"]);
+    const brief = "Storage file: `notes.json` in CWD. Persist entries to data/events.jsonl.\nDefault store path: path.join(__dirname, 'tasks.json')";
+    expect(briefRuntimeFiles(brief)).toEqual(["notes.json", "data/events.jsonl", "tasks.json"]);
+    expect(briefFileCoherence(brief, ["notes.js"])).toEqual(["notes.json", "data/events.jsonl", "tasks.json"]);
   });
 });
 

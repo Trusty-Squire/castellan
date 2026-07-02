@@ -361,7 +361,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     expect(result && "output" in result && /not valid JSON/.test(result.output ?? "")).toBe(true);
   });
 
-  it("nudges (not aborts) a malformed JavaScript write when the gate requires CommonJS exports", async () => {
+  it("nudges (not aborts) a malformed JavaScript write when the gate requires executable JS", async () => {
     const engine = new PiEngine({
       streamFn: scriptedStreamFn([
         {
@@ -389,7 +389,7 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     );
 
     expect(events.some((e) => e.kind === "error" && /attempt aborted/.test(e.message ?? ""))).toBe(false);
-    expect(events.some((e) => e.kind === "tool_result" && /cannot be loaded yet/.test(e.output ?? ""))).toBe(true);
+    expect(events.some((e) => e.kind === "tool_result" && /top-level data literal|syntax check failed|cannot be loaded yet/i.test(e.output ?? ""))).toBe(true);
   });
 
   it("aborts an attempt that keeps failing edits on the same path", async () => {

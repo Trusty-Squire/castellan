@@ -60,12 +60,24 @@ describe("ToolExecutor", () => {
     const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
     const r = await exec.execute("write", {
       path: "src/notes.js",
-      content: "[{'utf8':'return JSON.parse(data);'}]",
+      content: "[{'utf8':'const notes = JSON.parse(data);'}]",
     });
 
     expect(r.ok).toBe(false);
     expect(r.output).toMatch(/top-level data literal|raw JS text/);
     expect(existsSync(join(cwd, "src", "notes.js"))).toBe(false);
+  });
+
+  it("refuses syntactically invalid executable JavaScript before persisting it", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
+    const r = await exec.execute("write", {
+      path: "src/bot.js",
+      content: "function handleUpdate(update) {\n  return { chat_id: 1, text: 'reply' };\n",
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.output).toMatch(/syntax check failed/i);
+    expect(existsSync(join(cwd, "src", "bot.js"))).toBe(false);
   });
 
   it("leaves normal JavaScript source unchanged", async () => {

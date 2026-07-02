@@ -2055,3 +2055,21 @@ Artifacts:
 - `results-pylint-6506-current-harness.json`
 - `select-pylint-6506-current-harness.log`
 - `repair-trace-pylint-6506-current-harness.jsonl`
+
+## 2026-07-01 — SWE-bench import hermeticity
+
+Question:
+
+- Can the SWE-bench helper modules stay importable from the normal repo test suite without local private
+  OpenRouter or instance files?
+
+Result:
+
+- Yes. `select.mjs` now reads `.env-direct` and the instances file lazily/optionally for imports, while direct
+  execution still fails clearly if the selected instances file is missing or no OpenRouter key is configured.
+- This keeps SWE-bench artifacts restored in the repo without making `pnpm test` depend on private local files.
+
+Verification:
+
+- `pnpm vitest run test/swebench/repair-rung.test.ts` -> `14` passed.
+- `pnpm test` -> `55` files, `501` tests passed.

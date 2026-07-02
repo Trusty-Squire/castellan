@@ -65,14 +65,19 @@ export function briefNamedFiles(brief: string): string[] {
 const RUNTIME_STORE_EXT = String.raw`(?:jsonl|json|db|sqlite\d?|sqlite|log|txt|csv)`;
 const RUNTIME_FILE = String.raw`([\w.-]+(?:\/[\w.-]+)*\.${RUNTIME_STORE_EXT})`;
 const RUNTIME_FILE_RES = [
-  new RegExp(String.raw`\b(?:storage|store|persistence|persisted|data|database|db|state|cache|session|log)\s*(?:file|path)?\s*[:=]\s*['"]?${RUNTIME_FILE}['"]?`, "gi"),
-  new RegExp(String.raw`\b(?:persist|persists|persisted|save|saves|saved|write|writes|written|store|stores|stored)(?:\s+\w+){0,4}\s+(?:to|in|into|under|at)\s+['"]?${RUNTIME_FILE}['"]?`, "gi"),
+  new RegExp(String.raw`\b(?:storage|store|persistence|persisted|data|database|db|state|cache|session|log)\s*(?:file|path)?\s*[:=]\s*['"\`]?${RUNTIME_FILE}['"\`]?`, "gi"),
+  new RegExp(String.raw`\b(?:persist|persists|persisted|save|saves|saved|write|writes|written|store|stores|stored)(?:\s+\w+){0,4}\s+(?:to|in|into|under|at)\s+['"\`]?${RUNTIME_FILE}['"\`]?`, "gi"),
 ];
 
 export function briefRuntimeFiles(brief: string): string[] {
   const out: string[] = [];
   for (const re of RUNTIME_FILE_RES) {
     for (const m of brief.matchAll(re)) out.push(m[1]!);
+  }
+  const fileRe = new RegExp(RUNTIME_FILE, "gi");
+  for (const line of brief.split(/\r?\n/)) {
+    if (!/\b(storage|store|persistence|persist|data|database|db|state|cache|session|log|path|file)\b/i.test(line)) continue;
+    for (const m of line.matchAll(fileRe)) out.push(m[1]!);
   }
   return [...new Set(out)];
 }

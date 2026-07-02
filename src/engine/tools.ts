@@ -1,4 +1,6 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { execa } from "execa";
 import { makeMatcher } from "../harness/globs.js";
@@ -142,6 +144,8 @@ export class ToolExecutor {
       mkdirSync(dirname(located.abs), { recursive: true });
       const literalError = executableJsLiteralError(located.rel, content);
       if (literalError) return { ok: false, denied: false, path: located.rel, output: literalError };
+      const syntaxError = executableJsSyntaxError(located.rel, content);
+      if (syntaxError) return { ok: false, denied: false, path: located.rel, output: syntaxError };
       writeFileSync(located.abs, content);
       this.recordWrite(located.rel);
       return { ok: true, denied: false, path: located.rel, output: `wrote ${located.rel} (${content.length} bytes)` };
@@ -278,8 +282,24 @@ export function normalizeWriteContent(rel: string, content: string): string {
 
 export function executableJsLiteralError(rel: string, content: string): string | null {
   if (!/\.(?:c?js|mjs)$/.test(rel) || isDataModulePath(rel)) return null;
-  if (!looksLikeTopLevelJsLiteral(content.trim())) return null;
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("[") && !looksLikeTopLevelJsLiteral(trimmed)) return null;
   return `REFUSED to write ${rel}: this looks like a top-level data literal, not executable JavaScript source. Re-emit the complete file as raw JS text with imports/requires, functions, control flow, and module.exports/export syntax as needed; do not encode code as arrays, objects, maps, or fragments.`;
+}
+
+export function executableJsSyntaxError(rel: string, content: string): string | null {
+  if (!/\.(?:c?js|mjs)$/.test(rel) || isDataModulePath(rel)) return null;
+  const dir = mkdtempSync(joinTmp("ser-js-check-"));
+  const path = `${dir}/check.${rel.endsWith(".mjs") ? "mjs" : "cjs"}`;
+  try {
+    writeFileSync(path, content);
+    const r = spawnSync(process.execPath, ["--check", path], { encoding: "utf8", timeout: 10_000 });
+    if (r.status === 0) return null;
+    const msg = (r.stderr || r.stdout || "syntax check failed").split("\n").filter(Boolean).slice(0, 8).join("\n");
+    return `REFUSED to write ${rel}: JavaScript syntax check failed.\n${msg}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function looksLikeTopLevelJsLiteral(content: string): boolean {
@@ -292,4 +312,8 @@ function looksLikeTopLevelJsLiteral(content: string): boolean {
 
 function isDataModulePath(rel: string): boolean {
   return /(^|\/)(data|fixture|fixtures|mock|mocks|seed|seeds|sample|samples|config|constants|schema|catalog|items)\.(?:c?js|mjs)$/i.test(rel);
+}
+
+function joinTmp(prefix: string): string {
+  return `${tmpdir().replace(/\/$/, "")}/${prefix}`;
 }

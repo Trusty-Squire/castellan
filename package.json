@@ -29,7 +29,8 @@
     "loop-eval": "tsx scripts/loop-eval.ts",
     "planner-eval": "tsx scripts/planner-eval.ts",
     "derive-eval": "tsx scripts/derive-eval.ts",
-    "decomposition-eval": "tsx scripts/decomposition-eval.ts"
+    "decomposition-eval": "tsx scripts/decomposition-eval.ts",
+    "live-eval": "tsx scripts/live-eval.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.79.1",

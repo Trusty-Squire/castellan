@@ -13,10 +13,21 @@ import { issuePitfalls as issuePitfallsModule, oracleInfo as oracleInfoModule } 
 import { contractContext } from "./context-expand.mjs";
 
 const root = process.cwd(), SB = `${root}/projects/swebench`;
-const denv = Object.fromEntries(readFileSync(`${SB}/.env-direct`, "utf8").trim().split("\n").map(l => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1)]; }));
-const BASE_URL = denv.OPENROUTER_BASE_URL, KEY = denv.OPENROUTER_API_KEY;
+function readDirectEnv() {
+  const p = `${SB}/.env-direct`;
+  if (!existsSync(p)) return {};
+  return Object.fromEntries(readFileSync(p, "utf8").trim().split("\n").filter(Boolean).map(l => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1)]; }));
+}
+const denv = readDirectEnv();
+const BASE_URL = denv.OPENROUTER_BASE_URL || process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+const KEY = denv.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY || "";
 const INSTANCES = (process.argv.find(a => a.startsWith("--instances=")) || "--instances=requests-instances.json").slice(12);
-const all = JSON.parse(readFileSync(`${SB}/${INSTANCES}`, "utf8"));
+function readInstances() {
+  const p = `${SB}/${INSTANCES}`;
+  if (!existsSync(p)) return [];
+  return JSON.parse(readFileSync(p, "utf8"));
+}
+const all = readInstances();
 const PICK = process.argv.slice(2).filter(a => !a.startsWith("-"));
 const K = Number((process.argv.find(a => a.startsWith("--k=")) || "--k=15").slice(4));
 const R = Number((process.argv.find(a => a.startsWith("--r=")) || "--r=3").slice(4));
@@ -46,6 +57,7 @@ async function callLLM(messages, temperature, model = MODEL) {
   // Reasoning models emit large hidden traces before content; max_tokens is a ceiling, so a high value
   // is fine. OpenRouter can silently hang before failover, so each attempt has a hard local timeout and
   // we visibly fall back to the known-fast code model recorded in EXPERIMENTS.md.
+  if (!KEY) throw new Error("OPENROUTER_API_KEY missing; set it in projects/swebench/.env-direct or the environment");
   const models = [...new Set([model, FALLBACK_MODEL, MODEL].filter(Boolean))];
   for (const m of models) for (let attempt = 0; attempt < LLM_ATTEMPTS; attempt++) {
     const started = Date.now();
@@ -979,6 +991,7 @@ export { callLLM, makeRunner, djangoNode, makeDjangoRunner, applyEdits, funcCont
 async function pool(items, k, fn) { const ret = []; let i = 0; await Promise.all(Array(k).fill(0).map(async () => { while (i < items.length) { const idx = i++; ret[idx] = await fn(items[idx]); log(`  [${ret[idx].id.replace("psf__requests-", "#")}] ${ret[idx].status}${ret[idx].status === "selected" ? ` (repros=${ret[idx].repros} survivors=${ret[idx].survivors} reproPass=${ret[idx].reproPass}${ret[idx].oraclePass ? ` oraclePass=${ret[idx].oraclePass}` : ""} votes=${ret[idx].votes}${ret[idx].repaired ? ` REPAIRED@${ret[idx].repaired}` : ""}${ret[idx].oracleRepaired ? ` ORACLE@${ret[idx].oracleRepaired}` : ""}${ret[idx].knighted ? ` KNIGHTED@${ret[idx].knighted}` : ""})` : ""}${ret[idx].note ? " — " + ret[idx].note : ""}`); writeFileSync(`${SB}/results-select.json`, JSON.stringify(ret.filter(Boolean), null, 1)); } })); return ret; }
 // run the pipeline only when invoked directly (not when imported for a ranking check)
 if (process.argv[1] && process.argv[1].endsWith("select.mjs")) {
+  if (!existsSync(`${SB}/${INSTANCES}`)) throw new Error(`instances file not found: ${SB}/${INSTANCES}`);
   const out = await pool(insts, POOL, runInstance);
   log(`\n=== SELECT v2 DONE === ${out.filter(r => r.status === "selected").length} patches / ${out.length} (${out.map(r => r.id.replace("psf__requests-", "#") + ":" + r.status).join(" ")})`);
 }
