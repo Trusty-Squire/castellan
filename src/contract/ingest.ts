@@ -75,18 +75,32 @@ export function fallbackIdeaFromPrompt(prompt: string): IdeaResult {
   };
 }
 
-const GateSchema = z.union([
-  z.object({
-    tier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-    gate: z.string().min(1),
-    artifact: z.string().optional(),
-  }),
-  z.object({
-    tier: z.literal(4),
-    gate: z.string().optional(),
-    artifact: z.string().min(1),
-  }),
-]);
+function isVacuousGate(run: string): boolean {
+  return /^\s*(true|:|exit\s+0)\s*$/i.test(run.trim());
+}
+
+const GateSchema = z
+  .union([
+    z.object({
+      tier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+      gate: z.string().min(1),
+      artifact: z.string().optional(),
+    }),
+    z.object({
+      tier: z.literal(4),
+      gate: z.string().optional(),
+      artifact: z.string().min(1),
+    }),
+  ])
+  .superRefine((g, ctx) => {
+    if (g.tier >= 1 && g.tier <= 3 && typeof g.gate === "string" && isVacuousGate(g.gate)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "component gate is vacuous; provide a command/rubric that exercises the built artifact",
+        path: ["gate"],
+      });
+    }
+  });
 
 const IdeaSchema = z.object({
   stories: z.array(z.string()).min(1),

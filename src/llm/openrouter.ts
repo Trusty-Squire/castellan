@@ -3,10 +3,38 @@ import type { LlmClient } from "./types.js";
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
+export interface OpenRouterProviderRouting {
+  order?: string[];
+  only?: string[];
+  ignore?: string[];
+  allow_fallbacks?: boolean;
+  require_parameters?: boolean;
+  data_collection?: "allow" | "deny";
+  quantizations?: string[];
+}
+
+export const DEFAULT_PROVIDER_PREFERENCES: Record<string, OpenRouterProviderRouting> = {
+  "z-ai/glm-5.2": {
+    order: ["deepinfra/fp4"],
+    allow_fallbacks: true,
+    require_parameters: true,
+  },
+};
+
 function retryableProviderRouteError(status: number, body: string): boolean {
   if (status === 429 || status >= 500) return true;
   if (status !== 400) return false;
   return /Provider returned error|temporarily rate-limited|rate[- ]limited upstream|thinking mode\s+is not supported/i.test(body);
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && (err.name === "AbortError" || /aborted|aborterror/i.test(err.message));
+}
+
+function callerAbort(): Error {
+  const err = new Error("aborted");
+  err.name = "AbortError";
+  return err;
 }
 
 /**
@@ -19,17 +47,20 @@ export class OpenRouterClient implements LlmClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly providerPreferences: Record<string, OpenRouterProviderRouting>;
 
   constructor(opts: {
     apiKey: string;
     baseUrl?: string;
     fetchImpl?: typeof fetch;
     sleep?: (ms: number) => Promise<void>;
+    providerPreferences?: Record<string, OpenRouterProviderRouting>;
   }) {
     this.apiKey = opts.apiKey;
     this.baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.providerPreferences = opts.providerPreferences ?? DEFAULT_PROVIDER_PREFERENCES;
   }
 
   async complete(req: {
@@ -62,6 +93,7 @@ export class OpenRouterClient implements LlmClient {
       // usage block untouched — so the planner can surface real spend instead of
       // price-table arithmetic. Harmless on providers that ignore it.
       usage: { include: true },
+      ...(this.providerPreferences[req.model] ? { provider: this.providerPreferences[req.model] } : {}),
       ...(req.json ? {
         response_format: { type: "json_object" },
         reasoning: { effort: "none", exclude: true },
@@ -70,6 +102,7 @@ export class OpenRouterClient implements LlmClient {
 
     let lastErr = "";
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (req.signal?.aborted) throw callerAbort();
       if (attempt > 0) await this.sleep(250 * 2 ** (attempt - 1));
       let res: Response;
       try {
@@ -83,6 +116,7 @@ export class OpenRouterClient implements LlmClient {
           body: JSON.stringify(body),
         });
       } catch (err) {
+        if (req.signal?.aborted || isAbortError(err)) throw err;
         lastErr = `network error: ${(err as Error).message}`;
         continue;
       }

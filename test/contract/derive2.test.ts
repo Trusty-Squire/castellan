@@ -120,7 +120,37 @@ open_questions: []
     expect(r.mission.nodes).toHaveLength(1);
     expect(r.mission.nodes[0]!.id).toBe("fallback1");
     expect(r.mission.nodes[0]!.gate!.run).toContain("npm test");
+    expect(r.mission.nodes[0]!.brief).toContain("Recovery may simplify the node shape");
+    expect(r.mission.nodes[0]!.brief).toContain("Thesis: Build a local notes tool");
     expect(r.readback).toContain("fallback planner");
+  });
+
+  it("refuses fallback when recovery would preserve only a vacuous oracle", async () => {
+    const spec = parseSpec(`
+thesis: Build a Telegram bot that replies to incoming messages with contextual flirt coaching
+stories:
+  - I can send the bot a message and receive a context-aware reply through Telegram
+scope_fence: []
+requirements:
+  - id: R1
+    statement: The Telegram bot handles incoming messages and returns contextual replies
+    acceptance:
+      tier: 1
+      gate: "true"
+decisions: []
+claims: []
+open_questions: []
+`);
+    const llm = new MockLlm([
+      { text: "not json" },
+      { text: "still not json" },
+    ]);
+
+    const r = await deriveV2({ ...base(llm), goal: undefined, spec });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons[0]).toContain("fallback would weaken requirement R1");
+    expect(r.reasons[0]).toContain("vacuous");
   });
 
   it("spec-mode falls back to a direct mission when model decomposition times out", async () => {
@@ -193,6 +223,45 @@ open_questions: []
     expect(r.mission.nodes[0]!.blast_radius).toEqual(["server.js", "package.json", "data/notes.json"]);
     expect(r.mission.nodes[0]!.context_globs).toEqual([]);
     expect(r.mission.nodes[0]!.deps).toEqual([]);
+  });
+
+  it("adds contract-named runtime stores to blast radius before execution", async () => {
+    const spec = parseSpec(`
+thesis: Build a tiny local notes CLI
+scope_fence: []
+requirements:
+  - id: R1
+    statement: Notes can be added and listed from local storage
+    acceptance:
+      tier: 1
+      gate: node notes.js add "hello" && node notes.js list | grep -q hello
+decisions: []
+claims: []
+open_questions: []
+`);
+    const decompose = JSON.stringify({
+      contract: "Storage file: 'notes.json' in CWD. CLI: node notes.js add/list.",
+      nodes: [
+        {
+          id: "cli",
+          brief: "Create notes.js implementing add/list.",
+          deps: [],
+          context_globs: [],
+          blast_radius: ["notes.js", "package.json"],
+          budget_usd: 1,
+          requirement: "R1",
+        },
+      ],
+    });
+    const llm = new MockLlm([
+      { text: decompose },
+      { text: JSON.stringify({ claims: [] }) },
+    ]);
+
+    const r = await deriveV2({ ...base(llm), goal: undefined, spec });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.mission.nodes[0]!.blast_radius).toEqual(expect.arrayContaining(["notes.js", "notes.json"]));
   });
 
   it("compiles the captured Kimi notes decomposition instead of falling back", async () => {

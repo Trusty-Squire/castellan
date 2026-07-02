@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, interfaceCoherence, idempotencyRepair, briefFileCoherence, type PortCheckNode } from "../../src/contract/gate-proofread.js";
+import { gateProofread, portCoherence, buildsServer, gateLocalPorts, extractGateFiles, toolingCoherence, interfaceCoherence, idempotencyRepair, briefFileCoherence, briefRuntimeFiles, type PortCheckNode } from "../../src/contract/gate-proofread.js";
 
 describe("briefFileCoherence — a node must be able to write the files its brief names", () => {
   it("flags a brief-named file the blast_radius does not cover (the login.html denial)", () => {
@@ -15,6 +15,12 @@ describe("briefFileCoherence — a node must be able to write the files its brie
   it("returns nothing when the radius already covers brief-named files (incl. via glob)", () => {
     const brief = "Create src/login.html and write src/app.js";
     expect(briefFileCoherence(brief, ["src/**"])).toEqual([]);
+  });
+
+  it("adds explicit runtime store files named by the contract or brief", () => {
+    const brief = "Storage file: 'notes.json' in CWD. Persist entries to data/events.jsonl.";
+    expect(briefRuntimeFiles(brief)).toEqual(["notes.json", "data/events.jsonl"]);
+    expect(briefFileCoherence(brief, ["notes.js"])).toEqual(["notes.json", "data/events.jsonl"]);
   });
 });
 

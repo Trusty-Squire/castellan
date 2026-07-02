@@ -1338,7 +1338,7 @@ export async function deriveV2(input: DeriveV2Input): Promise<DeriveV2Result> {
   // the model's correct write (measured: web-app's login.html/dashboard.html denied). Widen the
   // radius to cover brief-named files (permits, never forces).
   for (const n of decomposed.nodes) {
-    for (const f of briefFileCoherence(n.brief, n.blast_radius)) {
+    for (const f of briefFileCoherence(`${decomposed.contract}\n\n${n.brief}`, n.blast_radius)) {
       if (!n.blast_radius.includes(f)) n.blast_radius.push(f);
     }
   }
@@ -1623,15 +1623,40 @@ function acceptanceToGate(acceptance: Spec["requirements"][number]["acceptance"]
   throw new SquireError("SPEC_FAST_PATH_INVALID", `cannot fast-path unanchored acceptance tier ${acceptance.tier}`);
 }
 
-function compileFallbackMission(input: DeriveV2Input, usage: PlannerUsage, cause: unknown): DeriveSuccess {
+function vacuousFallbackGate(run: string): boolean {
+  return /^\s*(true|:|exit\s+0)\s*$/i.test(run.trim());
+}
+
+function fallbackOracleRefusal(spec: Spec): DeriveRefusal | null {
+  const weak = spec.requirements.filter((r) => {
+    const a = r.acceptance;
+    if (a.tier === 1 || a.tier === 2) return vacuousFallbackGate(a.gate ?? "");
+    return false;
+  });
+  if (weak.length === 0) return null;
+  return {
+    ok: false,
+    reasons: weak.map(
+      (r) =>
+        `fallback would weaken requirement ${r.id}: acceptance gate is vacuous, so recovery cannot preserve the product contract`,
+    ),
+    remediations: weak.map((r) => remediationFor(r.id)),
+  };
+}
+
+function compileFallbackMission(input: DeriveV2Input, usage: PlannerUsage, cause: unknown): DeriveV2Result {
   if (!input.spec) throw cause instanceof Error ? cause : new Error(String(cause));
+  const refusal = fallbackOracleRefusal(input.spec);
+  if (refusal) return refusal;
   const mission = buildDirectMission({
     thesis: input.spec.thesis,
     items: input.spec.requirements.map((requirement) => ({
       statement: [
-        "FALLBACK PLAN: implement this READY spec requirement without model decomposition.",
+        "FALLBACK PLAN: implement this READY spec requirement without model decomposition. Recovery may simplify the node shape, but it MUST preserve the same externally observable product promised by the thesis, stories, requirements, and scope fence. Do not reduce the build to a helper function, toy demo, or narrower internal stub.",
+        `Thesis: ${input.spec!.thesis}`,
         `Requirement ${requirement.id}: ${requirement.statement}`,
         input.spec?.stories.length ? `Stories:\n${input.spec.stories.map((s) => `- ${s}`).join("\n")}` : "",
+        input.spec?.scope_fence.length ? `Scope fence:\n${input.spec.scope_fence.map((s) => `- ${s}`).join("\n")}` : "",
         input.spec?.decisions.length ? `Decisions:\n${input.spec.decisions.map((d) => `- ${d.statement}`).join("\n")}` : "",
       ].filter(Boolean).join("\n\n"),
       acceptance: requirement.acceptance,

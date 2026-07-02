@@ -500,6 +500,23 @@ describe("PiEngine (network-free via injected streamFn)", () => {
     expect(results.some((r) => r.output.includes("hello world"))).toBe(true);
     expect(results.some((r) => r.output.includes("ran"))).toBe(true);
   });
+
+  it("surfaces a non-zero bash exit as a failed tool result", async () => {
+    const engine = new PiEngine({
+      streamFn: scriptedStreamFn([
+        { tools: [{ id: "b1", name: "bash", arguments: { command: "echo bad; exit 9" } }], in: 30, out: 10 },
+        { text: "saw failure", in: 10, out: 5 },
+      ]),
+    });
+
+    const events = await collect(engine, req());
+    const result = events.find(
+      (e): e is Extract<EngineEvent, { kind: "tool_result" }> => e.kind === "tool_result",
+    );
+    expect(result?.ok).toBe(false);
+    expect(result?.output).toContain("bad");
+    expect(result?.output).toContain("(exit 9)");
+  });
 });
 
 describe("boundHistory", () => {

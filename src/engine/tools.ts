@@ -140,6 +140,8 @@ export class ToolExecutor {
     }
     try {
       mkdirSync(dirname(located.abs), { recursive: true });
+      const literalError = executableJsLiteralError(located.rel, content);
+      if (literalError) return { ok: false, denied: false, path: located.rel, output: literalError };
       writeFileSync(located.abs, content);
       this.recordWrite(located.rel);
       return { ok: true, denied: false, path: located.rel, output: `wrote ${located.rel} (${content.length} bytes)` };
@@ -186,11 +188,13 @@ export class ToolExecutor {
         timeout: BASH_TIMEOUT_MS,
       });
       const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+      const failed = result.exitCode !== 0 || result.timedOut;
+      const status = result.timedOut ? "(timed out)" : `(exit ${result.exitCode ?? "?"})`;
       return {
-        ok: result.exitCode === 0 && !result.timedOut,
+        ok: !failed,
         denied: false,
         command,
-        output: clampOutput(output || `(exit ${result.exitCode ?? "?"})`),
+        output: clampOutput(failed ? [output, status].filter(Boolean).join("\n") : output || status),
       };
     } catch (err) {
       return { ok: false, denied: false, command, output: `bash failed: ${(err as Error).message}` };
@@ -268,7 +272,14 @@ export function normalizeWriteContent(rel: string, content: string): string {
   const trimmed = content.trim();
   if (!trimmed) return content;
   if (!looksLikeTopLevelJsLiteral(trimmed)) return content;
+  if (!isDataModulePath(rel)) return content;
   return `module.exports = ${trimmed};\n`;
+}
+
+export function executableJsLiteralError(rel: string, content: string): string | null {
+  if (!/\.(?:c?js|mjs)$/.test(rel) || isDataModulePath(rel)) return null;
+  if (!looksLikeTopLevelJsLiteral(content.trim())) return null;
+  return `REFUSED to write ${rel}: this looks like a top-level data literal, not executable JavaScript source. Re-emit the complete file as raw JS text with imports/requires, functions, control flow, and module.exports/export syntax as needed; do not encode code as arrays, objects, maps, or fragments.`;
 }
 
 function looksLikeTopLevelJsLiteral(content: string): boolean {
@@ -277,4 +288,8 @@ function looksLikeTopLevelJsLiteral(content: string): boolean {
   if (/\b(?:module\.)?exports\s*=/.test(content)) return false;
   if (/\b(?:function|const|let|var|class|import|export)\b/.test(content)) return false;
   return true;
+}
+
+function isDataModulePath(rel: string): boolean {
+  return /(^|\/)(data|fixture|fixtures|mock|mocks|seed|seeds|sample|samples|config|constants|schema|catalog|items)\.(?:c?js|mjs)$/i.test(rel);
 }

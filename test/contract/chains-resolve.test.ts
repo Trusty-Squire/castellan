@@ -12,7 +12,8 @@ describe("built-in default chains (ser runs anywhere)", () => {
     const chains = parseChains(DEFAULT_CHAINS_YAML, "default");
     const cheap = resolveChain(chains, "cheap");
     expect(cheap.executor).toBe("qwen/qwen3-coder");
-    expect(resolveChain(chains, "knight-only").executor).toBe("moonshotai/kimi-k2.6");
+    expect(cheap.knight).toBe("z-ai/glm-5.2");
+    expect(resolveChain(chains, "knight-only").executor).toBe("z-ai/glm-5.2");
     expect(resolveChain(chains, "cheap-raw").harness).toBe("off");
   });
 });

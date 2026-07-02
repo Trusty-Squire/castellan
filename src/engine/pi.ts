@@ -457,7 +457,7 @@ function makeTools(
   const write: AgentTool<any> = {
     name: "write",
     label: "Write",
-    description: "Create or overwrite a file. Only paths inside the writable set are allowed.",
+    description: "Create or overwrite a file. Only paths inside the writable set are allowed. content must be the complete raw file text as one string; do not encode source code as arrays, objects, maps, or fragments.",
     parameters: Type.Object({
       path: Type.String(),
       content: Type.String(),
@@ -515,7 +515,9 @@ function makeTools(
     parameters: Type.Object({ command: Type.String() }),
     execute: async (_id, params) => {
       onToolStart();
-      return text((await exec.execute("bash", params)).output);
+      const r = await exec.execute("bash", params);
+      if (!r.ok) failTool(r.output);
+      return text(r.output);
     },
   };
 

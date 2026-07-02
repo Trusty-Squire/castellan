@@ -9,11 +9,11 @@ export const DEFAULT_CHAINS_YAML = `chains:
   cheap:
     executor: "qwen/qwen3-coder"
     fallback: "deepseek/deepseek-chat"
-    knight: "moonshotai/kimi-k2.6"
+    knight: "z-ai/glm-5.2"
   knight-only:
-    executor: "moonshotai/kimi-k2.6"
-    fallback: "moonshotai/kimi-k2.6"
-    knight: "moonshotai/kimi-k2.6"
+    executor: "z-ai/glm-5.2"
+    fallback: "z-ai/glm-5.2"
+    knight: "z-ai/glm-5.2"
   cheap-raw:
     executor: "qwen/qwen3-coder"
     fallback: "qwen/qwen3-coder"
@@ -22,7 +22,7 @@ export const DEFAULT_CHAINS_YAML = `chains:
 prices:
   "qwen/qwen3-coder": { in: 0.30, out: 1.00 }
   "deepseek/deepseek-chat": { in: 0.20, out: 0.80 }
-  "moonshotai/kimi-k2.6": { in: 0.55, out: 3.20 }
+  "z-ai/glm-5.2": { in: 0.93, out: 3.00 }
 `;
 
 /** Marker source label used when no chains file is found and defaults apply. */

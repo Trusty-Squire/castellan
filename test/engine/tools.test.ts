@@ -56,6 +56,18 @@ describe("ToolExecutor", () => {
     );
   });
 
+  it("refuses top-level data literals for executable JavaScript files", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
+    const r = await exec.execute("write", {
+      path: "src/notes.js",
+      content: "[{'utf8':'return JSON.parse(data);'}]",
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.output).toMatch(/top-level data literal|raw JS text/);
+    expect(existsSync(join(cwd, "src", "notes.js"))).toBe(false);
+  });
+
   it("leaves normal JavaScript source unchanged", async () => {
     const exec = new ToolExecutor(cwd, { blastRadius: ["src/**"] });
     const source = "function findArbitrage() { return []; }\nmodule.exports = { findArbitrage };\n";
@@ -105,6 +117,14 @@ describe("ToolExecutor", () => {
     const bash = await exec.execute("bash", { command: "echo hi" });
     expect(bash.ok).toBe(true);
     expect(bash.output).toMatch(/hi/);
+  });
+
+  it("marks non-zero bash as failed and keeps the exit code with command output", async () => {
+    const exec = new ToolExecutor(cwd, { blastRadius: ["**"] });
+    const r = await exec.execute("bash", { command: "echo nope; exit 7" });
+    expect(r.ok).toBe(false);
+    expect(r.output).toContain("nope");
+    expect(r.output).toContain("(exit 7)");
   });
 
   it("clamps a huge bash output so it can't balloon the agent context", async () => {

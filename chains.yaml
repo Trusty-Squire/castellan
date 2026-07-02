@@ -6,16 +6,16 @@ chains:
   cheap:
     executor: "qwen/qwen3-coder" # cheap MoE coder, supports tools
     fallback: "deepseek/deepseek-chat" # DeepSeek V3, second cheap model
-    knight: "moonshotai/kimi-k2.6" # planner/escalation: Kimi with optional reasoning; structured derive disables reasoning
+    knight: "z-ai/glm-5.2" # planner/escalation: GLM 5.2, routed through DeepInfra first on OpenRouter
     # The executor's effective working envelope per node — the planner sizes nodes
     # to THIS instead of the old "1-12" count anchor. PROVISIONAL & conservative
     # until measured: run `pnpm calibrate-envelope --chain cheap` and set it just
     # below the first-try knee it reports.
     node_context_budget: 24000
   knight-only:
-    executor: "moonshotai/kimi-k2.6"
-    fallback: "moonshotai/kimi-k2.6"
-    knight: "moonshotai/kimi-k2.6"
+    executor: "z-ai/glm-5.2"
+    fallback: "z-ai/glm-5.2"
+    knight: "z-ai/glm-5.2"
   cheap-raw: # ablation: cheap executor with the harness OFF (one raw, goal-only attempt)
     executor: "qwen/qwen3-coder"
     fallback: "qwen/qwen3-coder"
@@ -24,4 +24,4 @@ chains:
 prices: # per million tokens (in = prompt, out = completion)
   "qwen/qwen3-coder": { in: 0.30, out: 1.00 }
   "deepseek/deepseek-chat": { in: 0.20, out: 0.80 }
-  "moonshotai/kimi-k2.6": { in: 0.55, out: 3.20 }
+  "z-ai/glm-5.2": { in: 0.93, out: 3.00 }

@@ -36,6 +36,24 @@ describe("OpenRouterClient", () => {
     expect(body.usage).toEqual({ include: true });
   });
 
+  it("routes GLM 5.2 planner calls through DeepInfra first with fallback still enabled", async () => {
+    let captured: RequestInit | undefined;
+    const client = new OpenRouterClient({
+      apiKey: "k",
+      fetchImpl: (async (_url: string, init?: RequestInit) => {
+        captured = init;
+        return jsonResponse(okBody);
+      }) as unknown as typeof fetch,
+    });
+    await client.complete({ model: "z-ai/glm-5.2", system: "s", user: "u", json: true, maxTokens: 100 });
+    const body = JSON.parse(String(captured!.body));
+    expect(body.provider).toEqual({
+      order: ["deepinfra/fp4"],
+      allow_fallbacks: true,
+      require_parameters: true,
+    });
+  });
+
   it("surfaces provider-reported cost (usage.cost) as costUsd", async () => {
     const client = new OpenRouterClient({
       apiKey: "k",
@@ -84,6 +102,26 @@ describe("OpenRouterClient", () => {
     const r = await client.complete({ model: "m", system: "s", user: "u", maxTokens: 100 });
     expect(calls).toBe(2);
     expect(r.inTokens).toBe(42);
+  });
+
+  it("does not retry caller-owned aborts", async () => {
+    let calls = 0;
+    const ac = new AbortController();
+    const abort = new Error("aborted");
+    abort.name = "AbortError";
+    const client = new OpenRouterClient({
+      apiKey: "k",
+      sleep: async () => {},
+      fetchImpl: (async () => {
+        calls += 1;
+        ac.abort();
+        throw abort;
+      }) as unknown as typeof fetch,
+    });
+    await expect(client.complete({ model: "m", system: "s", user: "u", maxTokens: 100, signal: ac.signal })).rejects.toThrow(
+      /aborted/,
+    );
+    expect(calls).toBe(1);
   });
 
   it("throws after exhausting retries", async () => {

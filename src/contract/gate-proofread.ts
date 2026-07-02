@@ -61,6 +61,22 @@ export function briefNamedFiles(brief: string): string[] {
   return [...new Set([...brief.matchAll(BRIEF_CREATE_RE)].map((m) => m[1]!))];
 }
 
+/** Runtime store files explicitly named by the contract/brief. */
+const RUNTIME_STORE_EXT = String.raw`(?:jsonl|json|db|sqlite\d?|sqlite|log|txt|csv)`;
+const RUNTIME_FILE = String.raw`([\w.-]+(?:\/[\w.-]+)*\.${RUNTIME_STORE_EXT})`;
+const RUNTIME_FILE_RES = [
+  new RegExp(String.raw`\b(?:storage|store|persistence|persisted|data|database|db|state|cache|session|log)\s*(?:file|path)?\s*[:=]\s*['"]?${RUNTIME_FILE}['"]?`, "gi"),
+  new RegExp(String.raw`\b(?:persist|persists|persisted|save|saves|saved|write|writes|written|store|stores|stored)(?:\s+\w+){0,4}\s+(?:to|in|into|under|at)\s+['"]?${RUNTIME_FILE}['"]?`, "gi"),
+];
+
+export function briefRuntimeFiles(brief: string): string[] {
+  const out: string[] = [];
+  for (const re of RUNTIME_FILE_RES) {
+    for (const m of brief.matchAll(re)) out.push(m[1]!);
+  }
+  return [...new Set(out)];
+}
+
 /**
  * BRIEF↔RADIUS COHERENCE: the worker must be ALLOWED to write the files its own brief tells it
  * to create. When a brief says "Create login.html" but blast_radius only permits views/login.html,
@@ -80,6 +96,10 @@ export function briefFileCoherence(brief: string, blastRadius: string[]): string
     const base = f.split("/").pop()!;
     const glob = `**/${base}`;
     if (!inRadius(`x/${base}`) && !add.includes(glob)) add.push(glob);
+  }
+  for (const f of briefRuntimeFiles(brief)) {
+    if (inRadius(f) || inRadius(`./${f}`)) continue;
+    if (!add.includes(f)) add.push(f);
   }
   return add;
 }

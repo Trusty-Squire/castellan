@@ -143,6 +143,24 @@ describe("extractIdea (buckets derived in code from the model's facts)", () => {
     expect(llm.calls).toHaveLength(2);
   });
 
+  it("repairs vacuous component gates before spec generation", async () => {
+    const llm = new MockLlm([
+      {
+        text: JSON.stringify({
+          stories: ["reply to messages"],
+          components: [{ statement: "telegram message handler", story: "reply to messages", gate: { tier: 1, gate: "true" } }],
+          decisions: [],
+        }),
+      },
+      { text: JSON.stringify(sample) },
+    ]);
+
+    const r = await extractIdea("telegram bot", llm, "m");
+    expect(r.components[0]!.gate.gate).toBe("node --test voice");
+    expect(llm.calls).toHaveLength(2);
+    expect(llm.calls[1]!.user).toContain("component gate is vacuous");
+  });
+
   it("repairs story-only idea output before spec generation", async () => {
     const llm = new MockLlm([
       { text: JSON.stringify({ stories: ["create notes"], components: [], decisions: [] }) },
